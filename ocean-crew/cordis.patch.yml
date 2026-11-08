@@ -1,4 +1,4 @@
-# Mounts the Bot team host plugin; the browser half is discovered through the
+# Mounts the Bot team host plugin; the client half is discovered through the
 # package's dsh.client manifest and ./client export. Web search and fetch come
 # from DSH's own providers, configured in the profile.
 - insert:

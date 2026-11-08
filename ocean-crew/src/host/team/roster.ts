@@ -13,7 +13,6 @@ import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOT
 import type { Runtime } from "../core/runtime.ts";
 import { currentColor, isColor, normalize, unquote } from "../core/text.ts";
 
-const BROWSER_GRANT_KINDS = new Set(["post", "upload", "download", "delete", "*"]);
 const HOSTNAME =
 	/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/;
 const AVATAR_IMAGE = /^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
@@ -24,13 +23,6 @@ const writeIn = (language?: string): string =>
 // The first Main Bot's greeting when the user wrote before it had a model that works.
 const AFTER_USER =
 	"You were just set up as the user's Main Bot. The user wrote to you before your model could answer; their message above has no answer yet. Answer it now, and say in one short sentence that you run their Bot team.";
-
-// A browser grant as stored on a Bot: a site (or "*") and the kinds allowed there.
-interface BrowserGrant {
-	site: string;
-	kinds: string[];
-	until?: number;
-}
 
 // The name a create asks for; anything the client or a Bot tool sends is untrusted.
 interface CreateBotOptions {
@@ -59,7 +51,6 @@ interface BotPatch {
 	model?: unknown;
 	effort?: unknown;
 	private?: unknown;
-	browserGrants?: unknown;
 	workDir?: unknown;
 	permission?: unknown;
 	changeEngine?: unknown;
@@ -294,39 +285,6 @@ export function install(rt: Runtime): void {
 		sessionId === undefined ? Promise.resolve() : Promise.resolve(workspaces.archiveSession?.(sessionId, options));
 
 	const kickoffOf = (bot: Bot | undefined): Greeting | undefined => bot?.kickoff as Greeting | undefined;
-
-	function cleanBrowserGrants(input: unknown): BrowserGrant[] | null {
-		if (input === null) return null;
-		if (!Array.isArray(input) || input.length > 50)
-			throw new Error("Browser grants must be an array of at most 50 entries");
-		const grants: BrowserGrant[] = [];
-		const seen = new Set<string>();
-		for (const raw of input) {
-			if (raw === null || typeof raw !== "object" || Array.isArray(raw))
-				throw new Error("Each browser grant must have a site and kinds");
-			const entry = raw as { site?: unknown; kinds?: unknown; until?: unknown };
-			const until = entry.until;
-			if (until !== undefined) {
-				if (typeof until !== "number" || !Number.isFinite(until))
-					throw new Error("Browser grant until must be a future epoch-millisecond timestamp");
-				if (until <= Date.now()) continue;
-			}
-			const site = typeof entry.site === "string" ? entry.site.trim().toLowerCase() : "";
-			if (site !== "*" && !HOSTNAME.test(site)) throw new Error("Browser grant site must be * or a hostname");
-			if (
-				!Array.isArray(entry.kinds) ||
-				entry.kinds.length === 0 ||
-				entry.kinds.some((kind) => typeof kind !== "string" || !BROWSER_GRANT_KINDS.has(kind))
-			)
-				throw new Error("Browser grant kinds must be a non-empty subset of post, upload, download, delete, *");
-			const kinds = [...new Set(entry.kinds as string[])].sort();
-			const key = `${site}\0${kinds.join("\0")}\0${until ?? ""}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			grants.push({ site, kinds, ...(until !== undefined ? { until } : {}) });
-		}
-		return grants;
-	}
 
 	function cleanAvatar(input: unknown): BotAvatar | undefined {
 		if (input === null || typeof input !== "object") return undefined;
@@ -648,11 +606,8 @@ export function install(rt: Runtime): void {
 	async function updateBot(id: BotId, patch: BotPatch, actorId?: BotId, fromSessionId?: string): Promise<Bot> {
 		const bot = rt.botOf(id);
 		if (bot === undefined) throw new Error("Unknown Bot");
-		if (patch.browserGrants !== undefined && actorId !== undefined)
-			throw new Error(`Only the user can set what ${bot.name} may do in the browser`);
 		if (patch.private !== undefined && actorId !== undefined)
 			throw new Error(`Only the user can make ${bot.name} private or open`);
-		const browserGrants = patch.browserGrants === undefined ? undefined : cleanBrowserGrants(patch.browserGrants);
 		// Checked first, so a folder, model or level that does not pass leaves the rest
 		// unchanged too.
 		const moving = patch.workDir !== undefined;
@@ -731,13 +686,6 @@ export function install(rt: Runtime): void {
 			modelChanged = true;
 		}
 		if (patch.permission !== undefined) await setPermission(bot, patch.permission);
-		if (browserGrants !== undefined) {
-			// `shared/state.ts` types the grants as an object;
-			// array cleanBrowserGrants returns, and the browser module reads it as one.
-			const target = bot as { browserGrants?: unknown };
-			if (browserGrants === null) delete target.browserGrants;
-			else target.browserGrants = browserGrants;
-		}
 		if (flag === true) bot.private = true;
 		else if (flag === false) delete bot.private;
 		const moved = moving && workDir !== bot.workDir;

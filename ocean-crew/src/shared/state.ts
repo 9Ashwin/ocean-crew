@@ -66,7 +66,6 @@ export interface Bot {
 	createdAt?: number;
 	kickoff?: BotKickoff;
 	blocked?: BotBlocked;
-	browserGrants?: unknown[];
 	permission?: string;
 	archivePath?: string;
 	archiving?: boolean;

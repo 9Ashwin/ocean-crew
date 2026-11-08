@@ -40,7 +40,7 @@ supported form, and nothing else is shipped or supported.
 Every Bot is a long-lived identity whose work runs in DSH Sessions: one for its
 own chat, one per group, and a fresh one when the context fills up. Bots message
 each other, share group chats and hand work across. Users customize each Bot's
-name, role, instructions, model and character. The conversation, browser and IM
+name, role, instructions, model and character. The conversation and IM
 surfaces belong to Ocean Crew; the agent loop, tools and models are DSH's.
 
 Development reaches the real thing through `ocean-crew/dev/install-local.mjs`,

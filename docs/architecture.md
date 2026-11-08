@@ -37,7 +37,7 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 | 层 | 位置 | 做什么 |
 | --- | --- | --- |
 | 进程与插件入口 | `ocean-crew/src/index.ts` → `dist/index.js` | 导出 `name`、`inject`、`apply` 和 `createRuntime`；构建一个 `rt` 对象，并按 `MODULES` 顺序安装每个模块。 |
-| Host 领域逻辑 | `ocean-crew/src/host/` | 名册与存储、群聊、轮次、分段、工具、能力、连接器、定时任务、更新、密钥、Bot 浏览器和 `api/bot` 通道。 |
+| Host 领域逻辑 | `ocean-crew/src/host/` | 名册与存储、群聊、轮次、分段、工具、能力、连接器、定时任务、更新、密钥和 `api/bot` 通道。 |
 | 客户端 | `ocean-crew/src/client/` → `ocean-crew/client.js` | 在 DSH Desktop Web UI 里运行的 client 半边：团队侧栏、聊天单元、卡片、面板和设置。它只通过 `api/bot` 访问 Ocean Crew host。 |
 | IM 通道 | `ocean-crew/src/host/im/` | 配对、路由、卡片、发送队列和重连决策；`im/platforms/` 负责线上协议。 |
 | DSH host 契约 | `ocean-crew/package.json`、`ocean-crew/cordis.patch.yml` | profile 如何挂载插件、DSH 如何找到 client 入口，以及插件注入哪些 host 服务。 |
@@ -56,7 +56,6 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 | `ocean-crew/src/host/chat/channel.ts` | `POST /api/bot` 的各个端点，以及客户端渲染的团队视图。 |
 | `ocean-crew/src/host/im/` | IM host：连接、配对、目标、卡片、发送队列、`supervisor.ts` 和 `format.ts`；`platforms/` 里每个平台一个适配器。 |
 | `ocean-crew/src/host/work/secrets.ts`、`providers.ts`、`models.ts` | `secrets.json`、保存值的脱敏，以及模型提供方与每个 Bot 的模型选择。 |
-| `ocean-crew/src/host/browser/browser.ts`、`browser/`、`browser-plugins.ts` | Bot 浏览器通道与每个 Bot 一个 profile；浏览器后端在 `browser/`，由本机 Chrome 驱动，`browser-plugins.ts` 挂载 `refs`、`script`、`task` 之一。 |
 | `ocean-crew/src/host/connectors/` | GitHub 和邮箱，通过本机 MCP 网关挂载。 |
 | `ocean-crew/src/host/work/schedules.ts`、`usage.ts`、`update.ts`、`dsh-update.ts`、`diagnostics.ts` | 定时任务、从 DSH token-meter 读取的 token 用量、插件与 DSH 更新，以及错误日志。 |
 | `ocean-crew/src/client/` | client 半边，每个界面一个模块；构建成 `client.js`。 |

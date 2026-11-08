@@ -508,12 +508,12 @@ test("module endpoints are wired dynamically: unavailable without the module, se
 	assert.equal(read.error.code, "bot/unavailable");
 });
 
-test("browser and IM endpoints are wired dynamically: unavailable until their modules load", async (t) => {
+test("IM endpoints are wired dynamically: unavailable until their module loads", async (t) => {
 	const rig = makeRig();
 	t.after(async () => {
 		await rig.dispose();
 	});
-	assert.equal(SERVICE_ENDPOINTS.length, 14, "5 browser and 9 IM endpoints");
+	assert.equal(SERVICE_ENDPOINTS.length, 9, "the IM endpoints");
 	for (const endpoint of SERVICE_ENDPOINTS) {
 		assert.ok(!CHANNEL_ENDPOINTS.includes(endpoint), `${endpoint} is not a channel endpoint`);
 		assert.ok(!MODULE_ENDPOINTS.includes(endpoint), `${endpoint} is not a module endpoint`);
@@ -522,12 +522,6 @@ test("browser and IM endpoints are wired dynamically: unavailable until their mo
 		assert.equal(answer.error.code, "bot/unavailable", endpoint);
 		assert.match(answer.error.message, /not installed in this build/, `${endpoint} names the missing member`);
 	}
-	// A read-only host keeps the browser long poll readable and refuses the write endpoints.
-	rig.setReadOnly("The Bot team is open in another dsh (pid 42).");
-	const read = await rig.calls("browser-wait", {});
-	assert.equal(read.error.code, "bot/unavailable");
-	const write = await rig.calls("browser-takeover", {});
-	assert.equal(write.error.code, "bot/read-only");
 });
 
 test("the read-only gate runs before dispatch: writes refuse, reads answer", async (t) => {
@@ -605,7 +599,6 @@ test("state answers the roster view and keeps the unchanged shortcut small", asy
 	assert.ok(value.colors.includes("deepseek"));
 	assert.ok(value.colors.includes("charcoal"));
 	assert.equal(value.memory, true);
-	assert.equal(value.browser, false);
 	assert.equal(value.readOnly, null);
 	assert.deepEqual(value.im, { connections: [], platforms: [] });
 	assert.deepEqual(value.privateArchives, []);

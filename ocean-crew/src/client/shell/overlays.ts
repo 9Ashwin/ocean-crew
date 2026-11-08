@@ -5,8 +5,8 @@ import { Fragment, createElement as h, useEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { ExchangeDialog } from "../chat/exchange.ts";
 import { useLinger } from "../look/motion.ts";
-import { BotPanel, PANEL_LINGER_MS } from "../pages/browser-pane.ts";
 import { MemoryDialog } from "../pages/memory-panel.ts";
+import { BotPanel, PANEL_LINGER_MS } from "../pages/panel.ts";
 import { SettingsDialog } from "../pages/settings.ts";
 import { ContextMenu } from "./context-menu.ts";
 import { FALLBACK_SIDEBAR_WIDTH, frameLayout } from "./frame-layout.ts";
@@ -25,9 +25,6 @@ export function Overlays({
 	useActivity,
 	useWork,
 	useRegistry,
-	useBrowserPages,
-	useBrowserTabs,
-	useBrowserHolds,
 	useUpdate,
 	useFrame,
 	useSidebarPref,
@@ -104,9 +101,6 @@ export function Overlays({
 						useSessionStatus,
 						useActivity,
 						useWork,
-						useBrowserTabs,
-						useBrowserPages,
-						useBrowserHolds,
 					}),
 					document.body,
 				)

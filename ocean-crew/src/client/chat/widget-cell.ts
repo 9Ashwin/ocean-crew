@@ -143,13 +143,11 @@ export function AnsweredView({ node }: any) {
 	);
 }
 
-// A question reply node carries either questions (data.questions), a view answer or
-// a browser handoff answer (JSON text discriminated by kind); each shape gets its
-// own renderer. A history page has already read the handoff answer into data.handoff.
+// A question reply node carries either questions (data.questions) or a view answer;
+// each shape gets its own renderer.
 export function AnsweredReply({ node }: any) {
 	const data = node?.data ?? {};
 	if (Array.isArray(data.views) && data.views.length > 0) return h(AnsweredView, { node });
-	if (typeof data.handoff?.reason === "string") return h(SettledHandoff, { handoff: data.handoff });
 	if (!Array.isArray(data.questions) || data.questions.length === 0) {
 		let parsed: any = null;
 		try {
@@ -158,10 +156,6 @@ export function AnsweredReply({ node }: any) {
 			parsed = null;
 		}
 		if (parsed?.kind === "answer_to_pending_view") return h(AnsweredView, { node });
-		if (parsed?.kind === "answer_to_pending_handoff" && typeof parsed.reason === "string") {
-			const reply = { reason: parsed.reason, note: parsed.note ?? "", outcome: parsed.outcome };
-			return h(SettledHandoff, { handoff: reply });
-		}
 	}
 	return h(AnsweredCell, { node });
 }
@@ -201,6 +195,3 @@ body[data-bt-layout=flat] .bt-q-inline .dv-view{max-width:calc(var(--bt-flat-w,1
 .dv-seg.dv-view-seg{flex-wrap:wrap}
 .dv-seg.dv-view-seg button{flex:0 1 auto;height:auto;min-height:30px;min-width:0;padding-block:5px;white-space:normal;overflow-wrap:anywhere}
 `;
-
-// The name the view renderer needs from the handoff card.
-import { SettledHandoff } from "./handoff-card.ts";

@@ -136,10 +136,9 @@ test("every M2–M5 module installs, and the routes and M5 members are present",
 		calls.some((call) => call.startsWith("route GET /api/bot/feed")),
 		"feed route",
 	);
-	assert.ok(calls.includes("effect ocean-crew: browser channel") || rt.browserChannel === undefined, "browser module");
 	assert.ok(calls.includes("effect ocean-crew: im"), "im module");
 	assert.ok(calls.includes("effect ocean-crew: api route"), "channel module");
-	// The two routes the browser and the feed clients depend on.
+	// The routes the window and the feed clients depend on.
 	assert.equal(routes.filter((route) => route.path === "/api/bot" && route.methods.includes("POST")).length, 1);
 	assert.equal(routes.filter((route) => route.path === "/api/bot/feed" && route.methods.includes("GET")).length, 1);
 	// The feed route is live, not just registered: an opened stream answers with SSE.
@@ -150,13 +149,9 @@ test("every M2–M5 module installs, and the routes and M5 members are present",
 	assert.match(String(stream.headers.get("content-type")), /text\/event-stream/);
 	await stream.body?.cancel();
 
-	for (const member of ["imView", "imStatusView", "imViaView", "imEndpoint", "browserEnabled", "browserOpen"]) {
+	for (const member of ["imView", "imStatusView", "imViaView", "imEndpoint"]) {
 		assert.notEqual(rt[member], undefined, member);
 	}
-	// No Desktop profile in the fake context: browsers stay off, with the member set the
-	// channel checks (browserOpen present, browserChannel absent).
-	assert.equal(rt.browserEnabled, false);
-	assert.equal(typeof rt.browserOpen, "function");
 	assert.equal(typeof rt.imView, "function");
 });
 
@@ -178,7 +173,6 @@ test("the state answer carries the M5 fields with the earlier view shapes", asyn
 	assert.equal(typeof value.modelsKey, "string");
 	assert.equal(typeof value.liveKey, "string");
 
-	assert.equal(value.browser, false);
 	assert.deepEqual(value.im, { connections: [], platforms: ["weixin", "feishu"] });
 	// The same shapes are what the runtime members publish for the live/status channels.
 	assert.deepEqual(rt.imView(), value.im);
@@ -188,11 +182,7 @@ test("the state answer carries the M5 fields with the earlier view shapes", asyn
 
 test("M5 endpoints answer through their modules, and say what is missing", async (t) => {
 	const { call } = host(t);
-	// The browser module is installed but this host has no Desktop Bridge: the channel keeps
 
-	const wait = await call("browser-wait", { clientId: "w1" });
-	assert.equal(wait.ok, false);
-	assert.equal(wait.error.code, "bot/browser-off");
 	// An invalid im-add reaches the IM module: it is a refusal with the module's message,
 
 	const add = await call("im-add", {});

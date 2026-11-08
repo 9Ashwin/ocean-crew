@@ -20,18 +20,11 @@ export interface PluginConfig {
 	updateCheck?: boolean;
 	updateRegistry?: string;
 	github?: boolean;
-	browser?: boolean;
-	browserPlugin?: "refs" | "script" | "task";
-	browserPluginApi?: unknown;
-	browserHeadless?: boolean;
-	browserComplete?: unknown;
 	ocrModel?: string;
 	textOnlyModels?: string[];
 	handoffListTokens?: number;
 	handoffRecentTokens?: number;
 	timeRefreshIntervalMs?: number;
 	timeZone?: string;
-	playwrightUrl?: string;
-	browserExecutablePath?: string;
 	diagnosticsFile?: boolean;
 }

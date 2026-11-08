@@ -168,23 +168,13 @@ export async function submitSide({
 	return { kind: "success" };
 }
 
-// The strip shows whenever there is at least one browser tab or side chat.
-export const panelHasStrip = (canBrowse: boolean, tabCount: number, sideCount: number): boolean =>
-	(canBrowse === true && tabCount > 0) || sideCount > 0;
+// The strip shows whenever there is at least one side chat.
+export const panelHasStrip = (sideCount: number): boolean => sideCount > 0;
 
 // The strip `···` menu keys, in order. 'sep' joins the two groups only when
 // both have entries.
-export function stripMenuKeys({
-	canBrowse,
-	canTerminal,
-	canFiles,
-}: {
-	canBrowse?: boolean;
-	canTerminal?: boolean;
-	canFiles?: boolean;
-}): string[] {
+export function stripMenuKeys({ canTerminal, canFiles }: { canTerminal?: boolean; canFiles?: boolean }): string[] {
 	const keys: string[] = [];
-	if (canBrowse === true) keys.push("new-tab");
 	keys.push("side");
 	const tail: string[] = [];
 	if (canTerminal === true) tail.push("terminal");
@@ -198,18 +188,15 @@ export function stripMenuKeys({
 export function drawerMenuKeys({
 	bot,
 	room,
-	canBrowse,
 	canTerminal,
 	canFiles,
 }: {
 	bot?: boolean;
 	room?: boolean;
-	canBrowse?: boolean;
 	canTerminal?: boolean;
 	canFiles?: boolean;
 }): string[] {
 	const keys: string[] = [];
-	if (bot === true && canBrowse === true) keys.push("browser");
 	if (bot === true) keys.push("side");
 	const tail: string[] = [];
 	if (bot === true || room === true) {

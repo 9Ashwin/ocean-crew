@@ -1,8 +1,6 @@
 // Ocean Crew host entry: DSH mounts this plugin, calls `apply(ctx, config)`, and the
 // runtime installs every host module in a fixed order.
 import { join } from "node:path";
-import { install as installBrowser } from "./host/browser/browser.ts";
-import { install as installBrowserPlugins } from "./host/browser/browser-plugins.ts";
 import { install as installBtw } from "./host/chat/btw.ts";
 import { install as installChannel } from "./host/chat/channel.ts";
 import { install as installChatIndex } from "./host/chat/chat-index.ts";
@@ -103,8 +101,6 @@ const MODULES: HostModule[] = [
 	installLearning,
 	installReset,
 	installSchedules,
-	installBrowser,
-	installBrowserPlugins,
 	installUsage,
 	installUpdate,
 	installDshUpdate,

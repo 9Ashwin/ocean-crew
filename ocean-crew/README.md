@@ -67,9 +67,8 @@ host 侧改动需要重启 DSH。
   MCP server，凭据留在 Secrets，以 `$DSH_SECRET_*` 提供给工具。
 - **密钥。** Bot 在聊天里用卡片请求 API key 或 token，自己永远看不到值；保存后按 Bot 限定范围，在
   工具结果和出站请求里脱敏。
-- **Bot 浏览器。** 右栏面板里每个 Bot 一个浏览器（独立分区），`read_browser` 只读页面；另外三个可选
-  后端（`refs`、`script`、`task`）直接驱动本机已安装的 Chrome，每个 Bot 一个 profile。发布、上传、
-  下载和删除需要授权，支付、登录和验证码交还用户。
+- **浏览器。** 插件不内置浏览器；Bot 需要操作页面时用本机已安装的 Playwright CLI + Chrome，
+  通过自己的 shell 工具执行。
 - **IM。** 把 Bot 接到飞书或微信私聊：配对、卡片审批和回复都在 IM 里完成，不需要公网地址、不开端口。
   每条连接是一个 IM 机器人账号、绑定一个 Bot，群聊可以按会话分别指向团队里的 Bot 或群；未配对发送者的第一条消息会变成一条待允许的请求。
 - **网页搜索。** 由 DSH 的搜索 provider 提供，在 DSH 设置里配置。
@@ -92,7 +91,6 @@ host 侧改动需要重启 DSH。
     workspace: /path/to/workspace   # Bot 的工作区；默认 <home>/workspace
     home: /path/to/bot-data         # 团队数据位置；默认 $DSH_HOME/bot
     checkRatio: 0.8                 # 上下文管家做判断的位置（可用窗口比例）
-    browser: true                   # 强制开关 Bot 浏览器面板；默认只在 DSH Desktop 开
     memory: true                    # false 关闭记忆工具、面板和学习轮
     learning: true                  # false 关闭后台学习轮
     updateCheck: true               # 是否检查插件更新

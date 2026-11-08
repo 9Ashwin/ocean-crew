@@ -1,6 +1,6 @@
-// Integration: browser and IM endpoints against a runtime whose side-effect
+// Integration: IM endpoints against a runtime whose side-effect
 // modules are attached one at a time. Each endpoint refuses `bot/unavailable` before its
-// module publishes the member and answers once it does; the browser's two absences stay
+// module publishes the member and answers once it does; its absence stays
 // distinct: no module is `bot/unavailable`, a module without a
 
 import assert from "node:assert/strict";
@@ -166,7 +166,7 @@ function makeRig(): Rig {
 	};
 }
 
-/** The module side of the M5 runtime contract, with the browser's hold book. */
+/** The module side of the service runtime contract. */
 function moduleMembers(rig: Rig): Record<string, unknown> {
 	const holds = new Map<string, any>();
 	const rec = (name: string, ...args: unknown[]) => {
@@ -198,16 +198,10 @@ function moduleMembers(rig: Rig): Record<string, unknown> {
 	};
 }
 
-const PROBES: Record<string, unknown> = {
-	"browser-wait": { clientId: "client-1", open: { tab: "t1" } },
-	"browser-result": { clientId: "client-1", result: { ok: true } },
-	"browser-takeover": { botId: "chief" },
-	"browser-give-back": { botId: "chief" },
-	"browser-stop": { botId: "chief" },
-};
+const PROBES: Record<string, unknown> = {};
 
 test("the service surface is disjoint from the channel and module endpoints, and no static placeholder remains", () => {
-	assert.equal(SERVICE_ENDPOINTS.length, 14);
+	assert.equal(SERVICE_ENDPOINTS.length, 9);
 	assert.equal(UNAVAILABLE_ENDPOINTS.size, 0, "every known endpoint is wired dynamically");
 	for (const endpoint of SERVICE_ENDPOINTS) {
 		assert.ok(!CHANNEL_ENDPOINTS.includes(endpoint), `${endpoint} is not M2`);
@@ -249,119 +243,12 @@ test("IM endpoints pass the endpoint name and body through", async (t) => {
 	}
 });
 
-test("browser-wait and browser-result answer from the channel and keep browser-off distinct", async (t) => {
-	const rig = makeRig();
-	t.after(async () => {
-		await rig.dispose();
-	});
-
-	rig.attach("browserOpen", (open: unknown) => open ?? {});
-	const off = await rig.call("browser-wait", PROBES["browser-wait"]);
-	assert.equal(off.error.code, "bot/browser-off");
-	assert.equal(off.error.message, "Bot browsers are off on this host");
-	assert.equal((await rig.call("browser-result", {})).error.code, "bot/browser-off");
-
-	rig.attachAll(moduleMembers(rig));
-	const wait = await rig.call("browser-wait", { clientId: "client-1", open: { tab: "t1" } });
-	assert.deepEqual(wait.value, { requests: [{ requestId: "read-1" }], holds: { chief: { by: "user" } } });
-	const waitCall = rig.calls.filter(([name]) => name === "browser.wait").at(-1);
-	assert.deepEqual(waitCall?.slice(1), ["client-1", { tab: "t1" }], "the browserOpen result reaches wait");
-	const clientId = rig.calls.filter(([name]) => name === "browser.wait").at(-1);
-	assert.equal(clientId !== undefined, true);
-	const missing = await rig.call("browser-wait", { open: {} });
-	assert.equal(missing.error.code, "bot/invalid");
-	const result = await rig.call("browser-result", { clientId: "c1", result: { ok: true } });
-	assert.deepEqual(result.value, { body: { clientId: "c1", result: { ok: true } }, ok: true });
-});
-
-test("browser takeover and give-back keep the handoff card contract", async (t) => {
-	const rig = makeRig();
-	t.after(async () => {
-		await rig.dispose();
-	});
-	rig.attachAll(moduleMembers(rig));
-	// A plain takeover holds the browser for the user; an existing handoff keeps its call.
-	const simple = await rig.call("browser-takeover", { botId: "chief" });
-	assert.equal(simple.value, true);
-	let setHold = rig.calls.filter(([name]) => name === "browser.setHold").at(-1);
-	assert.deepEqual(setHold?.slice(1), [
-		"chief",
-		{ by: "user", reason: "takeover", note: "The user is controlling this browser." },
-	]);
-	const channel = (rig.rt as any).browserChannel;
-	channel.holdOf = () => ({ callId: "call-1", reason: "handoff", note: "Carry on" });
-	await rig.call("browser-takeover", { botId: "chief" });
-	setHold = rig.calls.filter(([name]) => name === "browser.setHold").at(-1);
-	assert.deepEqual(setHold?.slice(1), [
-		"chief",
-		{ by: "user", reason: "handoff", note: "Carry on", callId: "call-1" },
-	]);
-	assert.equal((await rig.call("browser-takeover", { botId: "nobody" })).error.code, "bot/not-found");
-
-	// Give back refused: nothing held, a bad outcome, a stale handoff.
-	channel.holdOf = () => null;
-	assert.equal((await rig.call("browser-give-back", { botId: "chief" })).error.code, "bot/forbidden");
-	channel.holdOf = () => ({ callId: "call-1", reason: "handoff" });
-	assert.equal((await rig.call("browser-give-back", { botId: "chief", outcome: "later" })).error.code, "bot/invalid");
-	assert.equal((await rig.call("browser-give-back", { botId: "chief", callId: "call-0" })).error.code, "bot/stale");
-
-	// A held handoff answered: claimed first, then the reply reaches the Bot's chat.
-	rig.setFollowupFailure(false);
-	const given = await rig.call("browser-give-back", { botId: "chief", outcome: "done", callId: "call-1" });
-	assert.equal(given.value, true);
-	const claimed = rig.calls.filter(([name]) => name === "browser.setHold").at(-1);
-	assert.deepEqual(claimed?.slice(1), ["chief", null], "the hold is claimed before queueing");
-	assert.equal(rig.followups.length, 1);
-	const message = rig.followups[0];
-	assert.equal(message.source.kind, "user-question-reply");
-	assert.equal(message.source.callId, "call-1");
-	assert.match(JSON.parse(message.content[0].text).kind, /^answer_to_pending_handoff$/);
-	assert.equal(rig.flushes, 1);
-
-	// A failed queue puts the hold back; Give back without a call just releases it.
-	rig.setFollowupFailure(true);
-	channel.holdOf = () => ({ callId: "call-2", reason: "handoff" });
-	const failed = await rig.call("browser-give-back", { botId: "chief", outcome: "skip", callId: "call-2" });
-	assert.equal(failed.error.code, "bot/refused");
-	assert.deepEqual(channel.holdOf(), { callId: "call-2", reason: "handoff" });
-	rig.setFollowupFailure(false);
-	channel.holdOf = () => ({ by: "user", reason: "takeover" });
-	const release = await rig.call("browser-give-back", { botId: "chief" });
-	assert.equal(release.value, true);
-	assert.equal(rig.followups.length, 1, "a plain give-back queues nothing");
-});
-
-test("browser-stop cancels the turn, stops group work and records the hold", async (t) => {
-	const rig = makeRig();
-	t.after(async () => {
-		await rig.dispose();
-	});
-	rig.attachAll(moduleMembers(rig));
-	rig.live.set("chief", { turn: 4 });
-	const stopped = await rig.call("browser-stop", { botId: "chief" });
-	assert.equal(stopped.value, true);
-	const cancel = rig.calls.filter(([name]) => name === "cancel").at(-1);
-	assert.deepEqual(cancel?.slice(1), ["chief", { kind: "user" }]);
-	assert.deepEqual(
-		rig.calls.filter(([name]) => name === "stopMemberWork").map((call) => call.slice(1)),
-		[["r1", "chief"]],
-		"the Bot's groups stop its work",
-	);
-	const setHold = rig.calls.filter(([name]) => name === "browser.setHold").at(-1);
-	assert.deepEqual(setHold?.slice(1), [
-		"chief",
-		{ by: "user", reason: "stopped", note: "The user is controlling this browser." },
-	]);
-	assert.equal((await rig.call("browser-stop", { botId: "nobody" })).error.code, "bot/not-found");
-});
-
 test("the state and live answers carry the service views once the modules are installed", async (t) => {
 	const rig = makeRig();
 	t.after(async () => {
 		await rig.dispose();
 	});
 	const before = await rig.call("state", {});
-	assert.equal(before.value.browser, false);
 	assert.deepEqual(before.value.im, { connections: [], platforms: [] });
 	rig.attachAll({
 		browserEnabled: true,
@@ -370,7 +257,6 @@ test("the state and live answers carry the service views once the modules are in
 		imViaView: () => ({ chief: "feishu" }),
 	});
 	const after = await rig.call("state", {});
-	assert.equal(after.value.browser, true);
 	assert.deepEqual(after.value.im, { connections: [{ id: "im-1" }], platforms: ["feishu"] });
 	assert.deepEqual(after.value.imStatus, { "im-1": { state: "on" } });
 	assert.deepEqual(after.value.imVia, { chief: "feishu" });

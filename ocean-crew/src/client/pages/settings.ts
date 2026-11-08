@@ -24,7 +24,6 @@ import { useEscape } from "../shell/overlay-hooks.ts";
 import { isMainOf } from "../shell/sources.ts";
 import { AboutPage } from "./about.ts";
 import { BotSettingsForm, Switch } from "./bot-settings.ts";
-import { BrowserPage } from "./browser-settings.ts";
 import { CapabilitiesPage } from "./capability-settings.ts";
 import { ConnectorsPage } from "./connectors-page.ts";
 import { CreateBot } from "./create-bot.ts";
@@ -54,7 +53,6 @@ const SETTINGS_PAGES: ReadonlyArray<readonly [string, string]> = [
 	["connectors", "Connectors"],
 	["im", "IM"],
 	["capabilities", "Capabilities"],
-	["browser", "Browser"],
 	["schedules", "Scheduled tasks"],
 	["usage", "Usage"],
 	["secrets", "Secrets"],
@@ -67,7 +65,6 @@ const PAGE_ICONS: Record<string, any> = {
 	connectors: ConnectorIcon,
 	im: ChatsIcon,
 	capabilities: PlugIcon,
-	browser: GlobeIcon,
 	schedules: ClockIcon,
 	secrets: KeyIcon,
 	feedback: FeedbackIcon,
@@ -879,9 +876,6 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
 								shown === "connectors" ? h(ConnectorsPage, { roster, actions }) : null,
 								shown === "im" ? h(ImPage, { roster, actions }) : null,
 								shown === "capabilities" ? h(CapabilitiesPage, { roster, actions, run }) : null,
-								shown === "browser"
-									? h(BrowserPage, { roster, actions, run, Section: SetSection, Row: SetRow })
-									: null,
 								shown === "schedules" ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,
 								shown === "secrets" ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,
 								shown === "feedback"

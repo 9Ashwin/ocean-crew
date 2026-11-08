@@ -19,7 +19,7 @@
 - **响应：** 总是 HTTP 200，JSON 主体，要么 `{ ok: true, value }`，要么 `{ ok: false, error: { code, message, details } }`。客户端读 `value`，在 `ok: false` 时抛错；`message` 是给用户看的文本，`code` 是机器字段。
 - **端点是封闭集合。** `handle()` 对 `endpoint` 做分支：已知名字走它自己的分支，其余一律回答 `bot/not-found`。增加、重命名或删除端点都是客户端可见的改动。
 - **没有团队锁的 host 只回答 `READS`。** `READS`（在 `channel.ts` 里）列出第二个 dsh 仍可提供的端点——`state`、各个读取端点、诊断，以及更新和审批回答。其他端点都以 `bot/read-only` 失败，拒绝消息里会点名另一个 host。若被破坏：两个 host 都写团队文件，互相撤销对方的改动。
-- **错误码保留 `bot/` 前缀。** 抛出的错误若 `code` 以 `bot/` 开头就保留；`TypeError`、`ReferenceError`、`RangeError`、`SyntaxError` 或 `E*` 系统错误码变成 `bot/internal`（连同调用栈记入日志）；其余变成 `bot/refused`。在用的错误码包括 `bot/invalid`、`bot/not-found`、`bot/stale`、`bot/read-only`、`bot/forbidden`、`bot/unavailable`、`bot/busy`、`bot/missing`、`bot/browser-off`、`bot/internal`、`bot/refused` 和 `bot/error`。必须保持：已有错误码的含义不变。若被破坏：客户端会把用户的拒绝记成崩溃，或者把崩溃显示成拒绝。
+- **错误码保留 `bot/` 前缀。** 抛出的错误若 `code` 以 `bot/` 开头就保留；`TypeError`、`ReferenceError`、`RangeError`、`SyntaxError` 或 `E*` 系统错误码变成 `bot/internal`（连同调用栈记入日志）；其余变成 `bot/refused`。在用的错误码包括 `bot/invalid`、`bot/not-found`、`bot/stale`、`bot/read-only`、`bot/forbidden`、`bot/unavailable`、`bot/busy`、`bot/missing`、`bot/internal`、`bot/refused` 和 `bot/error`。必须保持：已有错误码的含义不变。若被破坏：客户端会把用户的拒绝记成崩溃，或者把崩溃显示成拒绝。
 - **`state` 是名册回答。** 它带有 `revision`、团队视图和 live 字段；配合上一次的 `revision`、`modelsKey` 和 `liveKey`，它可以回答 `{ revision, unchanged: true, liveKey }`，而 live 字段按各自的序列化缓存，所以没变化的回答就是一个小对象。必须保持：这三个键。若被破坏：打开着的窗口会停止更新，直到重新加载。
 
 ## IM 适配器
@@ -96,18 +96,10 @@ host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件
 | `updateRegistry` | 所有已配置的 registry | 只向这个 npm registry 查询更新。 |
 | `github` | 显示 | `false` 隐藏 GitHub 连接器。 |
 | `mail` | 使用 host 自己的传输 | 覆盖邮件连接器的 IMAP 连接及其 `fetch`。 |
-| `browser` | DSH Desktop 里为开 | 控制 DSH Desktop 窗口里的浏览器面板和 `read_browser`；布尔值强制开或关。它不影响 `browserPlugin` 挂载的浏览器工具。 |
-| `browserPlugin` | 无 | `refs`、`script` 或 `task`；不配置就不挂载浏览器插件工具。挂载后由内置后端驱动本机 Chrome，每个 Bot 用自己的 profile。 |
-| `browserPluginApi` | 无 | 注入一个浏览器插件对象，替代内置的。 |
-| `browserHeadless` | 无显示的 Linux 上为无头 | 无头运行 Bot 浏览器。 |
-| `browserComplete` | 计算得出 | 提供浏览器插件等待的 "page is complete" 检查。 |
 | `ocrModel` | DSH 默认图像模型，否则取第一个可用的 | 把图片转成文字、供不能读图的模型使用的模型。 |
 | `textOnlyModels` | 无 | `provider/model` 引用，这些模型必须收到文本，绝不收到图片。 |
 | `handoffListTokens`、`handoffRecentTokens` | `4096`、`16384` | 交接包中列表段与最近消息段的大小。 |
 | `timeRefreshIntervalMs` | `600000` | 时间上下文多久刷新一次。 |
 | `timeZone` | 未设置 | 覆盖时间上下文报告的时区。 |
-| `playwrightUrl`、`browserExecutablePath` | 无 | 挂载浏览器插件的覆盖项。不配置 `playwrightUrl` 时，`loadChromium` 依次尝试 `playwright`、`playwright-core`；不配置 `browserExecutablePath` 时，`browser/locate.ts` 自动探测本机 Chrome/Chromium（macOS 的应用目录、Windows 的 Program Files、Linux 的 `PATH`），探测不到就交给 Playwright 自己决定（它会报自己找不到可执行文件的错误）。 |
 | `diagnosticsFile` | `true` | `false` 只把错误日志留在内存里。 |
 
-Bot 浏览器由本机 Chrome 驱动：`ocean-crew` 依赖 `playwright-core`（不需要自带 Chromium 的
-`playwright`），profile 按 Bot 隔离在 `<home>/browser-profiles/<botId>`，不碰用户日常 Chrome 的 profile。

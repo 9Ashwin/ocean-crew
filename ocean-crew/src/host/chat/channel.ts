@@ -34,7 +34,6 @@ import type { ApiResponse, ErrorCode } from "../../shared/api.ts";
 import type { Bot, Room, TeamQuestion } from "../../shared/state.ts";
 import { COLORS, EXTRA_COLORS, REPLY_KIND, ROUTE } from "../core/constants.ts";
 import type { Runtime } from "../core/runtime.ts";
-import { handoffReply } from "./parts.ts";
 
 const LANGUAGES: Record<string, string> = { zh: "Chinese (简体中文)", en: "English" };
 const RUN_STATS = ["sessionStats", "tokenUsage", "contextPressure"] as const;
@@ -56,8 +55,6 @@ export const READS: ReadonlySet<string> = new Set([
 	"usage",
 	"schedules",
 	"memory-view",
-	"browser-wait",
-	"browser-result",
 	"diagnostics",
 	"diagnostics-log",
 	"diagnostics-clear",
@@ -239,15 +236,6 @@ const MEMORY_ENDPOINTS: readonly string[] = [
 	"memory-restore",
 ];
 
-/** Browser, IM and computer endpoints, wired through their modules on the runtime. */
-export const BROWSER_ENDPOINTS: readonly string[] = [
-	"browser-wait",
-	"browser-result",
-	"browser-takeover",
-	"browser-give-back",
-	"browser-stop",
-];
-
 /** IM endpoints, one `imEndpoint(endpoint, body)` module call each. */
 export const IM_ENDPOINTS: readonly string[] = [
 	"im-add",
@@ -261,8 +249,8 @@ export const IM_ENDPOINTS: readonly string[] = [
 	"im-login-wait",
 ];
 
-/** Every browser and IM endpoint; each refuses by missing member until its module loads. */
-export const SERVICE_ENDPOINTS: readonly string[] = [...BROWSER_ENDPOINTS, ...IM_ENDPOINTS];
+/** Every IM endpoint; each refuses by missing member until its module loads. */
+export const SERVICE_ENDPOINTS: readonly string[] = [...IM_ENDPOINTS];
 
 /**
  * Endpoints still only placeholders. Every known endpoint is wired in `endpoints` and
@@ -345,16 +333,7 @@ export function install(rt: Runtime): void {
 	};
 	const callMember = async (endpoint: string, name: string, ...args: unknown[]): Promise<any> =>
 		await member(endpoint, name)(...args);
-	/** The Bot browser family: module presence is `browserOpen`, then the earlier browser-off. */
-	const browser = (endpoint: string): { channel: any; open: (open: unknown) => any } => {
-		const open = fn("browserOpen");
-		if (open === undefined) throw missingMember(endpoint, "browserOpen");
-		const channel = (rt as Record<string, any>).browserChannel;
-		if (channel === undefined) {
-			throw Object.assign(new Error("Bot browsers are off on this host"), { code: "bot/browser-off" });
-		}
-		return { channel, open };
-	};
+
 	const liveMap = (): Map<string, any> | undefined => (rt as Record<string, any>).live as Map<string, any> | undefined;
 	/** The diagnostics object; it publishes `report`, `logText` and `clear` together. */
 	const diagnosticsService = (endpoint: string, method: string): Record<string, (...args: any[]) => any> => {
@@ -496,8 +475,6 @@ export function install(rt: Runtime): void {
 			permissions: sync("permissionCatalog") ?? null,
 			modelsKey: modelsKey(),
 			prefs: state.prefs,
-			// Whether a Desktop window should serve Bot browser reads.
-			browser: (rt as Record<string, any>).browserEnabled === true,
 			// False when config.memory turns memory off: no Memory row or panel.
 			memory: (rt as Record<string, any>).memoryEnabled !== false,
 			// Set while another dsh host holds the team: why this one cannot change it.
@@ -1142,88 +1119,7 @@ export function install(rt: Runtime): void {
 			return ok(true);
 		},
 
-		// --- Browser, IM and computer wiring -----------------------------------
-		// The Desktop window's long poll for read_browser, and its answers. A host without
-		// the browser module refuses `bot/unavailable`; one whose module is installed but
-
-		async "browser-wait"(body) {
-			const { channel, open } = browser("browser-wait");
-			const clientId = typeof body.clientId === "string" ? body.clientId.slice(0, 100) : "";
-			if (clientId === "") return fail("A browser poll needs a clientId", "bot/invalid");
-			await load();
-			const requests = await channel.wait(clientId, open(body.open));
-			return ok({ requests, holds: channel.holdSnapshot() });
-		},
-		async "browser-result"(body) {
-			const { channel } = browser("browser-result");
-			return ok(channel.result(body));
-		},
-		async "browser-takeover"(body) {
-			const { channel } = browser("browser-takeover");
-			await load();
-			const botId = String(body.botId ?? "");
-			if (!botOf(botId)) return fail("Unknown Bot", "bot/not-found");
-			// Taking over a handoff keeps its reason, note, and call, so its card stays up.
-			const asked = channel.holdOf(botId);
-			channel.setHold(
-				botId,
-				asked?.callId !== undefined
-					? { by: "user", reason: asked.reason, note: asked.note, callId: asked.callId }
-					: { by: "user", reason: "takeover", note: "The user is controlling this browser." },
-			);
-			return ok(true);
-		},
-		// A card's 'done' or 'skip' says how the handoff went. The panel's Give back sends no
-		// outcome, so its reply only says that control returned to the Bot.
-		async "browser-give-back"(body) {
-			const { channel } = browser("browser-give-back");
-			await load();
-			const botId = String(body.botId ?? "");
-			if (!botOf(botId)) return fail("Unknown Bot", "bot/not-found");
-			if (body.outcome !== undefined && !["done", "skip", "returned"].includes(body.outcome)) {
-				return fail("Nothing to send", "bot/invalid");
-			}
-			const hold = channel.holdOf(botId);
-			if (hold === null) return fail("This browser is not held", "bot/forbidden");
-			if (body.callId !== undefined && body.callId !== hold.callId) {
-				return fail("This handoff is no longer open", "bot/stale");
-			}
-			// Claim the hold before queueing so a second answer is refused.
-			channel.setHold(botId, null);
-			if (hold.callId === undefined) return ok(true);
-			try {
-				const sessionId = chatOf(botId);
-				const reply = handoffReply(hold, String(body.outcome ?? "returned"));
-				await record("ensureCapabilities", sessionId);
-				const agent = await call("resolveAgent", sessionId);
-				const source = reply.source as unknown as MessageSource;
-				agent.followup(createUserMessage({ content: [{ type: "text", text: reply.text }], source }));
-				const sessions = ctx.sessions as { flush?: (session: unknown) => Promise<unknown> } | undefined;
-				await sessions?.flush?.(agent.session);
-			} catch (error) {
-				if (channel.holdOf(botId) === null) channel.setHold(botId, hold);
-				throw error;
-			}
-			return ok(true);
-		},
-		async "browser-stop"(body) {
-			// Module presence only: a host whose Bridge is missing still stops the turn.
-			if (fn("browserOpen") === undefined) throw missingMember("browser-stop", "browserOpen");
-			await load();
-			const botId = String(body.botId ?? "");
-			if (!botOf(botId)) return fail("Unknown Bot", "bot/not-found");
-			const sessionId = chatOf(botId);
-			if (sessionId && liveMap()?.get(sessionId)?.turn !== undefined) {
-				const agent = await call("resolveAgent", sessionId);
-				agent.cancel({ kind: "user" });
-			}
-			for (const room of Object.values(state.rooms ?? {})) {
-				if (room.members?.includes(botId)) await record("stopMemberWork", room.id, botId);
-			}
-			const channel = (rt as Record<string, any>).browserChannel;
-			channel?.setHold?.(botId, { by: "user", reason: "stopped", note: "The user is controlling this browser." });
-			return ok(true);
-		},
+		// --- IM wiring ---------------------------------------------------------
 	};
 
 	// Groups whose whole family is one pass-through member. The endpoint name and the body

@@ -442,7 +442,6 @@ test("apply installs the locale, polls the roster, paints the surface and closes
 		"bot-secret",
 		"bot-connector",
 		"bot-mail",
-		"bot-handoff",
 		"bot-learning",
 		"queue",
 	]);

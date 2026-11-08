@@ -15,7 +15,6 @@ import {
 	TurnTailCell,
 } from "./chat/cells.ts";
 import { CONNECTOR_CSS, ConnectorDock, MailDock } from "./chat/connectors.ts";
-import { HANDOFF_CSS, HandoffDock } from "./chat/handoff-card.ts";
 import { LEARNING_CSS, LearningDock, LearningTurnTail } from "./chat/learning-card.ts";
 import { MEMBER_CSS, MemberDock } from "./chat/member-status.ts";
 import { QuestionCard, QuestionDock } from "./chat/questions.ts";
@@ -47,9 +46,7 @@ import {
 import { ABOUT_CSS } from "./pages/about.ts";
 import { AGENT_CARDS_CSS } from "./pages/agent-cards.ts";
 import { AVATAR_LIBRARY_CSS } from "./pages/avatar-library.ts";
-import { createBotBrowsers, serveBrowserReads } from "./pages/bot-browsers.ts";
 import { BOT_SETTINGS_CSS } from "./pages/bot-settings.ts";
-import { BROWSER_CSS } from "./pages/browser-pane.ts";
 import { CONNECTORS_PAGE_CSS } from "./pages/connectors-page.ts";
 import { sameVersion } from "./pages/dsh-offer.ts";
 import { ErrorToast, FEEDBACK_CSS } from "./pages/feedback.ts";
@@ -58,6 +55,7 @@ import { GOAL_CSS } from "./pages/goal.ts";
 import { GROUP_SETTINGS_CSS } from "./pages/group-settings.ts";
 import { IM_CSS } from "./pages/im-page.ts";
 import { DeepSeekSignIn, MODEL_CSS, ModelChoiceDock } from "./pages/model-menu.ts";
+import { PANEL_CSS } from "./pages/panel.ts";
 import { SCHEDULE_CSS } from "./pages/schedules.ts";
 import { atSources, CHATS_SOURCE } from "./shell/at-menu.ts";
 import { ComposerPlus, menuIcons } from "./shell/composer.ts";
@@ -121,8 +119,7 @@ export function apply(ctx: ClientContext): void {
 	// When each conversation was last left; a visit compares new turns against it.
 	const seenStore = sharedMap(STORAGE.seen);
 	let seenAt = seenStore.read();
-	// `details` is the panel's subject (a Session id); `view` picks details or the subject
-	// Bot's browser inside it.
+	// `details` is the panel's subject (a Session id); `view` picks details or a side chat.
 	const ui = createSource({
 		details: null,
 		view: "details",
@@ -468,42 +465,6 @@ export function apply(ctx: ClientContext): void {
 		}, "ocean-crew: own app update state");
 	}
 
-	// Bot browsers need a webview bridge: DSH Desktop's, or the desktop app's of the same
-	// shape. The host serves read_browser only in those two (`browser` in the state).
-	const bridge = (desktop?.protocolVersion === 1 ? desktop.browser : (globalThis as any).dsBotApp?.browser) ?? null;
-	const browsers = bridge ? createBotBrowsers({ bridge, createSource }) : null;
-	if (browsers) {
-		ctx.effect(() => {
-			let stopReads: any = null;
-			const sync = () => {
-				const snapshot = roster.getSnapshot();
-				if (!snapshot.ready) return;
-				const on = (snapshot as any).browser === true;
-				if (on && !stopReads) stopReads = serveBrowserReads({ browsers, post: call });
-				if (!on && stopReads) {
-					stopReads();
-					stopReads = null;
-				}
-				// A Bot deleted here or in another window takes its guests and saved tabs along.
-				void browsers.retain(snapshot.bots.map((bot: any) => bot.id));
-				// A panel open on the browser view without a browsable subject falls back to
-				// the details view.
-				ui.set((state: any) =>
-					state.details && state.view === "browser" && (!on || !snapshot.byId[state.details])
-						? { ...state, view: "details" }
-						: state,
-				);
-			};
-			sync();
-			const offRoster = roster.subscribe(sync);
-			return () => {
-				offRoster();
-				stopReads?.();
-				browsers.dispose();
-			};
-		}, "ocean-crew: Bot browsers");
-	}
-
 	ctx.effect(
 		() => () => {
 			markupCache.clear();
@@ -694,7 +655,6 @@ export function apply(ctx: ClientContext): void {
 			}).panel === "folded"
 		);
 	};
-	const yieldBrowser = (state: any) => state.panelYield === true || panelFolded("browser");
 	// Bot mode's view must hold a team conversation; an outside Session wears the Bot skin
 	// without one. Runs whenever the surface is (or stays) Bot mode - including a cold
 	// start, where no setSurface call ever fires.
@@ -909,90 +869,6 @@ export function apply(ctx: ClientContext): void {
 		},
 		clearUnread: (id: string) => writeUnread(id, false),
 	};
-	// Without the Desktop bridge these stay undefined, and no browser control renders.
-	if (browsers) {
-		Object.assign(actions, {
-			// The globe button: the Bot's active tab in the browser view, or a new tab.
-			openBrowser: (id: string) => {
-				const bot = roster.getSnapshot().byId[id];
-				if (!bot) return;
-				browsers.ensureTabs(bot.id);
-				if (browsers.tabs.getSnapshot()[bot.id]?.active == null) browsers.openTab(bot.id);
-				ui.set((state: any) => ({
-					...state,
-					details: id,
-					view: "browser",
-					renaming: false,
-					tab: null,
-					panelYield: yieldBrowser(state),
-				}));
-			},
-			// '+' on the strip or the drawer's new-tab card: a blank tab in the browser view.
-			browserNewTab: (id: string) => {
-				const bot = roster.getSnapshot().byId[id];
-				if (!bot) return null;
-				browsers.ensureTabs(bot.id);
-				const tabId = browsers.openTab(bot.id);
-				ui.set((state: any) => ({
-					...state,
-					details: id,
-					view: "browser",
-					renaming: false,
-					tab: null,
-					panelYield: yieldBrowser(state),
-				}));
-				return tabId;
-			},
-			// A drawer card: its tab active, the panel on the browser view.
-			browserPick: (id: string, tabId: string) => {
-				const bot = roster.getSnapshot().byId[id];
-				if (!bot) return;
-				browsers.activate(bot.id, tabId);
-				ui.set((state: any) => ({ ...state, details: id, view: "browser", panelYield: yieldBrowser(state) }));
-			},
-			browserEnsure: (botId: string) => browsers.ensureTabs(botId),
-			browserCloseTab: (botId: string, tabId: string) => browsers.closeTab(botId, tabId),
-			browserActivate: (botId: string, tabId: string) => browsers.activate(botId, tabId),
-			browserShow: (tabId: string, box: any) => browsers.show(tabId, box),
-			browserNavigate: (tabId: string, input: unknown) => browsers.navigate(tabId, input),
-			browserCommand: (tabId: string, name: string) => browsers.command(tabId, name),
-			browserFocus: (tabId: string) => browsers.focus(tabId),
-			browserTakeover: bridge.views
-				? async (botId: string) => {
-						const result = await call("browser-takeover", { botId });
-						await bridge.views.hold(botId, true);
-						return result;
-					}
-				: undefined,
-			browserStop: bridge.views
-				? async (botId: string) => {
-						const result = await call("browser-stop", { botId });
-						await bridge.views.hold(botId, true);
-						return result;
-					}
-				: undefined,
-			// `answer` is a handoff card's { callId, outcome }; the panel's Give back sends none.
-			browserGiveBack: bridge.views
-				? async (botId: string, answer: any = {}) => {
-						const result = await call("browser-give-back", { botId, ...answer });
-						await bridge.views.hold(botId, false);
-						return result;
-					}
-				: undefined,
-			// Cookie imports, only where the bridge offers them (the desktop app): a file or an
-			// installed browser's profile is previewed, then applied into the Bot's storage key.
-			browserImport:
-				typeof bridge.importSources === "function"
-					? {
-							sources: () => bridge.importSources(),
-							pick: () => bridge.importPick(),
-							live: (source: unknown, close: () => void) => bridge.importLive(source, close),
-							apply: (botId: string, pending: unknown) => bridge.importApply(`bot:${botId}`, pending),
-							cancel: (pending: unknown) => bridge.importCancel(pending),
-						}
-					: null,
-		});
-	}
 	// Whether AccountLauncher holds the shell's settings seat; FooterAccount steps aside if so.
 	actions.signInEntry = () => ctx.slots.entries?.("settings.models.sign-in")?.[0] ?? null;
 	actions.canSignIn = () => Boolean(actions.signInEntry());
@@ -1047,10 +923,6 @@ export function apply(ctx: ClientContext): void {
 	actions.openOwnApp = async () => {
 		await ownAppUpdates?.open?.();
 	};
-	const browserPages = browsers?.pages ?? createSource({});
-	const browserTabs = browsers?.tabs ?? createSource({});
-	const browserHolds = browsers?.holds ?? createSource({});
-
 	const face = () => ({
 		actions,
 		hooks: {
@@ -1064,9 +936,6 @@ export function apply(ctx: ClientContext): void {
 			live,
 			cards,
 			heldCards,
-			browserPages,
-			browserTabs,
-			browserHolds,
 			surface,
 			update,
 			frame,
@@ -1330,10 +1199,9 @@ export function apply(ctx: ClientContext): void {
 		() => installCompiledStyles(GOAL_CSS, "goal"),
 		() => installCompiledStyles(USER_MESSAGE_CSS, "user-messages"),
 		() => installCompiledStyles(WIDGET_CSS, "widgets"),
-		() => installCompiledStyles(HANDOFF_CSS, "handoff"),
 		() => installCompiledStyles(SIDE_CSS, "side"),
 		// Strip and panel styles also serve the side-chat tabs, which need no bridge.
-		() => installCompiledStyles(BROWSER_CSS, "browser"),
+		() => installCompiledStyles(PANEL_CSS, "panel"),
 		() => installFrameWatch(frame),
 		() => installFrameSync(),
 		() => installTheme(),
@@ -1455,7 +1323,6 @@ export function apply(ctx: ClientContext): void {
 		() => shadow("conversation.input.dock", { id: "bot-secret", order: -90, inject: face }, SecretDock),
 		() => shadow("conversation.input.dock", { id: "bot-connector", order: -89, inject: face }, ConnectorDock),
 		() => shadow("conversation.input.dock", { id: "bot-mail", order: -88, inject: face }, MailDock),
-		() => shadow("conversation.input.dock", { id: "bot-handoff", order: -85, inject: face }, HandoffDock),
 		() =>
 			shadow(
 				"conversation.input.dock",

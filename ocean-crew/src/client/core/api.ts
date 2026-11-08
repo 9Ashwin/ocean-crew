@@ -5,7 +5,7 @@ import { hostText, t } from "./i18n.ts";
 
 const ROUTE = "api/bot";
 // Refusals carry a message meant for the user, who sees it where they acted.
-const REFUSALS = new Set(["bot/refused", "bot/invalid", "bot/read-only", "bot/not-found", "bot/browser-off"]);
+const REFUSALS = new Set(["bot/refused", "bot/invalid", "bot/read-only", "bot/not-found"]);
 
 /** An error from the host or the network, with the machine code the interface reads. */
 export interface ApiError extends Error {

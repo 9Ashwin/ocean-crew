@@ -45,7 +45,6 @@ import { partIndexOf, withBtwRows } from "./btw-model.ts";
 import { CellEmpty } from "./cell-empty.ts";
 import { ConnectorToolCell, MailToolCell } from "./connectors.ts";
 import { FOLD_AT, FOLD_HUGE, stripLongNote, useFold } from "./fold.ts";
-import { HandoffCall } from "./handoff-card.ts";
 import { PendingQuestion, SettledQuestion } from "./questions.ts";
 import { SecretToolCell } from "./secret-card.ts";
 import { opensReply, stepActivity, thinkingStep, turnReasoning } from "./turn-reasoning.ts";
@@ -1862,13 +1861,12 @@ const DRAWN = new Set([
 	"mail_send",
 	"ask_user_question",
 	"show_view",
-	"browser_handoff",
 	"read_group_chat",
 	"remember",
 	"forget",
 ]);
 // Calls whose card a dock above the composer carries when the call is not drawn.
-const CARDS = new Set(["ask_user", "request_secret", "request_connector", "mail_send", "show_view", "browser_handoff"]);
+const CARDS = new Set(["ask_user", "request_secret", "request_connector", "mail_send", "show_view"]);
 
 // The root and its sub-calls in dispatch order, each call once.
 export function callTree(root: any) {
@@ -1897,7 +1895,7 @@ function useShownCards(actions: any, sessionId: any, callIds: any) {
 	}, [sessionId, key]);
 }
 
-function renderCall(call: any, { sessionId, roster, actions, useUi, useWork, findBot, heldCards, hooks }: any) {
+function renderCall(call: any, { sessionId, roster, actions, useUi, useWork, findBot, heldCards }: any) {
 	const tool = toolName(call);
 	const done = call.kind === "tool-result";
 	const { text: arg, value: argValue } = toolArgs(call);
@@ -2043,8 +2041,6 @@ function renderCall(call: any, { sessionId, roster, actions, useUi, useWork, fin
 				actions,
 				heldCards,
 			});
-		case "browser_handoff":
-			return h(HandoffCall, { sessionId, callId: call.callId, roster, actions, heldCards, hooks });
 		case "ask_user_question": {
 			if (!done) return h(CellEmpty);
 			let parsed = null;
@@ -2083,18 +2079,7 @@ function renderCall(call: any, { sessionId, roster, actions, useUi, useWork, fin
 	}
 }
 
-export function ToolCell({
-	node,
-	sessionId,
-	useRoster,
-	useUi,
-	useWork,
-	useHeldCards,
-	useBrowserHolds,
-	useBrowserTabs,
-	useBrowserPages,
-	actions,
-}: any) {
+export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, actions }: any) {
 	const roster = useRoster((value: any) => value);
 	const heldCards = useHeldCards?.((state: any) => state[sessionId]);
 	const root = node.data.root;
@@ -2126,7 +2111,7 @@ export function ToolCell({
 		useWork,
 		findBot,
 		heldCards,
-		hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages },
+		hooks: {},
 	};
 	return h(
 		Fragment,

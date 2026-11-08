@@ -290,44 +290,22 @@ test("submitSide refuses groups, files and empty questions, and opens the joined
 });
 
 test("the strip and drawer menu keys follow what the Bot can do", () => {
-	assert.equal(panelHasStrip(false, 0, 1), true);
-	assert.equal(panelHasStrip(false, 0, 0), false);
-	assert.equal(panelHasStrip(true, 0, 0), false);
-	assert.equal(panelHasStrip(true, 1, 0), true);
-	assert.equal(panelHasStrip(true, 0, 2), true);
-	assert.deepEqual(stripMenuKeys({ canBrowse: true, canTerminal: true, canFiles: true }), [
-		"new-tab",
+	assert.equal(panelHasStrip(1), true);
+	assert.equal(panelHasStrip(0), false);
+	assert.equal(panelHasStrip(2), true);
+	assert.deepEqual(stripMenuKeys({ canTerminal: true, canFiles: true }), ["side", "sep", "terminal", "files"]);
+	assert.deepEqual(stripMenuKeys({}), ["side"]);
+	assert.deepEqual(stripMenuKeys({ canTerminal: true }), ["side", "sep", "terminal"]);
+	assert.deepEqual(drawerMenuKeys({ bot: true, canTerminal: true, canFiles: true }), [
 		"side",
 		"sep",
 		"terminal",
 		"files",
 	]);
-	assert.deepEqual(stripMenuKeys({ canBrowse: false, canTerminal: false, canFiles: false }), ["side"]);
-	assert.deepEqual(stripMenuKeys({ canBrowse: false, canTerminal: true, canFiles: false }), [
-		"side",
-		"sep",
-		"terminal",
-	]);
-	assert.deepEqual(drawerMenuKeys({ bot: true, canBrowse: true, canTerminal: true, canFiles: true }), [
-		"browser",
-		"side",
-		"sep",
-		"terminal",
-		"files",
-	]);
-	assert.deepEqual(drawerMenuKeys({ bot: true, canBrowse: false, canTerminal: false, canFiles: false }), ["side"]);
-	assert.deepEqual(drawerMenuKeys({ bot: false, room: true, canBrowse: false, canTerminal: true, canFiles: true }), [
-		"terminal",
-		"files",
-	]);
-	assert.deepEqual(
-		drawerMenuKeys({ bot: false, room: true, canBrowse: false, canTerminal: false, canFiles: false }),
-		[],
-	);
-	assert.deepEqual(
-		drawerMenuKeys({ bot: false, room: false, canBrowse: false, canTerminal: true, canFiles: true }),
-		[],
-	);
+	assert.deepEqual(drawerMenuKeys({ bot: true }), ["side"]);
+	assert.deepEqual(drawerMenuKeys({ room: true, canTerminal: true, canFiles: true }), ["terminal", "files"]);
+	assert.deepEqual(drawerMenuKeys({ room: true }), []);
+	assert.deepEqual(drawerMenuKeys({ canTerminal: true, canFiles: true }), []);
 });
 
 // --- learning-card-model ---------------------------------------------------

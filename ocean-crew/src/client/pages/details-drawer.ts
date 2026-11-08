@@ -17,12 +17,12 @@ import { useGlide, useMorph } from "../look/motion.ts";
 import { useEscape } from "../shell/overlay-hooks.ts";
 import { isMainOf } from "../shell/sources.ts";
 import { BotSettingsForm } from "./bot-settings.ts";
-import { Favicon, GlobeIcon, menuItemFor, PanelMenu } from "./browser-pane.ts";
 import { FolderMenu } from "./folder-menu.ts";
 import { canSetGoal, goalView, hasGoalAdmin } from "./goal.ts";
 import { GroupSettingsForm, ROOM_MODES, roomSubtitle, shownMode } from "./group-settings.ts";
 import { MemoryRow } from "./memory-panel.ts";
 import { ModelMenu, modelOf } from "./model-menu.ts";
+import { menuItemFor, PanelMenu } from "./panel.ts";
 import { PermissionPicker, presetDanger, presetName } from "./permission-picker.ts";
 import { ScheduleSummary } from "./schedules.ts";
 
@@ -42,7 +42,7 @@ function transcriptOf(list: any, id: string, name: string, hiddenTurns: any[] = 
 	return lines.join("\n\n");
 }
 
-const TAB_LABELS: Record<string, string> = { details: "Details", browser: "Browser" };
+const TAB_LABELS: Record<string, string> = { details: "Details" };
 
 const hostOf = (url: string): string => {
 	try {
@@ -110,107 +110,6 @@ function RunStats({ bot, part, running, actions }: any) {
 	);
 }
 
-// The Bot's browser inside the details page: its tabs as small window cards in the
-// desktop apps, a pointer there on web.
-function BrowserCards({ bot, sessionId, roster, actions, useBrowserTabs, useBrowserPages }: any) {
-	const state = useBrowserTabs((map: any) => map[bot.id] ?? EMPTY_TABS);
-	const pages = useBrowserPages((map: any) => map);
-	useEffect(() => {
-		actions.browserEnsure?.(bot.id);
-	}, [bot.id]);
-	if (roster.browser !== true || !actions.browserShow) {
-		return h("div", { className: "bt-muted" }, t("The browser is in DSH Desktop and the Ocean Crew app."));
-	}
-	if (state.ids.length === 0) {
-		return h(
-			"div",
-			{ className: "bt-browser-empty-mark" },
-			h(BotMark, { bot, size: 40, state: "idle", live: true }),
-			h("div", { className: "bt-browser-empty-title" }, t("{name}'s browser", { name: bot.name })),
-			h(
-				"div",
-				{ className: "bt-muted" },
-				t(
-					"Open a page here and {name} can read it with you. Logins and cookies stay with {name}; other Bots never see them.",
-					{ name: bot.name },
-				),
-			),
-			h(
-				"button",
-				{ type: "button", className: "bt-browser-retry", onClick: () => actions.openBrowser(sessionId) },
-				t("Open browser"),
-			),
-		);
-	}
-	return h(
-		"div",
-		{ className: "bt-bcards" },
-		state.ids.map((tabId: string, index: number) => {
-			const page = pages[tabId] ?? {};
-			const label = page.title || shortUrl(page.url) || t("New tab");
-			return h(
-				"div",
-				{
-					key: tabId,
-					className: "bt-bcard",
-					"data-active": state.active === tabId || undefined,
-					style: { animationDelay: `${index * 30}ms` },
-				},
-				h(
-					"button",
-					{
-						type: "button",
-						className: "bt-bcard-shot",
-						"aria-label": t("Open {title}", { title: label }),
-						title: page.url,
-						onClick: () => actions.browserPick(sessionId, tabId),
-					},
-					page.excerpt
-						? h(
-								"span",
-								{ className: "bt-bcard-preview" },
-								h("span", { className: "bt-bcard-ptitle" }, label),
-								h("span", { className: "bt-bcard-excerpt" }, page.excerpt),
-							)
-						: h("span", { className: "bt-bcard-blank" }, h(GlobeIcon), h("span", null, label)),
-				),
-				h(
-					"button",
-					{
-						type: "button",
-						className: "bt-bcard-x",
-						"aria-label": t("Close tab"),
-						title: t("Close tab"),
-						onClick: () => {
-							void actions.browserCloseTab(bot.id, tabId);
-						},
-					},
-					"×",
-				),
-				h(
-					"div",
-					{ className: "bt-bcard-row" },
-					h(Favicon, { src: page.favicon, className: "bt-bcard-fav" }),
-					h("span", { className: "bt-bcard-title" }, label),
-					page.url ? h("span", { className: "bt-bcard-host" }, hostOf(page.url)) : null,
-				),
-			);
-		}),
-		h(
-			"button",
-			{
-				type: "button",
-				className: "bt-bcard-new",
-				style: { animationDelay: `${state.ids.length * 30}ms` },
-				onClick: () => actions.browserNewTab(sessionId),
-			},
-			h(PlusIcon),
-			t("New tab"),
-		),
-	);
-}
-
-// About: a Bot's instructions or a group's notice in the overview, folded to five lines.
 function About({ text, title = "About" }: any) {
 	const [open, setOpen] = useState(false);
 	const long = text.split("\n").length > 5 || text.length > 240;
@@ -434,8 +333,6 @@ export function DetailsDrawer({
 	useSessionStatus,
 	useActivity,
 	useWork,
-	useBrowserTabs,
-	useBrowserPages,
 }: any) {
 	const owner = roster.byId[sessionId];
 	const part = owner ? currentPart(owner) : sessionId;
@@ -529,7 +426,6 @@ export function DetailsDrawer({
 	const more = drawerMenuKeys({
 		bot: bot !== undefined,
 		room: room !== undefined,
-		canBrowse: bot !== undefined && roster.browser === true && actions.openBrowser !== undefined,
 		canTerminal: actions.canOpenTerminal?.() === true,
 		canFiles: actions.canOpenFiles?.() === true,
 	}).map((key: string) => menuItemFor(key, actions, sessionId));
@@ -599,7 +495,7 @@ export function DetailsDrawer({
 	};
 	const subtitle = bot ? bot.role : roomSubtitle(room, roster);
 	// Tab sets: a 1:1 Bot has Details and Browser; a group has only Details, so no tab row.
-	const tabs = bot ? ["details", "browser"] : ["details"];
+	const tabs = ["details"];
 	return [
 		h(Fragment, { key: "top" }, top),
 		h(
@@ -727,9 +623,6 @@ export function DetailsDrawer({
 							: null,
 						h(ScheduleSummary, { key: "routines", bot, actions }),
 					]
-				: null,
-			bot && tab === "browser"
-				? h(BrowserCards, { bot, sessionId, roster, actions, useBrowserTabs, useBrowserPages })
 				: null,
 		),
 	];

@@ -70,8 +70,8 @@ export const ROOM_MAX_MEMBERS = 12;
 export const AGENT_NAME = "DSH Agent";
 export const AGENT_SESSION_TITLE_MAX = 80;
 // Every tool this plugin defines for Bot Sessions; tools.ts registers them in each
-// Bot session's own scope. `read_browser` only exists in the Desktop profile, so the
-// list served to one session can be shorter.
+// Bot session's own scope; the list served to one session can be shorter on a host
+// without an optional member.
 export const TEAM_TOOLS: readonly string[] = [
 	"list_bots",
 	"message_bot",
@@ -93,7 +93,6 @@ export const TEAM_TOOLS: readonly string[] = [
 	"remember",
 	"forget",
 	"recall",
-	"read_browser",
 	"list_capabilities",
 	"save_capability",
 	"delete_capability",
