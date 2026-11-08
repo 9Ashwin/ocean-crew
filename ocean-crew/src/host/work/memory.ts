@@ -2654,6 +2654,23 @@ export function install(rt: Runtime): void {
 		return { removed, kept, message: `${removed} ${removed === 1 ? "entry" : "entries"} forgotten.` };
 	}
 
+	// What a forget actually covered, layer by layer, so the interface can say the truth
+	// instead of implying a physical delete everywhere. Everything not listed here was
+	// never in the plugin's own memory in the first place.
+	function forgottenLayers(removed: number): Record<string, unknown> {
+		return {
+			memory: { removed },
+			tombstones: { hashes: removed },
+			// The rendered prompt section is rebuilt, so the old text cannot be re-read.
+			snapshots: "invalidated",
+			// The change log keeps its rows, but restoring a forgotten line is refused.
+			journal: "kept-without-restore",
+			// The plugin never owned these: the chats and DSH Session logs are DSH's.
+			chats: "untouched",
+			backups: "untouched",
+		};
+	}
+
 	async function memoryForget(body: Record<string, any>): Promise<Record<string, unknown>> {
 		const panel = panelOf(body);
 		const scope = panel.scopes[body.scope] ?? panel.scopes[panel.group ? "group" : "own"]!;
@@ -2671,10 +2688,19 @@ export function install(rt: Runtime): void {
 				label,
 			});
 			const view = await memoryView(panelBody(panel));
-			return { ...view, forgotten: { removed: result.removed, kept: result.kept, message: result.message } };
+			return {
+				...view,
+				forgotten: {
+					removed: result.removed,
+					kept: result.kept,
+					message: result.message,
+					layers: forgottenLayers(result.removed),
+				},
+			};
 		}
 		await removeEntry({ scope, topic, match: String(body.text ?? ""), actor: USER, label });
-		return await memoryView(panelBody(panel));
+		const view = await memoryView(panelBody(panel));
+		return { ...view, forgotten: { removed: 1, kept: 0, layers: forgottenLayers(1) } };
 	}
 
 	// ---------------------------------------------------------------------------

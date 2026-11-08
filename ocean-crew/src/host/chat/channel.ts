@@ -392,6 +392,7 @@ export function install(rt: Runtime): void {
 			waiting: sync("waitingView") ?? {},
 			turns: sync("turnsView") ?? {},
 			steered: sync("steeredView") ?? {},
+			tasks: sync("tasksView") ?? [],
 		},
 		memoryNews: sync("memoryNews") ?? {},
 		memoryReviews: sync("memoryReviews") ?? {},

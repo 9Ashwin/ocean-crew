@@ -90,7 +90,11 @@
 `memory-forget` 支持范围形式：`range: true` 删除所有匹配词条的条目，`everything: true` 删除该作用域
 （或指定 topic）的全部记忆。每条被忘记的条目会在该作用域的 `tombstones.json` 里留下一个
 SHA-256 前缀哈希，**不保存正文**。墓碑生效于四个入口：`recall` 不返回、`remember`/`replace` 拒绝
-重新写入、`memory-restore` 拒绝从变更日志恢复（`add` 行的 `after` 与 `remove` 行的 `before` 都查墓碑；变更历史里被忘记的正文显示为 `[forgotten]`；墓碑文件不可读时报 `memory/unreadable` 并保留副本，不按空集处理）、受影响 Session 的记忆快照立即失效。因此「忘记」
+重新写入、`memory-forget` 的返回值带 `forgotten.layers`，逐层说明这次忘记覆盖了什么：`memory`（删除条数）、
+`tombstones`（写入的哈希数）、`snapshots: "invalidated"`、`journal: "kept-without-restore"`、
+`chats`/`backups: "untouched"`。界面按这些字段说明真实范围，不要概括成「全部物理删除」。
+
+`memory-restore` 拒绝从变更日志恢复（`add` 行的 `after` 与 `remove` 行的 `before` 都查墓碑；变更历史里被忘记的正文显示为 `[forgotten]`；墓碑文件不可读时报 `memory/unreadable` 并保留副本，不按空集处理）、受影响 Session 的记忆快照立即失效。因此「忘记」
 在插件自己的范围内是终局的；原始聊天、DSH Session 日志与磁盘备份不在其中，报告文本必须区分
 「已不再使用」与「已物理删除」。
 

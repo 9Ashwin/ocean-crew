@@ -369,7 +369,14 @@ export function install(rt: any) {
 		if (held.origins === null || typeof held.origins !== "object" || Array.isArray(held.origins)) held.origins = {};
 		return held.origins as Record<string, ImOrigin>;
 	};
-	const noteOrigin = (requestId: string, conn: any, chat: any, ownerKey: string, messageId?: string) => {
+	const noteOrigin = (
+		requestId: string,
+		conn: any,
+		chat: any,
+		ownerKey: string,
+		messageId?: string,
+		actor?: string,
+	) => {
 		const all = origins();
 		// Immutable: a record answers one request, and a later request writes its own.
 		all[requestId] = {
@@ -379,6 +386,7 @@ export function install(rt: any) {
 			revision: Number(conn.revision ?? 0),
 			at: Date.now(),
 			...(typeof messageId === "string" && messageId !== "" ? { messageId } : {}),
+			...(typeof actor === "string" && actor !== "" ? { actor } : {}),
 		};
 		// The origin is part of the team state, so another window sees the same routing.
 		void rt.save().catch((error: any) => rt.warn("ocean-crew: im origin not saved: %s", error));
@@ -860,7 +868,7 @@ export function install(rt: any) {
 		}
 		if (content.length === 0) return;
 		const requestId = `im:${conn.platform}:${randomUUID()}`;
-		noteOrigin(requestId, conn, msg.chat, sessionId, msg.messageId);
+		noteOrigin(requestId, conn, msg.chat, sessionId, msg.messageId, msg.sender?.id);
 		ownerOrigins.set(sessionId, requestId);
 		sessionOrigins.set(sessionId, requestId);
 		await rt.sendUser({ sessionId, content, requestId });

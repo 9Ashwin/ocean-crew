@@ -20,6 +20,7 @@ import { installLog } from "./log.ts";
 import { installPrompt } from "./prompt.ts";
 import { installRelay } from "./relay.ts";
 import { installRound } from "./round.ts";
+import { installTasksView } from "./tasks.ts";
 import { installTools } from "./tools.ts";
 import type { GroupHost, GroupTiming } from "./types.ts";
 
@@ -84,6 +85,8 @@ export function install(rt: Runtime): void {
 	installRound(host);
 	installRelay(host);
 	installTools(host);
+	// The read-only task view the chat shows: goal, status, results and delivery.
+	installTasksView(rt);
 }
 
 export { mentionSpans, nameProblem, referenceSpans, speakerOf } from "../../shared/mentions.ts";

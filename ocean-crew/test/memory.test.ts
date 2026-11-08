@@ -1595,3 +1595,24 @@ test("an unreadable tombstone file does not read as an empty one", async (t) => 
 	const kept = readdirSync(join(home, "memory", "bots", "m1")).filter((name) => name.includes(".corrupt-"));
 	assert.equal(kept.length, 1, "the damaged file is kept for inspection");
 });
+
+test("a forget reports the layers it covered instead of implying a full delete", async (t) => {
+	const { tool, rt, call, stop } = await start();
+	t.after(() => stop());
+	await tool("remember", { text: "The user lives in Shanghai" }, "m1");
+	await tool("remember", { text: "The user prefers metric units" }, "m1");
+	const result: any = await call("memory-forget", { botId: "m1", text: "shanghai", range: true });
+	assert.equal(result.forgotten.removed, 1);
+	// Only the matching entry is gone; the rest of the memory is still there.
+	const recalled = (await rt.memorySearch({ botId: "m1" }, { query: "" })) as Array<Record<string, any>>;
+	assert.deepEqual(
+		recalled.map((hit) => hit.text),
+		["The user prefers metric units"],
+	);
+	assert.equal(result.forgotten.layers.memory.removed, 1);
+	assert.equal(result.forgotten.layers.snapshots, "invalidated");
+	// The change log keeps its rows, the chats were never the plugin's, backups are not touched.
+	assert.equal(result.forgotten.layers.journal, "kept-without-restore");
+	assert.equal(result.forgotten.layers.chats, "untouched");
+	assert.equal(result.forgotten.layers.backups, "untouched");
+});
