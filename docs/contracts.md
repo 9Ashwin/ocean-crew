@@ -54,6 +54,10 @@
 - 必须保持：`client.js` 用 DSH 的加载器注册一个模块——`window.__ModuleLoader__.load({ id: 'ocean-crew', factory })`——它的 factory 只 require `react`、`react-dom` 和 `@deepseek-ai/dsh-client-ui-primitives`，导出恰好是 `apply` 和 `inject`，其中 `inject` 列出 `sessions`、`uiWorkspace`、`uiConversation`、`slots`、`theme` 和 `layout`。若被破坏：DSH 加载不了 client，或者加载时用到 shell 没有准备好的槽位或服务。
 - 必须保持：`client.js` 是 `ocean-crew/src/client/` 的构建结果，`dist/` 是 `ocean-crew/src/` 的构建结果。若被破坏：装进 DSH 的代码与源码不一致，检查门禁也会失败。
 
+## 重新初始化
+
+`reset-team` 是破坏性端点：它把 `bot/` 下的 `state.json`、`memory/`、`learning/`、`im/`、`chat-index.sqlite`、`inflight.json`、`scheduler-state.json` 复制到 `backups/reset-<ISO 时间戳>/`，然后用空团队覆盖 `state.json` 并重建第一个 Main Bot。保留 `secrets.json`、团队工作区设置、`logs/`、`usage.sqlite` 和 DSH 自己的会话。执行中若有 turn 在跑返回 `bot/busy`，只读 host 返回 `bot/read-only`；如果没有可运行的工作，重置也会完成。若被破坏：用户的团队数据在没有备份的情况下被删除，或者重置后没有主 Bot 可用。
+
 ## 团队数据
 
 host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件只由 host 读写；手改会与整份写入竞争，并可能丢字段。

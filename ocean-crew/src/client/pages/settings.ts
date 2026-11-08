@@ -347,6 +347,7 @@ function GeneralPage({ roster, actions, run }: any) {
 				)
 			: null,
 		h(LocationsSection, { key: "places", actions, run }),
+		h(ResetSection, { key: "reset", actions, run }),
 	];
 }
 
@@ -415,6 +416,74 @@ function LocationsSection({ actions, run }: any) {
 								t("Change…"),
 							),
 				),
+	);
+}
+
+// Starting over: the team is replaced by a fresh one, first Main Bot included. The
+// confirmation is in place because there is no undo from the UI; a backup stays on disk.
+function ResetSection({ actions, run }: any) {
+	const [confirming, setConfirming] = useState(false);
+	const [confirmAgain, setConfirmAgain] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [done, setDone] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const reset = (): void => {
+		if (!confirmAgain) {
+			setConfirmAgain(true);
+			return;
+		}
+		setBusy(true);
+		setError(null);
+		void Promise.resolve(run(actions.resetTeam()))
+			.then((answer: any) => {
+				setDone(answer?.backup ?? "");
+				setConfirming(false);
+				setConfirmAgain(false);
+			})
+			.catch((failure: any) => setError(failure?.message ?? String(failure)))
+			.finally(() => setBusy(false));
+	};
+	return h(
+		SetSection,
+		{ title: t("Start over") },
+		h(
+			SetRow,
+			{
+				label: t("Reinitialize the team"),
+				hint: t(
+					"Deletes every Bot, group chat, memory, schedule, IM pairing and index, then creates a new Chief Main Bot. API keys, the team workspace and DSH Sessions stay; a backup is kept on disk.",
+				),
+			},
+			confirming
+				? h(
+						"div",
+						{ className: "bt-set-actions" },
+						h(
+							"button",
+							{ type: "button", className: "bt-soft bt-soft-sm", onClick: reset, disabled: busy },
+							confirmAgain ? t("Reset now") : t("Reset…"),
+						),
+						h(
+							"button",
+							{
+								type: "button",
+								className: "bt-soft bt-soft-sm",
+								onClick: () => setConfirming(false),
+								disabled: busy,
+							},
+							t("Cancel"),
+						),
+					)
+				: h(
+						"button",
+						{ type: "button", className: "bt-danger bt-soft-sm", onClick: () => setConfirming(true) },
+						t("Reinitialize…"),
+					),
+		),
+		done === null
+			? null
+			: h("p", { className: "bt-set-hint" }, t("The team was reinitialized. Backup: {path}", { path: done })),
+		error === null ? null : h("p", { className: "bt-error" }, error),
 	);
 }
 

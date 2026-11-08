@@ -226,6 +226,7 @@ function moduleMembers(calls: Array<[string, ...unknown[]]>): Record<string, Mem
 		}),
 		setTeamWorkspace: async (path: string) => ({ id: "workspace-1", path }),
 		releaseArchive: rec("releaseArchive"),
+		resetTeam: async () => ({ backup: "backups/reset-test", path: "/tmp/backups/reset-test" }),
 		avatarLibraryView: async (options: unknown) => ({ items: [], options }),
 		avatarLibraryImport: async (items: unknown[]) => ({ added: items.length }),
 		avatarLibraryDelete: async (id: string) => ({ deleted: id }),

@@ -1218,7 +1218,7 @@ export function install(rt: Runtime): void {
 			role: rt.defaults.mainRole,
 			main: true,
 			color: "deepseek",
-			avatar: { shape: "whale" },
+			avatar: { shape: "marine-whale" },
 			pickModel: true,
 		}).finally(() => {
 			bootstrapping = null;

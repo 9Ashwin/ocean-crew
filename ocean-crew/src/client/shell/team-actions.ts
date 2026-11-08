@@ -235,6 +235,7 @@ export function teamActions({
 		folderPick: () => call("folder-pick"),
 		folderList: (path?: string) => call("folder-list", { path: path ?? "" }),
 		setTeamWorkspace: (path: string) => after(call("team-workspace", { path })),
+		resetTeam: () => after(call("reset-team", {})),
 		deleteBot: (id: string) => after(call("delete-bot", { id })),
 		releasePrivate: (id: string) => after(call("private-release", { id })),
 		duplicateBot: (id: string) => after(call("duplicate-bot", { id })),

@@ -37,7 +37,7 @@ github:9Ashwin/ocean-crew#main&path:/ocean-crew
 （需要本机装 Git。）点 **Install**、**Enable now**；如果 DSH 提示改动下次启动生效，完全退出 DSH
 再打开。插件不提交构建产物，安装时由 `prepare` 脚本现场构建 `dist/` 和 `client.js`。pnpm 默认会
 拦截依赖的构建脚本：遇到提示时允许 `ocean-crew` 的构建（DSH 的 Plugins 页面会给出确认，或在
-profile 的 `pnpm-workspace.yaml` 中加 `allowBuilds`）。
+profile 的 `pnpm-workspace.yaml` 中加 `allowBuilds`，或在本机 profile 的 `pnpm-workspace.yaml` 里加 `dangerouslyAllowAllBuilds: true`）。
 
 ### 从本机检出安装（开发用）
 
@@ -71,6 +71,7 @@ node dev/install-local.mjs             # 安装并让 DSH 重新加载
 - **IM。** 把 Bot 接到飞书或微信私聊：配对、审批卡和回复都在那里完成，不需要公网地址、不开端口。
 - **网页搜索。** 自带 `auto` 搜索提供方：优先用当前模型路由自己的搜索能力，否则走无 key 的公开结果页回退。
 - **用量与外观。** 按时间、Bot 和模型统计 token；12 个海洋形象、13 种颜色，团队主题、强调色、消息布局和动画三档可调。
+- **重新开始。** 设置里可以重新初始化团队：清空 Bot、群聊、记忆、学习、日程与 IM 配对，留下密钥和团队工作区，重建一个 Chief 主 Bot，并先把旧数据备份到磁盘。
 
 插件自身的文档见 [`ocean-crew/README.md`](ocean-crew/README.md)。
 

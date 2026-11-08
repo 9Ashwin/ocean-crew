@@ -1533,6 +1533,14 @@ const ZH: Record<string, string> = {
 	// New copy the IM page adds for the web build, where QR pairing needs the host
 	// module and its encoder;
 	"Pairing is not available in this build.": "此构建暂不支持配对。",
+	"Start over": "重新开始",
+	"Reinitialize the team": "重新初始化团队",
+	"Deletes every Bot, group chat, memory, schedule, IM pairing and index, then creates a new Chief Main Bot. API keys, the team workspace and DSH Sessions stay; a backup is kept on disk.":
+		"会删除所有 Bot、群聊、记忆、日程、IM 配对与索引，然后重新创建 Chief 主 Bot。API key、团队工作区和 DSH 会话保留；磁盘上会留一份备份。",
+	"Reset…": "重置…",
+	"Reset now": "确认重置",
+	"Reinitialize…": "重新初始化…",
+	"The team was reinitialized. Backup: {path}": "团队已重新初始化。备份：{path}",
 };
 
 // Host errors stay English, since Bots read them too; they are translated where the

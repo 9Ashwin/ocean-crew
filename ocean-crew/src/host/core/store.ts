@@ -399,6 +399,17 @@ export function install(rt: Runtime): void {
 		return warnReadOnly();
 	};
 
+	// Replace the whole team with the empty state and save it. The reset module calls
+	// this before creating the first Main Bot again.
+	const clearTeam = async (): Promise<void> => {
+		if (!writable())
+			throw Object.assign(new Error(`This host cannot clear the Bot team: ${readOnly()}`), {
+				code: "bot/read-only",
+			});
+		adopt(undefined);
+		await save({ required: true });
+	};
+
 	const save = (options: { required?: boolean } = {}): Promise<void> => {
 		const { required = false } = options;
 		if (stopped)
@@ -648,6 +659,7 @@ export function install(rt: Runtime): void {
 		own,
 		onSaved,
 		closeCard,
+		clearTeam,
 		botOf,
 		roomOf,
 		isMain,

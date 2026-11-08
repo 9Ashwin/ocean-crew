@@ -400,7 +400,7 @@ test("the first Main Bot waits for the user to pick a model, then greets", async
 	assert.equal(main.name, "Chief");
 	assert.equal(main.role, "Chief of Staff");
 	assert.equal(main.model, undefined);
-	assert.deepEqual(main.avatar, { shape: "whale" });
+	assert.deepEqual(main.avatar, { shape: "marine-whale" });
 	assert.equal(main.color, "deepseek");
 	assert.notEqual(main.kickoff, undefined);
 	assert.equal(kickoffs(test).length, 0);
@@ -428,7 +428,7 @@ test("a new team's Main Bot is made once, also when bootstrap runs twice at once
 	assert.deepEqual(test.rt.state.mainBotIds.length, 1);
 	const main = botOf(test, test.rt.state.mainBotIds[0]) as Bot;
 	assert.equal(main.name, "Chief");
-	assert.deepEqual(main.avatar, { shape: "whale" });
+	assert.deepEqual(main.avatar, { shape: "marine-whale" });
 	// The greeting is held: no model is served yet, and the user picks one.
 	assert.notEqual(main.kickoff, undefined);
 	assert.equal(kickoffs(test).length, 0);
@@ -607,7 +607,7 @@ test("another Bot takes the Main Bot place in one step", async (t) => {
 	await test.rt.setMain(writer.id, true, { replace: chief });
 	assert.deepEqual(test.rt.state.mainBotIds, [writer.id]);
 	// The whale stays with the Bot it was given to.
-	assert.deepEqual(botOf(test, chief)?.avatar, { shape: "whale" });
+	assert.deepEqual(botOf(test, chief)?.avatar, { shape: "marine-whale" });
 	// The old Main Bot can now be deleted, and no new Chief is made in its place.
 	await test.rt.deleteBot(chief);
 	assert.deepEqual(test.rt.state.mainBotIds, [writer.id]);

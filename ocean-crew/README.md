@@ -23,7 +23,7 @@ github:9Ashwin/ocean-crew#main&path:/ocean-crew
 
 （需要本机装 Git。）点 **Install**、**Enable now**。pnpm 默认拦截依赖的构建脚本；遇到提示时允许
 `ocean-crew` 的构建（DSH 的 Plugins 页面会给出确认，或在 profile 的 `pnpm-workspace.yaml` 中加
-`allowBuilds`）。
+`allowBuilds`，或在本机 profile 的 `pnpm-workspace.yaml` 里加 `dangerouslyAllowAllBuilds: true`）。
 
 ### 从本机检出安装（开发用）
 
@@ -78,6 +78,7 @@ host 侧改动需要重启 DSH。
 - **侧聊与旁白。** `/side` 在右栏打开侧聊，从 Bot 当前聊天快照作答、不运行工具；旁白（btw）把补充
   说明以卡片形式贴在聊天里。
 - **用量与更新。** 按时间、Bot 和模型统计 token；插件和 DSH 有更新时在窗口里提示并可直接安装。
+- **重新开始。** 设置 →「重新开始」可以重新初始化团队：清空 Bot、群聊、记忆、学习、日程与 IM 配对，保留密钥、团队工作区和 DSH 会话，重建 Chief 主 Bot；重置前会把数据备份到 `bot/backups/reset-<时间戳>/`。
 - **外观。** 12 个海洋形象、13 种颜色（`assets/marine/`，默认蓝鲸 `marine-whale`），也可以上传照片；
   团队主题、强调色、消息布局和动画三档在设置里调。每个形象层与色板由 `ocean-crew/src/client/look/marine-assets.ts`
   统一渲染。仓库顶部配图见根 [README](../README.md)。

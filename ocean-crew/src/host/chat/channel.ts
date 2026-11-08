@@ -126,6 +126,7 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 	"folder-list",
 	"team-workspace",
 	"private-release",
+	"reset-team",
 
 	"avatar-library",
 	"avatar-import",
@@ -972,6 +973,9 @@ export function install(rt: Runtime): void {
 		async "team-workspace"(body) {
 			await load();
 			return ok({ team: await callMember("team-workspace", "setTeamWorkspace", String(body.path ?? "")) });
+		},
+		async "reset-team"() {
+			return ok(await callMember("reset-team", "resetTeam"));
 		},
 		async "private-release"(body) {
 			await load();

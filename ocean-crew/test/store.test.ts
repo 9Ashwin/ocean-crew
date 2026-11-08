@@ -696,6 +696,24 @@ test("an older team is brought forward without losing what the user set", async 
 	assert.equal(state.exchanges[0].length, 2100);
 });
 
+test("clearing the team empties the saved team and bumps its revision", async (t) => {
+	const { rt, statePath } = runtime(t, {
+		version: 1,
+		mainBotIds: ["chief"],
+		bots: { chief: { id: "chief", name: "Chief", createdAt: 1 } },
+		rooms: { r1: { id: "r1", name: "Room", members: ["chief"], log: [] } },
+		revision: 7,
+	});
+	await rt.load();
+	await rt.clearTeam();
+	assert.deepEqual(rt.state.bots, {});
+	assert.deepEqual(rt.state.rooms, {});
+	const saved = JSON.parse(fs.readFileSync(statePath, "utf8"));
+	assert.deepEqual(saved.bots, {});
+	// A cleared team starts a fresh revision, so every reader knows it changed.
+	assert.equal(saved.revision, 1);
+});
+
 test("the Session index maps every live and archived part of a Bot and a group", async (t) => {
 	const archived: string[] = [];
 	const unarchived: string[] = [];
