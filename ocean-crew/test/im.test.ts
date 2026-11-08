@@ -949,3 +949,42 @@ test("changing a chat's target invalidates routes recorded before it", async (t)
 	await s.flush();
 	assert.deepEqual(s.fake.sent, [], "a stale binding sends nothing");
 });
+
+// A card belongs to the request that raised it, like its text does.
+test("a question card goes only to the chat whose request raised it", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 }, { id: "u2", name: "U2", at: 1 });
+	one.chats ??= {};
+	one.chats["dm-u1"] = { kind: "direct", title: "U1", at: 1 };
+	one.chats["dm-u2"] = { kind: "direct", title: "U2", at: 1 };
+	await s.rt.save();
+	// The request came from u1; u2 is a bound chat but did not ask for this.
+	await dm(s, "u1", "raise a question");
+	await s.flush();
+	s.fake.sent.length = 0;
+	s.rt.state.questions.a = { id: "q1", question: "Which?", options: [{ label: "yes" }, { label: "no" }] };
+	await s.rt.save();
+	await s.flush();
+	assert.ok(await s.until(() => s.fake.sent.length > 0), "the card is sent");
+	assert.ok(
+		s.fake.sent.every((entry: any) => entry.chat.key === "dm-u1"),
+		`only the asking chat gets the card, saw ${JSON.stringify(s.fake.sent.map((entry: any) => entry.chat.key))}`,
+	);
+});
+
+test("a question raised in the window sends no card to IM", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await s.flush();
+	s.fake.sent.length = 0;
+	// The window opened the question: no IM request raised it.
+	s.rt.state.questions.a = { id: "q2", question: "Which?", options: [{ label: "yes" }] };
+	await s.rt.save();
+	await s.flush();
+	assert.deepEqual(s.fake.sent, [], "a window question stays in the window");
+});

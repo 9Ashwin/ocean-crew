@@ -949,7 +949,13 @@ export function install(rt: any) {
 				const bot = rt.botOf(botId);
 				if (bot === undefined) continue;
 				const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.question(question) : undefined;
-				await sendCard(conn, cardKey, listeners(conn, { botId }), cardText.question(bot.name, question), buttons);
+				await sendCard(
+					conn,
+					cardKey,
+					replyTargets(sessionOrigins.get(sessionId), `bot:${botId}`),
+					cardText.question(bot.name, question),
+					buttons,
+				);
 			}
 			// Secret requests: text only — the key is typed on the computer or phone.
 			for (const [botId, list] of Object.entries((state.secretRequests ?? {}) as Record<string, any[]>)) {
@@ -961,7 +967,7 @@ export function install(rt: any) {
 					await sendCard(
 						conn,
 						cardKey,
-						listeners(conn, { botId }),
+						replyTargets(ownerOrigins.get(botId), `bot:${botId}`),
 						text("secretAsk", { bot: bot.name, name: request.name }),
 					);
 				}
@@ -977,7 +983,7 @@ export function install(rt: any) {
 				await sendCard(
 					conn,
 					cardKey,
-					listeners(conn, { botId }),
+					replyTargets(sessionOrigins.get(sessionId), `bot:${botId}`),
 					`${text("viewShow", { bot: bot.name })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
 				);
 			}
@@ -1667,10 +1673,12 @@ export function install(rt: any) {
 					const runner = runners.get(conn.id);
 					if (runner === undefined) continue;
 					const bot = rt.botOf(data.botId);
+					// An approval goes to the chat whose request triggered it; an approval raised
+					// in the window stays in the window.
 					const targets =
 						data.roomId !== undefined
-							? listeners(conn, { roomId: data.roomId })
-							: listeners(conn, { botId: data.botId });
+							? replyTargets(ownerOrigins.get(String(data.roomId)), `room:${data.roomId}`)
+							: replyTargets(ownerOrigins.get(String(data.botId)), `bot:${data.botId}`);
 					const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.approval(data.id) : undefined;
 					await sendCard(conn, `a:${data.id}`, targets, cardText.approval(bot?.name ?? "?", data), buttons);
 				}
