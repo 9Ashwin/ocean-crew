@@ -32,6 +32,36 @@ export interface WorkInfo {
 	senderSessionId?: string;
 }
 
+/** Whether a result that a Bot took up has reached the user it was for. */
+export type PublishState = "pending" | "taken" | "delivered" | "abandoned";
+
+/**
+ * A result's publish duty: what still has to happen before the user has seen it.
+ * Taking a result only moves it to `taken`; shipping the answer that carries it is a
+ * separate step, so a dropped or rewritten answer cannot pass for delivery.
+ */
+export interface PublishDuty {
+	state: PublishState;
+	at: number;
+	/** The Bot whose answer is to carry the result to the user. */
+	by?: string;
+	/** The group whose log delivers the result, when it was handed on in one. */
+	room?: string;
+	/** The start of the result, as state.json keeps it. */
+	text?: string;
+	/** Why a duty was abandoned instead of delivered. */
+	reason?: string;
+}
+
+/** One result in the publish ledger; it outlives the works it came from. */
+export interface PublishDutyRecord extends PublishDuty {
+	id: string;
+	/** The work the result was handed up into, when there is one. */
+	parent?: string;
+	/** The name the result is shown under. */
+	name?: string;
+}
+
 /** One result a work handed back. */
 export interface WorkResult {
 	id: string;
@@ -121,6 +151,7 @@ interface LiveApi {
 // single cast states that gap; no shared file changes.
 interface StateWithWorks {
 	works?: Record<string, Work>;
+	publishDuties?: Record<string, PublishDutyRecord>;
 }
 
 export function install(rt: Runtime): void {
@@ -130,6 +161,13 @@ export function install(rt: Runtime): void {
 		table.works ??= {};
 		return table.works;
 	};
+	// Results that still owe the user a delivery, kept after their works are gone.
+	const duties = (): Record<string, PublishDutyRecord> => {
+		table.publishDuties ??= {};
+		return table.publishDuties;
+	};
+	const DUTIES_KEPT = 100;
+	const DUTY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 	// What came back, whole; state.json keeps the start of each.
 	const whole = new Map<string, string>();
 	const save = (): void => {
@@ -228,6 +266,9 @@ export function install(rt: Runtime): void {
 	// session id of the subagent a run of this work belongs to — the run, not the
 	// child, is the sub-work, so a child that is continued hands up a result per run.
 	function openWork(id: string, { from, to, parent, fromRoom, room, name, child }: OpenWorkOptions): void {
+		// The work id is the replay key: a request replayed with the same id is the same
+		// hand-off, not a second one. `dropWork` removes the id, so it can be opened again.
+		if (works()[id] !== undefined) return;
 		const above = parent === undefined ? undefined : works()[parent];
 		works()[id] = {
 			...(from ? { from } : {}),
@@ -245,11 +286,88 @@ export function install(rt: Runtime): void {
 		save();
 	}
 
+	// The publish duty of a result: pending from the moment it exists. The room the work
+	// was handed on in is where the user reads it; without a room the asker's answer
+	// carries it, so only the top of a chain keeps a duty.
+	const openDuty = (id: string, work: Work, name: string, text: string): void => {
+		const room = work.room ?? work.fromRoom;
+		if (room === undefined && work.parent !== undefined) return;
+		duties()[id] = {
+			id,
+			state: "pending",
+			at: Date.now(),
+			...(work.from !== undefined ? { by: work.from } : {}),
+			...(room !== undefined ? { room } : {}),
+			...(work.parent !== undefined ? { parent: work.parent } : {}),
+			name,
+			text: headOf(text, TEXT_KEPT),
+		};
+		pruneDuties();
+	};
+
+	// Delivered duty and every result folded into it. One line that reaches the user
+	// settles the whole chain it summarized.
+	function deliver(id: string): boolean {
+		const duty = duties()[id];
+		if (duty === undefined) return false;
+		duty.state = "delivered";
+		duty.at = Date.now();
+		delete duty.reason;
+		for (const child of Object.values(duties()))
+			if (child.parent === id && child.state !== "delivered") {
+				child.state = "delivered";
+				child.at = duty.at;
+				delete child.reason;
+			}
+		return true;
+	}
+
+	// A duty that is dropped instead of delivered says so; it is never silently removed.
+	function abandon(id: string, reason: string): void {
+		const duty = duties()[id];
+		if (duty === undefined || duty.state === "delivered") return;
+		duty.state = "abandoned";
+		duty.at = Date.now();
+		duty.reason = reason;
+		for (const child of Object.values(duties()))
+			if (child.parent === id && child.state !== "delivered") {
+				child.state = "abandoned";
+				child.at = duty.at;
+				child.reason = reason;
+			}
+	}
+
+	// Old duties go first. One still owed is kept until its retention runs out, and is
+	// then marked abandoned with the reason instead of being forgotten. Past the count
+	// limit the oldest owed duty becomes the same explicit failure, so a busy team's
+	// state file stays bounded without a duty vanishing unannounced.
+	function pruneDuties(): void {
+		const kept = Object.values(duties()).sort((left, right) => left.at - right.at);
+		const now = Date.now();
+		for (const duty of kept) {
+			if (duty.state === "delivered" || duty.state === "abandoned") continue;
+			if (now - duty.at > DUTY_TTL_MS)
+				abandon(duty.id, "the user was not confirmed to have received this result within 7 days");
+		}
+		const all = Object.values(duties()).sort((left, right) => left.at - right.at);
+		for (const duty of all.slice(0, Math.max(0, all.length - DUTIES_KEPT))) {
+			if (duty.state === "pending" || duty.state === "taken")
+				abandon(duty.id, "the publish ledger reached its retention limit before delivery was confirmed");
+		}
+		for (const duty of Object.values(duties()).sort((left, right) => left.at - right.at)) {
+			if (Object.keys(duties()).length <= DUTIES_KEPT) break;
+			if (duty.state === "delivered" || duty.state === "abandoned") delete duties()[duty.id];
+		}
+	}
+
 	// The answer to work `id` is on its way, with `result` from `name`. Returns the work
 	// it goes on with. That work keeps waiting until a turn reads the answer (`taken`).
 	function closeWork(id: string, name: string, text: string): string | undefined {
 		const work = works()[id];
 		if (work === undefined) return undefined;
+		// The result exists from here on; its delivery to the user is a duty that survives
+		// taken, the parent's answer and the removal of this work record.
+		openDuty(id, work, name, text);
 		delete works()[id];
 		// What it still waits for comes back to it alone.
 		for (const child of Object.values(works())) if (child.parent === id) delete child.parent;
@@ -326,6 +444,11 @@ export function install(rt: Runtime): void {
 		const work = works()[id];
 		if (work === undefined) return;
 		const { parent } = work;
+		// Dropping the work removes the answer that would have carried these results: the
+		// duties become explicit failures instead of vanishing with it.
+		for (const result of work.results ?? [])
+			abandon(result.id, `the work was dropped before ${result.name}'s result reached the user`);
+		abandon(id, "the work was dropped before its result reached the user");
 		delete works()[id];
 		const above = parent === undefined ? undefined : works()[parent];
 		if (above !== undefined) above.open = above.open.filter((other) => other !== id);
@@ -342,6 +465,13 @@ export function install(rt: Runtime): void {
 		const work = works()[workId];
 		if (work === undefined || !work.open.includes(id)) return;
 		work.open = work.open.filter((other) => other !== id);
+		// The asking Bot read the result. That is not the user reading it: the publish
+		// duty stays open until the answer that carries it is delivered.
+		const duty = duties()[id];
+		if (duty !== undefined && duty.state === "pending") {
+			duty.state = "taken";
+			duty.at = Date.now();
+		}
 		save();
 	}
 
@@ -571,12 +701,39 @@ export function install(rt: Runtime): void {
 		return lines.join("; ");
 	}
 
+	// The publish ledger as other modules read and settle it. Groups call
+	// `deliverWorkInRoom` when a Bot's line reaches the group log, which is where the
+	// user reads it.
+	const publishOf = (id?: string): PublishDutyRecord | undefined => (id === undefined ? undefined : duties()[id]);
+	const publishDuties = (): PublishDutyRecord[] => Object.values(duties());
+	const deliverWork = (id: string): boolean => {
+		const done = deliver(id);
+		pruneDuties();
+		if (done) save();
+		return done;
+	};
+	function deliverWorkInRoom(roomId: string, botId?: string): number {
+		let count = 0;
+		for (const duty of Object.values(duties())) {
+			if (duty.room !== roomId || duty.state === "delivered" || duty.state === "abandoned") continue;
+			if (botId !== undefined && duty.by !== botId) continue;
+			if (deliver(duty.id)) count += 1;
+		}
+		pruneDuties();
+		if (count > 0) save();
+		return count;
+	}
+
 	Object.assign(rt, {
 		workOf,
 		openWork,
 		closeWork,
 		dropWork,
 		takenWork: taken,
+		publishOf,
+		publishDuties,
+		deliverWork,
+		deliverWorkInRoom,
 		lateWork,
 		answerMissed,
 		ownsWork: owns,

@@ -1,9 +1,10 @@
 // Group chats: the room log, members' group Sessions, rounds and @mentions, round
 // reports, and the group tools (group_relay, read_own_chat, read_group_chat).
 // install() wires the module onto the runtime; the parts live in log.ts (log and long
-// lines), prompt.ts (what a member reads), round.ts (who answers, in what order),
-// relay.ts (posts, late replies and the relay step a group Session is given) and
-// tools.ts (the three tools).
+// lines), calls.ts (recoverable call batches, summaries, replays and budgets),
+// prompt.ts (what a member reads), round.ts (who answers, in what order), relay.ts
+// (posts, late replies and the relay step a group Session is given) and tools.ts (the
+// three tools).
 
 import { join } from "node:path";
 import {
@@ -14,6 +15,7 @@ import {
 	ROOM_WORK_GRACE_MS,
 } from "../core/constants.ts";
 import type { Runtime } from "../core/runtime.ts";
+import { installCalls } from "./calls.ts";
 import { installLog } from "./log.ts";
 import { installPrompt } from "./prompt.ts";
 import { installRelay } from "./relay.ts";
@@ -77,6 +79,7 @@ export function install(rt: Runtime): void {
 	});
 
 	installLog(host);
+	installCalls(host);
 	installPrompt(host);
 	installRound(host);
 	installRelay(host);
@@ -98,4 +101,16 @@ export {
 	stripOwnName,
 	transcript,
 } from "./log.ts";
-export type { GroupHost, GroupRoom, GroupTiming, Round, Slot } from "./types.ts";
+export type {
+	CallBatch,
+	CallGoal,
+	GroupBudget,
+	GroupBudgetView,
+	GroupHost,
+	GroupRoom,
+	GroupTiming,
+	RelayResult,
+	Round,
+	SavedCallBatch,
+	Slot,
+} from "./types.ts";

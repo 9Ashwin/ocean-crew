@@ -6,12 +6,22 @@
 
 // they do not.
 
+import { randomUUID } from "node:crypto";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { TEXT_KEPT } from "../core/constants.ts";
 import type { TeamTool } from "../core/runtime.ts";
 import { headOf, unquote } from "../core/text.ts";
-import { ensureRoomLog, fileLine, isIdleRelayText, lineText, mentionsIn, mentionsOf, transcript } from "./log.ts";
-import type { BotLike, GroupHost, GroupLine, GroupRoom, InboxPost, Round, Slot } from "./types.ts";
+import {
+	ensureRoomLog,
+	fileLine,
+	goalFields,
+	isIdleRelayText,
+	lineText,
+	mentionsIn,
+	mentionsOf,
+	transcript,
+} from "./log.ts";
+import type { BotLike, GroupHost, GroupLine, GroupRoom, InboxPost, RelayResult, Round, Slot } from "./types.ts";
 import { asRoom, savedRoom } from "./types.ts";
 
 // The group argument shared by the group tools;
@@ -62,6 +72,18 @@ export function installTools(host: GroupHost): void {
 				if (saved === undefined) return JSON.stringify({ error: "Not a group chat" });
 				const room = asRoom(saved);
 				ensureRoomLog(room);
+				// The callId is the replay identity: the same call runs once, while the same
+				// words sent as a new call are a new task.
+				const callId = typeof exec.callId === "string" && exec.callId !== "" ? exec.callId : randomUUID();
+				host.recoverCalls(room);
+				const replay = host.beginRelay(room, callId);
+				if (replay !== undefined) {
+					exec.concludeTurn?.();
+					return JSON.stringify(replay);
+				}
+				// A failure inside the round is saved below; one before it leaves the record
+				// running, which a replay reports as interrupted.
+				let relayError: unknown;
 				// Everything queued since the last relay is posted in order, so messages that the
 				// Session folds into one turn are not lost; the newest one picks the speakers.
 				const queued = (rt.roomInbox.get(room.id) ?? []) as InboxPost[];
@@ -122,6 +144,10 @@ export function installTools(host: GroupHost): void {
 					]
 						.filter(Boolean)
 						.join("\n");
+					// A late result's post reaches the group through the group's own Session,
+					// which does not carry the goal snapshot; it was kept for this line.
+					const lateGoal =
+						post.late === true && post.botId !== undefined ? host.takeLateGoal(room, post.botId) : undefined;
 					host.appendRoom(room, {
 						...(post.botId
 							? { who: rt.botOf(post.botId)?.name ?? post.name ?? "Bot", botId: post.botId }
@@ -130,7 +156,12 @@ export function installTools(host: GroupHost): void {
 						...(post.images === undefined ? {} : { images: post.images }),
 						...(post.files === undefined ? {} : { files: post.files }),
 						...(post.via === undefined ? {} : { via: post.via }),
+						...(post.late === true ? { late: true } : {}),
+						...goalFields(lateGoal),
 					});
+					// The group log is where the user reads it: a line by a Bot settles any
+					// final summary it owed this group.
+					if (post.botId !== undefined) host.deliverSummary(room, post.botId, text);
 				}
 				await rt.save();
 				if (posts.some(userPost)) rt.goalUserMessage?.(room.id);
@@ -194,6 +225,8 @@ export function installTools(host: GroupHost): void {
 					roomId: room.id,
 					members: room.members,
 					startSeq,
+					callId,
+					...(host.goalAt(room.id) !== undefined ? { goal: host.goalAt(room.id) } : {}),
 					goalRevision: room.goal?.revision,
 					...(posts.some(userPost) ? { userMessage: true } : {}),
 					...(opener.kickoff ? { kickoff: true } : {}),
@@ -207,6 +240,7 @@ export function installTools(host: GroupHost): void {
 							name: member.name,
 							status: "waiting",
 							batch: 1,
+							...(host.goalAt(room.id) !== undefined ? { goal: host.goalAt(room.id) } : {}),
 							...(ordered ? { ordered: true } : {}),
 							// A round a Bot's post opened: what its members answer is Bot-to-Bot, counted
 							// by the idle guard even though no one is named (#853).
@@ -237,6 +271,11 @@ export function installTools(host: GroupHost): void {
 					host.clearIdleStreak(room);
 				if (holdsPost && poster !== undefined)
 					host.holdIdleCalls(room, round, poster, opened.speakers, { named, all: openerMentions.all === true });
+				// The budget scope (this ask, or the active goal revision) starts before any turn
+				// spends from it; a restarted or late batch that still owes a summary is
+				// resumed in this round.
+				host.beginBudget(room, round);
+				host.restoreSummaries(room, round);
 				// The group transcript hides the goal trigger, so the user sees their request as a reply.
 				for (const post of posts.filter((item) => item.goal === "draft" && item.logged === undefined)) {
 					round.replies.push({ kind: "user", text: post.text, time: host.now() });
@@ -268,13 +307,14 @@ export function installTools(host: GroupHost): void {
 				}
 				if (posts.some((post) => post.resumed || post.stopped || post.done)) await rt.save();
 				host.releaseParked(room, round);
-				rt.roomProgress.set(exec.callId as string, round);
+				rt.roomProgress.set(callId, round);
 				try {
 					await host.runRound(room, round, exec.signal, exec.agent);
 				} catch (error) {
+					relayError = error;
 					rt.warn("ocean-crew: group round in %s stopped: %s", room.name, error);
 				} finally {
-					rt.roomProgress.delete(exec.callId as string);
+					rt.roomProgress.delete(callId);
 				}
 				if (exec.signal?.aborted) {
 					for (const turn of round.started) {
@@ -315,11 +355,14 @@ export function installTools(host: GroupHost): void {
 					);
 				}
 				exec.concludeTurn?.();
-				return JSON.stringify({
+				const result: RelayResult = {
 					replies: round.replies,
 					passed: round.passed,
 					...(round.failed.length > 0 ? { failed: round.failed } : {}),
-				});
+				};
+				if (relayError === undefined) host.finishRelay(room, callId, result);
+				else host.failRelay(room, callId, relayError);
+				return JSON.stringify(result);
 			},
 		}),
 	);

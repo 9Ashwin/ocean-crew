@@ -7,8 +7,8 @@ import { randomUUID } from "node:crypto";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { failureLine } from "../chat/turns.ts";
 import { SOURCE_KIND } from "../core/constants.ts";
-import { fileLine, isIdleRelayText, isPass, mentionsIn, mentionsOf, stripOwnName } from "./log.ts";
-import type { BotLike, GroupHost, InboxPost, Round, TurnFailure } from "./types.ts";
+import { fileLine, goalFields, isIdleRelayText, isPass, mentionsIn, mentionsOf, stripOwnName } from "./log.ts";
+import type { BotLike, CallGoal, GroupHost, InboxPost, Round, TurnFailure } from "./types.ts";
 import { asRoom, savedRoom } from "./types.ts";
 
 // Wires the relay into the host and publishes its members on rt.
@@ -21,6 +21,10 @@ export function installRelay(host: GroupHost): void {
 		const sessions = ctx.sessions as { flush?: (session: unknown) => Promise<unknown> } | undefined;
 		await sessions?.flush?.(session);
 	};
+	// A round is running in the room right now: a late post lands in its log directly,
+	// so the goal snapshot travels on the post instead of the saved late-goal list.
+	const roundRunning = (room: { id: string }): boolean =>
+		[...rt.roomProgress.values()].some((round: Round) => round.roomId === room.id && round.nudge !== undefined);
 
 	// A Bot's post that lands while a round runs calls its members in that round at
 	// once, as the relay it opens would. A post that wants the replies (`reportBack`)
@@ -50,6 +54,14 @@ export function installRelay(host: GroupHost): void {
 		const by = speakers.filter((peer) => named.includes(peer));
 		const rest = speakers.filter((peer) => !named.includes(peer));
 		const note = extra.done ? `${sender.name} finished the work you asked for` : undefined;
+		// A barrier completing inside a running round still owes the caller its summary:
+		// asking here records the duty on the batch, so the next round does not ask again.
+		if (extra.done && extra.askedBy !== undefined && note !== undefined) {
+			let asked = false;
+			for (const batch of host.summaryBatches(room, String(extra.askedBy)))
+				asked = host.askSummary(room, round, batch, note) || asked;
+			if (asked) return true;
+		}
 		host.callIn(round, by, note ?? `${sender.name} mentioned you`, sender.id, { ordered });
 		host.callIn(round, rest, note, undefined, { ordered });
 		if (rt.isAdminOf(savedRoom(room), sender.id)) for (const peer of speakers) rt.goalTaskWorking?.(room.id, peer.id);
@@ -65,6 +77,7 @@ export function installRelay(host: GroupHost): void {
 				},
 				ids: speakers.map((peer) => peer.id),
 				from: round.replies.length,
+				...(host.goalAt(room.id) !== undefined ? { goal: host.goalAt(room.id) } : {}),
 			});
 		}
 		return true;
@@ -109,13 +122,27 @@ export function installRelay(host: GroupHost): void {
 				const line = [text, ...files.map((file) => fileLine(file as { name: string; bytes: number }))]
 					.filter(Boolean)
 					.join("\n");
+				// A late result carries the goal revision it was asked for under, not the one
+				// the goal happens to be at now.
+				const goal = goalFields(extra.dispatchGoal as CallGoal | undefined);
 				host.appendRoom(room, {
 					who: sender.name,
 					botId: sender.id,
 					text: line,
 					...(files.length > 0 ? { files } : {}),
+					...(extra.late === true ? { late: true } : {}),
+					...goal,
 				});
-				running.replies.push({ botId: sender.id, name: sender.name, color: sender.color, text: line, time: now() });
+				running.replies.push({
+					botId: sender.id,
+					name: sender.name,
+					color: sender.color,
+					text: line,
+					time: now(),
+					...goal,
+				});
+				// The group log is what the user reads: this line delivers what the Bot owed.
+				host.deliverSummary(room, sender.id, line);
 			}
 			host.callPost(room, running, sender, text, extra);
 			await rt.save();
@@ -170,13 +197,16 @@ export function installRelay(host: GroupHost): void {
 			}
 			return;
 		}
-		const batchKey = `${room.id}:${member.id}`;
+		const batchKey = host.batchKeyOf(room.id, member.id);
 		const currentBatch = host.memberBatch.get(batchKey);
 		const batch =
 			currentBatch !== undefined && (info.role !== "room" || info.askedBy === currentBatch.by)
 				? currentBatch
 				: undefined;
 		const askedBy = info.role === "room" ? info.askedBy : (info.askedBy ?? batch?.by);
+		// The batch remembers where the goal stood when it called this member; the late
+		// result keeps that revision even if the goal moved on meanwhile.
+		const dispatchGoal = batch?.goal;
 		// The admin asked for this result: its goal task is reported at once, even
 		// while the other members of the batch still work.
 		if (askedBy === room.admin && (!isPass(text) || shown)) rt.goalTaskReported?.(room.id, member.id);
@@ -188,14 +218,20 @@ export function installRelay(host: GroupHost): void {
 		if (batch !== undefined) {
 			if (named.length > 0) batch.answered = true;
 			if (!isPass(text) || shown) batch.done.push(member.name);
+			if (!isPass(text)) host.noteBatchResult(room, batch, member.id, member.name, text);
 			host.dropMemberFromBatch(room, member.id);
 			waitingPeers = batch.pending.size > 0;
 			batchDoneBefore = !waitingPeers && batch.done.length > 0 && !batch.answered;
 		}
 		if (waitingPeers && named.length === 0) {
 			if (!isPass(text)) {
+				if (!roundRunning(room)) host.noteLateGoal(room, member.id, dispatchGoal);
 				await host
-					.postToRoom(room, member, text, { late: true, quiet: true })
+					.postToRoom(room, member, text, {
+						late: true,
+						quiet: true,
+						...(dispatchGoal !== undefined ? { dispatchGoal } : {}),
+					})
 					.catch((error: unknown) =>
 						rt.warn("ocean-crew: late group reply from %s failed: %s", member.name, error),
 					);
@@ -204,11 +240,13 @@ export function installRelay(host: GroupHost): void {
 		}
 		const done = isPass(text) && (shown || batchDoneBefore) && askedBy !== undefined;
 		if (isPass(text) && !done) return;
+		if (!isPass(text) && !roundRunning(room)) host.noteLateGoal(room, member.id, dispatchGoal);
 		await host
 			.postToRoom(room, member, done ? "" : text, {
 				late: true,
 				...(done ? { done: true } : {}),
 				...(askedBy ? { askedBy } : {}),
+				...(dispatchGoal !== undefined ? { dispatchGoal } : {}),
 			})
 			.catch((error: unknown) => rt.warn("ocean-crew: late group reply from %s failed: %s", member.name, error));
 	};
@@ -306,6 +344,7 @@ export function installRelay(host: GroupHost): void {
 		if (saved === undefined || member === undefined) return;
 		const room = asRoom(saved);
 		if (!room.members.includes(member.id)) return;
+		const dispatchGoal = host.memberBatch.get(host.batchKeyOf(room.id, member.id))?.goal;
 		const batch = host.dropMemberFromBatch(room, member.id);
 		const wakeCaller =
 			batch !== undefined && batch.pending.size === 0 && batch.done.length > 0 && !batch.answered
@@ -319,6 +358,7 @@ export function installRelay(host: GroupHost): void {
 				late: true,
 				...(wakeCaller ? { askedBy: wakeCaller } : { quiet: true }),
 				failed: { code, ...(status ? { status } : {}), message },
+				...(dispatchGoal !== undefined ? { dispatchGoal } : {}),
 			})
 			.catch((error: unknown) => rt.warn("ocean-crew: late group failure from %s failed: %s", member.name, error));
 	};
@@ -348,6 +388,15 @@ export function installRelay(host: GroupHost): void {
 	rt.greetRoom = host.greetRoom;
 
 	host.reportRound = async (room, post, round) => {
+		const reportGoal = round.reports?.find(
+			(entry) => entry.post.botId === post.botId && (post.sub === undefined || entry.post.sub === post.sub),
+		)?.goal;
+		const revisionNote =
+			reportGoal?.revision !== undefined &&
+			room.goal?.revision !== undefined &&
+			room.goal.revision !== reportGoal.revision
+				? `These results were asked for at goal revision ${reportGoal.revision}; the goal is now at revision ${room.goal.revision}, so check them against its current objective.`
+				: "";
 		const lines = round.replies
 			.filter((reply) => reply.kind === undefined)
 			.map((reply) => `${reply.name}: ${reply.text}`);
@@ -373,6 +422,7 @@ export function installRelay(host: GroupHost): void {
 						)
 						.join(", ")}.`
 				: "",
+			revisionNote,
 		]
 			.filter(Boolean)
 			.join("\n\n");

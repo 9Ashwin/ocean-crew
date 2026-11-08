@@ -32,6 +32,12 @@ export interface GroupLine {
 	next?: string;
 	stage?: number;
 	again?: boolean;
+	/** A late result posted after the round moved on. */
+	late?: boolean;
+	/** The goal revision the line's result was asked for under. */
+	goalRevision?: number;
+	goalId?: string;
+	goalObjectiveRevision?: number;
 	[key: string]: unknown;
 }
 
@@ -62,6 +68,10 @@ export interface Slot {
 	ordered?: boolean;
 	worked?: boolean;
 	fromBot?: boolean;
+	/** Where the goal stood when this member was called. */
+	goal?: CallGoal;
+	/** The batch whose final summary this turn owes, when it was woken for one. */
+	summaryBatch?: string;
 }
 
 // A reply that answer holds for the user; `kind` is absent for a member's message.
@@ -95,6 +105,8 @@ export interface RoundReport {
 	post: { botId: string; name: string; reportBack: boolean; sub?: string; fromRoomId?: string };
 	ids: string[];
 	from: number;
+	/** Where the goal stood when the post called its members. */
+	goal?: CallGoal;
 }
 
 // A conversation the user referenced in this round.
@@ -108,7 +120,11 @@ export interface Round {
 	roomId: string;
 	members: string[];
 	startSeq: number;
+	/** The group_relay call that runs this round, for replay dedupe and summary asks. */
+	callId?: string;
 	goalRevision?: number;
+	/** Where the goal stood when the round opened. */
+	goal?: CallGoal;
 	userMessage?: boolean;
 	kickoff?: boolean;
 	goalNudge?: boolean;
@@ -150,6 +166,7 @@ export interface GoalState {
 	title?: string;
 	status?: string;
 	revision?: number;
+	objectiveRevision?: number;
 	stages?: unknown[];
 	idle?: boolean;
 	[key: string]: unknown;
@@ -184,6 +201,14 @@ export interface GroupRoom {
 	permission?: string;
 	pastGoals?: unknown[];
 	goal?: GoalState;
+	/** Call batches this room's rounds opened, by batch key, for restart recovery. */
+	calls?: Record<string, SavedCallBatch>;
+	/** The group_relay calls this room ran, by callId, so a replay does not run again. */
+	callRuns?: Record<string, SavedRelayCall>;
+	/** Goal snapshots of late results waiting to be written into the log. */
+	lateGoals?: Record<string, CallGoal[]>;
+	/** The room's work budget for its current scope. */
+	budget?: GroupBudget;
 	[key: string]: unknown;
 }
 
@@ -226,10 +251,150 @@ export interface CallBatch {
 	key: string;
 	roomId: string;
 	by: string;
+	/** Every callee the batch was opened with. */
+	callees: string[];
 	pending: Set<string>;
 	done: string[];
 	worked: boolean;
 	answered: boolean;
+	/** The group_relay call that opened the batch, for a replay of the same call. */
+	callId?: string;
+	/** Where the group's goal stood when the callees were called. */
+	goal?: CallGoal;
+	/** The last state saved for this batch; `open` until every callee settled. */
+	state?: CallBatchState;
+	/** What still has to happen after the batch: the caller's final summary. */
+	summary?: CallSummary;
+	/** Set when the batch ended without a usable result. */
+	error?: string;
+}
+
+// Where a group's goal stood when a member was called: a later result answers the goal
+// as it was at the call, not as it stands when the result is reported.
+export interface CallGoal {
+	id?: string;
+	/** The goal card's own revision (the counter every change bumps). */
+	revision?: number;
+	/** The objective revision; a revise makes results of an older one stale. */
+	objectiveRevision?: number;
+}
+
+// One result a batch received, kept with the batch so a restart can summarize results
+// whose group line died with the process.
+export interface CallResult {
+	botId: string;
+	name: string;
+	text: string;
+	at: number;
+}
+
+// A call batch as state.json keeps it, so a restart can go on or fail it clearly.
+export type CallBatchState = "open" | "awaiting-summary" | "delivered" | "failed";
+
+// The final-summary duty of a completed batch. `requested` means the caller was asked;
+// `posted` means its answer reached the group, which is what the user reads.
+export type SummaryState = "pending" | "requested" | "posted" | "failed";
+
+export interface CallSummary {
+	state: SummaryState;
+	at?: number;
+	/** The caller that owes the summary. */
+	by?: string;
+	/** How many times the caller was asked; a restarted host asks again. */
+	attempts: number;
+	/** The group_relay call that asked, so one round asks only once. */
+	requestedIn?: string;
+	/** The start of the summary the caller posted. */
+	text?: string;
+	/** Why the summary was never delivered. */
+	error?: string;
+}
+
+// A call batch as state.json keeps it: the durable association between a call, its
+// results, the summary it still owes and the user delivery that closes it.
+export interface SavedCallBatch {
+	key: string;
+	roomId: string;
+	callId?: string;
+	by: string;
+	callees: string[];
+	/** Callees still working at the last save. */
+	pending: string[];
+	done: string[];
+	worked: boolean;
+	answered: boolean;
+	goal?: CallGoal;
+	state: CallBatchState;
+	/** When the last callee settled; the batch's completion time. */
+	completedAt?: number;
+	createdAt: number;
+	updatedAt: number;
+	/** The process incarnation that last wrote the record; a different one is a restart. */
+	writer?: string;
+	error?: string;
+	lost?: string[];
+	/** What the callees handed back, latest per callee. */
+	results?: CallResult[];
+	/** A restart already told the group which results it recovered. */
+	resultsNoted?: boolean;
+	summary?: CallSummary;
+}
+
+// A result a group_relay call returned, as the saved team keeps it for a replay.
+export interface RelayResult {
+	replies: RoundReply[];
+	passed: string[];
+	failed?: string[];
+	/** The call was answered from the saved record instead of run again. */
+	replayed?: boolean;
+	/** A restart cut the call before it returned; it is not run again. */
+	interrupted?: boolean;
+	/** Why the saved call failed. */
+	error?: string;
+}
+
+// A group_relay call as state.json keeps it: its replay identity is the callId, never
+// the text of the messages, so the same words sent as a new call stay a new task.
+export interface SavedRelayCall {
+	callId: string;
+	at: number;
+	state: "running" | "done" | "failed";
+	error?: string;
+	result?: RelayResult;
+}
+
+// One side of a group's work budget: member work and the admin's summaries are counted
+// apart, because an idle ping-pong guard says nothing about what the team spends.
+export interface BudgetSide {
+	/** Work units allowed before calls are refused; absent means no limit. */
+	limit?: number;
+	/** Tokens allowed, enforced from DSH's token-meter when it is readable. */
+	tokenLimit?: number;
+	/** Member turns or summary turns charged. */
+	spent: number;
+	/** Tokens DSH's token-meter reported for those turns. */
+	tokens?: number;
+}
+
+// The room's spent budget for one scope (a goal revision, or the user's current ask).
+export interface GroupBudget {
+	/** `goal:<id>:<objectiveRevision>` or `ask:<seq>`; a new scope starts at zero. */
+	scope?: string;
+	members?: BudgetSide;
+	summary?: BudgetSide;
+	/** The budget notices already posted in this scope, so each is said once. */
+	noticed?: Partial<Record<"members" | "summary", boolean>>;
+}
+
+// What the budget views read.
+export interface GroupBudgetView {
+	/** Whether DSH's token meter could be read when this view was taken. */
+	available: boolean;
+	scope?: string;
+	members: BudgetSide & { remaining?: number };
+	summary: BudgetSide & { remaining?: number };
+	/** The idle guard's own counter: a separate mechanism, not a cost budget. */
+	idle: { streak: number; paused: boolean };
 }
 
 // The prompt a member's turn reads.
@@ -321,6 +486,30 @@ export interface GroupHost {
 	memberBatch: Map<string, CallBatch>;
 	held: Map<string, HeldSteps>;
 
+	// calls.ts
+	goalAt(roomId: string): CallGoal | undefined;
+	batchKeyOf(roomId: string, botId: string): string;
+	saveBatch(room: GroupRoom, batch: CallBatch): void;
+	settleBatch(room: GroupRoom, batch: CallBatch): void;
+	noteBatchResult(room: GroupRoom, batch: CallBatch, botId: string, name: string, text: string): void;
+	askSummary(room: GroupRoom, round: Round, batch: CallBatch, note: string): boolean;
+	deliverSummary(room: GroupRoom, botId: string, text: string): void;
+	restoreSummaries(room: GroupRoom, round: Round): void;
+	summaryBatches(room: GroupRoom, by: string): CallBatch[];
+	recoverCalls(room: GroupRoom): void;
+	noteLateGoal(room: GroupRoom, botId: string, goal: CallGoal | undefined): void;
+	takeLateGoal(room: GroupRoom, botId: string): CallGoal | undefined;
+	beginRelay(room: GroupRoom, callId: string): RelayResult | undefined;
+	finishRelay(room: GroupRoom, callId: string, result: RelayResult): void;
+	failRelay(room: GroupRoom, callId: string, error: unknown): void;
+	beginBudget(room: GroupRoom, round: Round): void;
+	allowMemberWork(room: GroupRoom): boolean;
+	allowSummary(room: GroupRoom): boolean;
+	chargeWork(room: GroupRoom, side: "members" | "summary"): void;
+	chargeTokens(room: GroupRoom, summary: boolean, tokens: number | undefined): void;
+	sessionTokens(sessionId: string): Promise<number | undefined>;
+	budgetOf(room: GroupRoom): Promise<GroupBudgetView>;
+
 	// log.ts
 	lineKey(roomId: string, seq: number): string;
 	lineFile(roomId: string, seq: number): string;
@@ -378,7 +567,7 @@ export interface GroupHost {
 		opts?: { worked?: boolean; byBot?: boolean },
 	): void;
 	startable(round: Round, slot: Slot): boolean;
-	registerBatch(roomId: string, by: string | undefined, callees: BotLike[]): string | undefined;
+	registerBatch(roomId: string, by: string | undefined, callees: BotLike[], callId?: string): string | undefined;
 	markBatchWorked(roomId: string, botId: string): void;
 	pruneBatchPending(room: GroupRoom, batch: CallBatch): void;
 	dropMemberFromBatch(room: GroupRoom, botId: string): CallBatch | undefined;

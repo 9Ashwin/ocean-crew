@@ -8,7 +8,16 @@ import { join } from "node:path";
 import { mentionSpans, speakerOf } from "../../shared/mentions.ts";
 import { GROUP_LINE_READ, TEXT_KEPT } from "../core/constants.ts";
 import { escapeRegExp, headOf } from "../core/text.ts";
-import type { BotLike, GroupHost, GroupLine, GroupRoom, RoundReference, SavedLine, TurnFailure } from "./types.ts";
+import type {
+	BotLike,
+	CallGoal,
+	GroupHost,
+	GroupLine,
+	GroupRoom,
+	RoundReference,
+	SavedLine,
+	TurnFailure,
+} from "./types.ts";
 import { asRoom } from "./types.ts";
 
 // Short ack/thanks/closing phrases with no new content, used by the 0-tool idle loop guard.
@@ -90,6 +99,18 @@ export const unseenLines = (host: GroupHost, room: GroupRoom, memberId: string):
 	return room.log.filter((line) => line.seq > since && line.botId !== memberId).slice(-host.timing.deltaMax);
 };
 
+// The goal snapshot a result was asked for under, spread onto a log line or a reply.
+export const goalFields = (
+	goal: CallGoal | undefined,
+): { goalRevision?: number; goalId?: string; goalObjectiveRevision?: number } =>
+	goal === undefined
+		? {}
+		: {
+				...(goal.revision !== undefined ? { goalRevision: goal.revision } : {}),
+				...(goal.id !== undefined ? { goalId: goal.id } : {}),
+				...(goal.objectiveRevision !== undefined ? { goalObjectiveRevision: goal.objectiveRevision } : {}),
+			};
+
 // A notice keeps its fields, not a finished sentence: the line members read is written
 // when it is read, so old entries still say what happened when the wording or the
 // constants move on.
@@ -150,7 +171,10 @@ export const lineText = (line: GroupLine, text: string | undefined = line.text):
 	if (line.kind === "stopped") return `[The user stopped ${who}'s work here]`;
 	if (line.kind === "done") return `[${who} finished the work it was asked for]`;
 	if (line.kind === "notice") return `[${noticeText(line)}]`;
-	return `${who}: ${text}`;
+	// A late result says which revision it answers; other lines stay plain.
+	const asked =
+		line.late !== true || line.goalRevision === undefined ? "" : ` (asked at goal revision ${line.goalRevision})`;
+	return `${who}: ${text}${asked}`;
 };
 
 export const transcript = (

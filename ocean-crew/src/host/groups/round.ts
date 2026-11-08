@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { TEAM_TOOLS } from "../core/constants.ts";
 import { splitRef } from "../core/text.ts";
 import {
+	goalFields,
 	isIdleRelayText,
 	isPass,
 	lostSession,
@@ -126,13 +127,16 @@ export function installRound(host: GroupHost): void {
 	//    in the batch finishes rather than woken piecemeal on every early reply.
 	const batchKeyOf = (roomId: string, botId: string): string => `${roomId}:${botId}`;
 	host.pruneBatchPending = (room, batch) => {
+		let changed = false;
 		for (const otherId of batch.pending) {
 			if (!room.members.includes(otherId) || !host.activeInRoom(room, otherId)) {
 				batch.pending.delete(otherId);
+				changed = true;
 				if (host.memberBatch.get(batchKeyOf(room.id, otherId)) === batch)
 					host.memberBatch.delete(batchKeyOf(room.id, otherId));
 			}
 		}
+		if (changed) host.saveBatch(room, batch);
 	};
 	host.activeInRoom = (room, botId) => {
 		const sessionId = room.sessions?.[botId];
@@ -148,24 +152,34 @@ export function installRound(host: GroupHost): void {
 				round.slots.some((slot) => slot.id === botId && (slot.status === "waiting" || slot.status === "speaking")),
 		);
 	};
-	host.registerBatch = (roomId, by, callees) => {
+	host.registerBatch = (roomId, by, callees, callId) => {
 		if (by === undefined || callees.length === 0) return undefined;
+		const saved = rt.roomOf(roomId);
+		if (saved === undefined) return undefined;
 		const batch: CallBatch = {
 			key: randomUUID(),
 			roomId,
 			by,
+			callees: callees.map((peer) => peer.id),
 			pending: new Set(callees.map((peer) => peer.id)),
 			done: [],
 			worked: false,
 			answered: false,
+			state: "open",
+			...(callId !== undefined ? { callId } : {}),
+			...(host.goalAt(roomId) !== undefined ? { goal: host.goalAt(roomId) } : {}),
 		};
 		host.roomBatches.set(batch.key, batch);
+		host.saveBatch(asRoom(saved), batch);
 		for (const peer of callees) {
 			const mKey = batchKeyOf(roomId, peer.id);
 			const prev = host.memberBatch.get(mKey);
 			if (prev !== undefined) {
 				prev.pending.delete(peer.id);
-				if (prev.pending.size === 0) host.roomBatches.delete(prev.key);
+				if (prev.pending.size === 0) {
+					host.roomBatches.delete(prev.key);
+					host.settleBatch(asRoom(saved), prev);
+				}
 			}
 			host.memberBatch.set(mKey, batch);
 		}
@@ -173,7 +187,10 @@ export function installRound(host: GroupHost): void {
 	};
 	host.markBatchWorked = (roomId, botId) => {
 		const batch = host.memberBatch.get(batchKeyOf(roomId, botId));
-		if (batch !== undefined) batch.worked = true;
+		if (batch === undefined || batch.worked) return;
+		batch.worked = true;
+		const saved = rt.roomOf(roomId);
+		if (saved !== undefined) host.saveBatch(asRoom(saved), batch);
 	};
 	host.dropMemberFromBatch = (room, botId) => {
 		const mKey = batchKeyOf(room.id, botId);
@@ -184,6 +201,7 @@ export function installRound(host: GroupHost): void {
 		host.pruneBatchPending(room, batch);
 		if (batch.pending.size === 0) {
 			host.roomBatches.delete(batch.key);
+			host.settleBatch(room, batch);
 			void rt
 				.goalSettled?.(room, batch)
 				?.catch?.((error: unknown) => rt.warn("ocean-crew: goal settle in %s failed: %s", room.name, error));
@@ -194,7 +212,9 @@ export function installRound(host: GroupHost): void {
 	// A member's message in the round: in the log, for the members after it, and in the
 	// round's replies, for the user.
 	host.postInRound = (room, round, member, text, duration) => {
-		host.appendRoom(room, { who: member.name, botId: member.id, text });
+		const batch = host.memberBatch.get(batchKeyOf(room.id, member.id));
+		const goal = goalFields(batch?.goal);
+		host.appendRoom(room, { who: member.name, botId: member.id, text, ...goal });
 		round.replies.push({
 			botId: member.id,
 			name: member.name,
@@ -202,7 +222,11 @@ export function installRound(host: GroupHost): void {
 			text,
 			time: host.now(),
 			...(duration === undefined ? {} : { duration }),
+			...goal,
 		});
+		// A line in the group is what the user reads: it is the delivery of any summary
+		// this Bot still owed, and of any hand-off result this Bot owed the room.
+		host.deliverSummary(room, member.id, text);
 		void rt.save().catch(() => {});
 	};
 
@@ -353,10 +377,17 @@ export function installRound(host: GroupHost): void {
 	// Calls members into a round; the members one call names share a batch. Ordered calls
 	// (a plain message everyone answers in turn) go ahead of the ordered calls still
 	// waiting, in their own order; the others start as soon as their member is free.
-	host.callIn = (round, callees, note, by, { ordered = false } = {}) => {
+	host.callIn = (
+		round,
+		callees,
+		note,
+		by,
+		{ ordered = false, summaryBatch }: { ordered?: boolean; summaryBatch?: string } = {},
+	) => {
 		if (callees.length === 0) return;
 		round.batches = (round.batches ?? 0) + 1;
-		const batchKey = host.registerBatch(round.roomId, by, callees);
+		const batchKey = host.registerBatch(round.roomId, by, callees, round.callId);
+		const goal = host.goalAt(round.roomId);
 		let last: Slot | undefined;
 		for (const peer of callees) {
 			const waiting = round.slots.findIndex((slot) => slot.id === peer.id && slot.status === "waiting");
@@ -369,6 +400,8 @@ export function installRound(host: GroupHost): void {
 			slot.note = note;
 			slot.batch = round.batches;
 			if (batchKey !== undefined) slot.batchKey = batchKey;
+			if (goal !== undefined) slot.goal = goal;
+			if (summaryBatch !== undefined) slot.summaryBatch = summaryBatch;
 			if (by === undefined) delete slot.by;
 			else slot.by = by;
 			if (!moves) slot.ordered = false;
@@ -414,7 +447,9 @@ export function installRound(host: GroupHost): void {
 		for (const entry of due) {
 			if (round.slots.some((slot) => slot.id === entry.id && slot.status === "waiting")) continue;
 			const peer = rt.botOf(entry.id);
-			const batchKey = peer && entry.by !== undefined ? host.registerBatch(room.id, entry.by, [peer]) : undefined;
+			const batchKey =
+				peer && entry.by !== undefined ? host.registerBatch(room.id, entry.by, [peer], round.callId) : undefined;
+			const goal = host.goalAt(room.id);
 			round.batches = (round.batches ?? 0) + 1;
 			round.slots.push({
 				id: entry.id,
@@ -422,6 +457,7 @@ export function installRound(host: GroupHost): void {
 				status: "waiting",
 				batch: round.batches,
 				...(batchKey !== undefined ? { batchKey } : {}),
+				...(goal !== undefined ? { goal } : {}),
 				...(entry.note !== undefined ? { note: entry.note } : {}),
 				...(entry.by !== undefined ? { by: entry.by } : {}),
 			});
@@ -663,6 +699,32 @@ export function installRound(host: GroupHost): void {
 		}
 	};
 
+	// A budget that is used up stops the turn before it spends anything, and says so once
+	// per scope. The idle guard is a different mechanism and never reaches here.
+	const blockForBudget = (
+		room: GroupRoom,
+		round: Round,
+		slot: Slot,
+		member: BotLike,
+		side: "members" | "summary",
+	): void => {
+		slot.status = "failed";
+		round.failed.push(member.name);
+		host.dropMemberFromBatch(room, member.id);
+		if (room.budget?.noticed?.[side] !== true) {
+			room.budget ??= {};
+			room.budget.noticed = { ...(room.budget.noticed ?? {}), [side]: true };
+			const inGoal = room.goal?.status === "active";
+			const text =
+				side === "members"
+					? `The group's member work budget is used up, so its members take no new work${inGoal ? " in this goal" : " in this task"}. ${inGoal ? "Revise or stop the goal to change it." : "The user can write here to start a new one."}`
+					: `The group's summary budget is used up, so the caller cannot summarize these results. ${inGoal ? "Revise or stop the goal to change it." : "The user can write here to start a new task."}`;
+			host.appendRoom(room, { who: "Ocean Crew", kind: "notice", reason: "budget", text });
+			round.replies.push({ kind: "budget", botId: member.id, name: member.name, text, time: host.now() });
+		}
+		void rt.save().catch(() => {});
+	};
+
 	// One call's turn in the round. Its status says how it ended; what it says calls
 	// members as soon as each line is posted.
 	host.memberTurn = async (room, round, slot, signal) => {
@@ -672,6 +734,15 @@ export function installRound(host: GroupHost): void {
 			slot.status = "left";
 			host.dropMemberFromBatch(room, slot.id);
 			return;
+		}
+		// A summary turn was already charged against the summary budget when it was asked
+		// for; any other turn spends the member budget.
+		if (slot.summaryBatch === undefined) {
+			if (!host.allowMemberWork(room)) {
+				blockForBudget(room, round, slot, member, "members");
+				return;
+			}
+			host.chargeWork(room, "members");
 		}
 		slot.status = "speaking";
 		let session: { id: string; brief?: string } | undefined;
@@ -717,6 +788,7 @@ export function installRound(host: GroupHost): void {
 			host.clearIdleStreak(room);
 			host.markBatchWorked(room.id, member.id);
 		};
+		const tokensBefore = await host.sessionTokens(session.id);
 		const reply = await host.roomTurn(
 			room,
 			member,
@@ -729,6 +801,12 @@ export function installRound(host: GroupHost): void {
 			said,
 			(line: string) => host.callFrom(room, round, member, line, called, { worked, byBot: answeredBot }),
 			onWork,
+		);
+		const tokensAfter = await host.sessionTokens(session.id);
+		host.chargeTokens(
+			room,
+			slot.summaryBatch !== undefined,
+			tokensBefore !== undefined && tokensAfter !== undefined ? Math.max(0, tokensAfter - tokensBefore) : undefined,
 		);
 		const final = typeof reply === "string" && !isPass(reply) ? reply : undefined;
 		const subRunning = rt.hasSubagents?.(session.id) === true;
@@ -826,31 +904,13 @@ export function installRound(host: GroupHost): void {
 					batch.done.push(member.name);
 					if (called.size > 0) batch.answered = true;
 					if (worked) batch.worked = true;
+					if (final !== undefined) host.noteBatchResult(room, batch, member.id, member.name, final);
 				}
 				host.dropMemberFromBatch(room, member.id);
-				if (
-					batch.pending.size === 0 &&
-					batch.done.length > 0 &&
-					batch.worked &&
-					!batch.answered &&
-					!signal.aborted
-				) {
-					const caller = rt.botOf(batch.by);
-					// A caller still waiting in this round reads the results when it starts. One
-					// still in its own turn cannot see them, so it answers in a turn after that one.
-					if (
-						caller !== undefined &&
-						room.members.includes(caller.id) &&
-						!round.slots.some((other) => other.id === caller.id && other.status === "waiting")
-					) {
-						host.callIn(
-							round,
-							[caller],
-							`${batch.done.join(" and ")} finished the work you asked for`,
-							undefined,
-						);
-					}
-				}
+				// The batch owns the final-summary duty now; ask it once per round, and only
+				// when the round did not abort under it.
+				if (!signal.aborted && batch.pending.size === 0)
+					host.askSummary(room, round, batch, `${batch.done.join(" and ")} finished the work you asked for`);
 			}
 		}
 	};
@@ -956,8 +1016,13 @@ export function installRound(host: GroupHost): void {
 
 	// What the views ask about the round.
 	host.workingInRoom = host.workingIn;
-	host.roomBatchPending = (roomId) =>
-		[...host.roomBatches.values()].some((batch) => batch.roomId === roomId && batch.pending.size > 0);
+	host.roomBatchPending = (roomId) => {
+		if ([...host.roomBatches.values()].some((batch) => batch.roomId === roomId && batch.pending.size > 0))
+			return true;
+		// A host that has just restarted has the saved record before the in-memory batch.
+		const saved = rt.roomOf(roomId);
+		return saved !== undefined && Object.values(asRoom(saved).calls ?? {}).some((call) => call.state === "open");
+	};
 
 	// Publishes the round's turn hooks on rt for turns.ts/approvals.ts to call.
 	Object.assign(rt, {
