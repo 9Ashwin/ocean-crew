@@ -9,8 +9,7 @@
 - **`apply` 在返回前就装好团队。** 它调用 `createRuntime`，后者构建一个 `rt` 对象（含 `ctx`、`config`、`dshHome`、`home`、`statePath`、`teamTools`、`defaults`），并按 `MODULES` 顺序运行每个模块的 `install(rt)`。必须保持：列表里每个模块都有 `install`，且顺序不变。若被破坏：一个模块若比它所调用的模块先安装，运行时就会丢掉那个函数；监听器顺序还会改变模型请求和工具调用看到的东西——`usage` 在改写请求的监听器之后计量，`privacy` 在工具钩子运行之前检查调用。
 - **`rt` 是模块之间唯一的 API。** 模块在 `install` 里注册自己的监听器、工具和副作用，把其他模块要调用的函数放到 `rt` 上，运行时通过 `rt` 调用这些函数，绝不在安装期间调用。若被破坏：某个 install 里直接调用另一个模块，会在那个模块存在之前运行。
 - **`inject` 列出 DSH 服务。** 列表是 `llm`、`tools`、`systemPrompt`、`sessionController`、`sessions`、`sessionTitle`、`workspaceRegistry`、`connection`。可选服务用 `ctx.get(...)` 读取；每个定时器、监听器和 socket 都在 `ctx.effect(...)` 或 `ctx.on(...)` 里注册，以便卸载时释放。必须保持：这些都是 DSH 自己的服务 id，并且 effect 之外没有留下运行中的东西。若被破坏：插件挂不上，或 host 已经消失而工作还在继续。
-- **client 入口是声明出来的，不靠发现。** `ocean-crew/package.json` 带有 `dsh.client.platform: "web"`、`exports["./client"]: "./client.js"` 和 `dsh.bundle.patch: "./cordis.patch.yml"`；`exports` 里还有 `"."`（types/import 指向 `./dist/index.js`）和 `"./web-search"`（指向 `./dist/web-search.js`）。`cordis.patch.yml` 插入两个插件行：`bot`（`name: ocean-crew`）和 `web-search-auto`（`name: ocean-crew/web-search`），并把 `web` 行的 `searchProvider` 设为 `auto`、`fetchProvider` 设为 `http`。必须保持：这些字段、export 路径和 patch 插入项。若被破坏：某个 profile 只挂上 host 半边而没有 client，或者网页搜索找不到 provider。
-- **patch 里的 config 覆盖整行。** `web` 行的覆盖替换整份条目配置，所以 `fetchProvider` 要重述；profile 里若另外指定了 `searchProvider`（exa、perplexity、deepseek-official 等），以 profile 的为准。只关掉 `web-search-auto` 而不同时给 `web` 换 provider，会让所有 `web_search` 失败并报 `WEB_PROVIDER_CONFIGURED_MISSING`。
+- **client 入口是声明出来的，不靠发现。** `ocean-crew/package.json` 带有 `dsh.client.platform: "web"`、`exports["./client"]: "./client.js"` 和 `dsh.bundle.patch: "./cordis.patch.yml"`；`exports` 里 `"."` 指向 `./dist/index.js`。`cordis.patch.yml` 只插入 `bot`（`name: ocean-crew`）一行；网页搜索与抓取由 DSH 自己的 provider 提供，不在插件里配置。必须保持：这些字段、export 路径和 patch 插入项。若被破坏：某个 profile 只挂上 host 半边而没有 client。
 
 ## `api/bot` 通道
 
@@ -48,7 +47,7 @@
 
 ## 生成的构建产物
 
-`cd ocean-crew && npm run build` 做两件事：pinned TypeScript 把 `src/` 编译成 `dist/`（host 入口 `dist/index.js`，网页搜索入口 `dist/web-search.js`），`scripts/build-client.mjs` 从 `src/client/` 写出 `client.js`。
+`cd ocean-crew && npm run build` 做两件事：pinned TypeScript 把 `src/` 编译成 `dist/`（host 入口 `dist/index.js`），`scripts/build-client.mjs` 从 `src/client/` 写出 `client.js`。
 
 - `client.js` 和 `dist/` 是本地构建产物，不进 git；`client.js` 以一句 `Generated from src/client by npm run build ... Do not edit by hand` 的横幅开头。`cd ocean-crew && node scripts/build-client.mjs --check` 在与全新构建不一致时失败；`node ocean-crew/dev/check-bundle.mjs` 同时检查 `client.js`、`dist/` 与源码重建是否一致，以及 `package.json` 的 `files` 里每个文件是否存在（本地验证脚本，不发布）。GitHub 安装时 `prepare` 会现场构建；开发 checkout 也先构建再安装。
 - 必须保持：`client.js` 用 DSH 的加载器注册一个模块——`window.__ModuleLoader__.load({ id: 'ocean-crew', factory })`——它的 factory 只 require `react`、`react-dom` 和 `@deepseek-ai/dsh-client-ui-primitives`，导出恰好是 `apply` 和 `inject`，其中 `inject` 列出 `sessions`、`uiWorkspace`、`uiConversation`、`slots`、`theme` 和 `layout`。若被破坏：DSH 加载不了 client，或者加载时用到 shell 没有准备好的槽位或服务。
@@ -72,23 +71,6 @@ host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件
 | `chat-index.sqlite`、`usage.sqlite`、`logs/diagnostics.jsonl` | 索引和日志 | 可重建，或可安全删除。 |
 
 聊天本身是 DSH 自己存储里的 DSH 会话，位于 `home` 之外；插件从不直接写它们。
-
-## 网页搜索插件
-
-`ocean-crew/web-search` 是同一 package 里的第二个插件入口，注册 DSH 的搜索提供方 `auto`
-（代码在 `ocean-crew/src/web-search.ts`，构建为 `dist/web-search.js`）。
-
-- 导出 `name = 'web-search-auto'`、`inject = ['web']`、`AUTO_PROVIDER_ID = 'auto'` 和 `DEFAULTS`，
-  并由 `cordis.patch.yml` 里的 `web-search-auto` 行挂载、`web` 行设成默认。
-- 配置键（都可选，写在 profile patch 的 `web-search-auto` 条目下）：`native`、`fallback`、
-  `engines`、`searchApis`、`nativeTimeoutMs`、`fallbackTimeoutMs`，默认值见 `DEFAULTS`。
-  `SEARCH_APIS` 也可以用 `searchApis` 扩展。
-- 每次搜索的顺序：profile 指定的其他 provider 优先；否则用当前模型路由自己的搜索（认识
-  Anthropic Messages、OpenAI Responses、Gemini 协议，以及 Ollama、Kimi、Zhipu、MiMo 等搜索
-  API）；再否则走 Bing / DuckDuckGo 的公开结果页回退；都不行就失败并告诉模型不要猜地址。
-  每个结果以一行 `Search backend: …` 开头说明它走的路径。
-- 必须保持：provider id `auto`、上面的配置键和 `Search backend:` 行；若被破坏：profile 里指向
-  `auto` 的 `web` 行会找不到 provider，所有 `web_search` 都失败。
 
 ## 插件配置
 

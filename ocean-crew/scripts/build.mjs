@@ -6,7 +6,7 @@
 //   node scripts/build.mjs            dist/ (tsc -p tsconfig.build.json) + client.js
 //   node scripts/build.mjs --install  dist/ (tsc -p tsconfig.install.json) + client.js
 import { spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,6 +28,8 @@ if (tsc === undefined) {
 	process.exit(1);
 }
 const config = install ? "tsconfig.install.json" : "tsconfig.build.json";
+// A removed source must not leave its compiled file behind; `tsc` only adds.
+rmSync(join(PLUGIN, "dist"), { recursive: true, force: true });
 const compiled = spawnSync(process.execPath, [tsc, "-p", config], { cwd: PLUGIN, stdio: "inherit" });
 if (compiled.status !== 0) process.exit(compiled.status ?? 1);
 

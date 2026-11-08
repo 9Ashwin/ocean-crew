@@ -41,41 +41,6 @@ dsh: disabling profile plugin row "bot": its declared peer dependencies cannot b
 
 删掉整个 profile 文件夹也能解决，但会一并删掉这个 profile 的其他插件和设置（比如模型）。Bot 团队数据在 `$DSH_HOME/bot/`（默认 `~/.dsh/bot/`），两种做法都不会影响它。
 
-## 关掉「web-search-auto」后，所有会话的网页搜索都失败
-
-**在哪里：** 在侧栏的 **Plugins** 页关掉 `web-search-auto` 这一行，或者在 profile 的 `cordis.patch.yml` 里给它写 `disabled: true` 之后，所有会话都受影响，Bot 聊天和普通 Agent 聊天都一样。每次调用 `web_search` 都返回：
-
-```text
-Error: configured web provider "auto" is not registered
-```
-
-错误码是 `WEB_PROVIDER_CONFIGURED_MISSING`。
-
-**原因：** Ocean Crew 的 `cordis.patch.yml` 会挂载 `web-search-auto`（`ocean-crew/web-search`），并把 `web` 行的 `searchProvider` 设成 `auto`。关掉 `web-search-auto` 那一行后，`web` 行仍然指向 `auto`；而它指定的 provider 不存在时，DeepSeek Harness 不会换用别的 provider。
-
-**怎么处理：** profile 文件夹和上一条里的一样。
-
-1. 退出 DSH Desktop。
-2. 打开 profile 文件夹里的 `cordis.patch.yml`。在关掉 `web-search-auto` 的那一行旁边，加一条 `web` 行，指定另一个搜索 provider。这一条会替换 `web` 行的整个 config，所以 `fetchProvider` 也要写上：
-
-   ```yaml
-   - id: web-search-auto
-     name: ocean-crew/web-search
-     disabled: true
-   - id: web
-     name: '@deepseek-ai/dsh-web'
-     config:
-       searchProvider: deepseek-official
-       fetchProvider: http
-   ```
-
-3. 重新启动 DSH Desktop。
-
-想确认结果，可以运行 `npx @deepseek-ai/dsh@0.2.2-rc.1 --profile desktop --dump-config`，看 `web` 那一行。另外，有的插件会在 DSH 运行时设置搜索 provider，时间在 profile patch 之后。以后关掉这类插件时，也要再检查一下这个设置。
-
-另见插件 README 的功能一览（[ocean-crew/README.md](../ocean-crew/README.md)）与
-[docs/contracts.md](contracts.md) 的「网页搜索插件」一节。
-
 ## Linux：加载 libghostty-vt.so 报 "GLIBC_2.27 not found"
 
 **在哪里：** glibc 低于 2.28 的 Linux 系统（CentOS 7 是 glibc 2.17），DSH Desktop 启动失败。加载器会报缺少 glibc 版本，例如：

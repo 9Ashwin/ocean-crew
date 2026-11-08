@@ -54,7 +54,7 @@ jobs:
         run: |
           cd ocean-crew
           npm pack --dry-run --json > pack-files.json
-          node -e "const fs = require('node:fs'); const [pack] = JSON.parse(fs.readFileSync('pack-files.json', 'utf8')); const files = new Set(pack.files.map((file) => file.path)); const want = ['package.json', 'client.js', 'cordis.patch.yml', 'dist/index.js', 'dist/web-search.js', 'THIRD_PARTY_NOTICES.md', 'LICENSE']; for (const file of want) if (!files.has(file)) throw new Error('the package is missing ' + file); console.log('the package ships ' + files.size + ' files');"
+          node -e "const fs = require('node:fs'); const [pack] = JSON.parse(fs.readFileSync('pack-files.json', 'utf8')); const files = new Set(pack.files.map((file) => file.path)); const want = ['package.json', 'client.js', 'cordis.patch.yml', 'dist/index.js', 'THIRD_PARTY_NOTICES.md', 'LICENSE']; for (const file of want) if (!files.has(file)) throw new Error('the package is missing ' + file); console.log('the package ships ' + files.size + ' files');"
           rm -f pack-files.json
 
   scan:

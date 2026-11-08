@@ -38,7 +38,6 @@ Ocean Crew 是构建在 DeepSeek Harness（DSH）之上、由长期存活的 LLM
   `browser-plugins.ts`、`ocean-crew/src/host/browser/`（`refs`、`script`、`task` 三个后端，以及
   `locate.ts`、`mount.ts`、`session.ts`）。后端通过 `playwright-core` 驱动机器上已安装的
   Chrome/Chromium，每个 Bot 用自己的 profile。
-- **web-search** —— `ocean-crew/src/web-search.ts`（`ocean-crew/web-search` 入口，构建为 `dist/web-search.js`）。
 
 ## 入口与谁能到达它们
 

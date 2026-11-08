@@ -27,7 +27,6 @@
     ".": {
       "import": "./dist/index.js"
     },
-    "./web-search": "./dist/web-search.js",
     "./client": "./client.js",
     "./package.json": "./package.json"
   },
@@ -61,8 +60,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/dsh-tools": "*",
-    "@deepseek-ai/dsh-web": "*"
+    "@deepseek-ai/dsh-tools": "*"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.76.0",
