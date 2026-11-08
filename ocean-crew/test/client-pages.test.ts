@@ -36,7 +36,7 @@ registerHooks({
 const loaded = new Map<string, Promise<any>>();
 // The module set is fixed by the test file, not by input: this is the only way to load a
 // module that imports the platform React, which has no copy in the test process.
-function loadPage(name: "schedules" | "goal" | "about" | "feedback"): Promise<any> {
+function loadPage(name: "schedules" | "goal" | "about" | "feedback" | "memory-panel"): Promise<any> {
 	if (!loaded.has(name)) loaded.set(name, import(`../src/client/pages/${name}.ts`));
 	return loaded.get(name) as Promise<any>;
 }
@@ -285,4 +285,29 @@ test("goalView exposes the group work rows under the goal", async () => {
 	assert.equal(view.tasks.length, 1);
 	assert.equal(view.tasks[0].statusLabel, "Working");
 	assert.equal(view.tasks[0].deliveryLabel, "Not delivered yet");
+});
+
+// The memory panel's review line: only outcomes that need the user's attention speak.
+test("reviewNote tells a partial review and an unreadable one apart, and stays quiet otherwise", async () => {
+	const { reviewNote } = await loadPage("memory-panel");
+	assert.equal(reviewNote([]), undefined);
+	assert.equal(reviewNote([{ status: "applied" }]), undefined);
+	assert.equal(reviewNote([{ status: "valid_empty" }]), undefined);
+	assert.equal(
+		reviewNote([{ status: "partial", leftOut: 2 }]),
+		"The last review kept 2 of its changes out of memory.",
+	);
+	assert.equal(
+		reviewNote([{ status: "parse_failed" }]),
+		"The last review could not be applied; it will be tried again.",
+	);
+	assert.equal(
+		reviewNote([{ status: "applied", repair: { status: "repair_required", attempts: 3 } }]),
+		"The last review could not be read and is waiting to be fixed (3 tries).",
+	);
+	// Only the newest outcome is reported.
+	assert.equal(
+		reviewNote([{ status: "partial", leftOut: 1 }, { status: "applied" }]),
+		"The last review kept 1 of its changes out of memory.",
+	);
 });

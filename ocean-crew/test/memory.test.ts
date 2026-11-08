@@ -1652,3 +1652,33 @@ test("the last review's outcome is visible per conversation", async (t) => {
 	assert.equal(state.repair.status, "repair_required");
 	assert.equal(state.repair.attempts, 2);
 });
+
+test("the panel shows the review outcome of its own conversations only", async (t) => {
+	const { call, home, stop } = await start();
+	t.after(() => stop());
+	// b2's own chat and another Bot's chat: the panel must show the first and not the second.
+	const reviewedPath = join(home, "memory", "reviewed.json");
+	mkdirSync(dirname(reviewedPath), { recursive: true });
+	writeFileSync(
+		reviewedPath,
+		JSON.stringify({
+			"chat:b2": {
+				cursor: 5,
+				batches: {
+					b1: { id: "b1", status: "partial", attempts: 1, leftOut: 2, message: "2 entries were refused", at: 20 },
+				},
+			},
+			"chat:b3": {
+				cursor: 5,
+				batches: { b1: { id: "b1", status: "parse_failed", attempts: 3, at: 30 } },
+			},
+		}),
+	);
+	const view: any = await call("memory-view", { botId: "b2" });
+	assert.equal(view.reviews.length, 1, "only this Bot's conversation is reported");
+	assert.equal(view.reviews[0].sessionId, "b2");
+	assert.equal(view.reviews[0].status, "partial");
+	assert.equal(view.reviews[0].leftOut, 2);
+	const other: any = await call("memory-view", { botId: "m1" });
+	assert.deepEqual(other.reviews, [], "another Bot's reviews are not shown");
+});

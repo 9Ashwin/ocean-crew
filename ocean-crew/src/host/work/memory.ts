@@ -2484,6 +2484,31 @@ export function install(rt: Runtime): void {
 	// The summary is written again when the entries or the interface language change;
 	// a failed one waits for `regenerate`, or a new model for the keeper, instead of
 	// retrying on every poll.
+	// The review outcomes that belong to this panel: a Bot's own conversations, or the
+	// sessions of the group chat. Showing another owner's review would be a leak.
+	const panelReviews = (panel: Panel): Array<Record<string, unknown>> => {
+		const out: Array<Record<string, unknown>> = [];
+		for (const [key, value] of Object.entries(memoryReviewStates())) {
+			if (!key.startsWith("chat:") || value === null || typeof value !== "object") continue;
+			const sessionId = key.slice(5);
+			const room = rt.roomOf(sessionId);
+			const belongs = panel.group
+				? room?.id === panel.id || rt.groupOwners.get(sessionId)?.roomId === panel.id
+				: rt.chatOwners.get(sessionId) === panel.id;
+			if (!belongs) continue;
+			const state = value as Record<string, any>;
+			out.push({
+				sessionId,
+				...(typeof state.status === "string" ? { status: state.status } : {}),
+				...(typeof state.at === "number" ? { at: state.at } : {}),
+				...(typeof state.leftOut === "number" ? { leftOut: state.leftOut } : {}),
+				...(typeof state.message === "string" ? { message: state.message } : {}),
+				...(state.repair === undefined ? {} : { repair: state.repair }),
+			});
+		}
+		return out.sort((a, b) => Number(b.at ?? 0) - Number(a.at ?? 0)).slice(0, 5);
+	};
+
 	async function memoryView(body: Record<string, any>): Promise<Record<string, unknown>> {
 		const panel = panelOf(body);
 		const loaded = await settled(() => {
@@ -2512,6 +2537,9 @@ export function install(rt: Runtime): void {
 			fresh: entries.length === 0 || saved?.hash === hash,
 			summarizing: summarizing.has(panel.id),
 			error: failed !== undefined && !summarizing.has(panel.id) ? failed.message : null,
+			// What the last automatic review of these conversations did, so "nothing new",
+			// "part of it was refused" and "the answer could not be read" show apart.
+			reviews: panelReviews(panel),
 		};
 	}
 

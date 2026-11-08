@@ -152,12 +152,21 @@ function Summary({ owner, view, regenerate }: any) {
 					h("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: regenerate }, t("Try again")),
 				)
 			: null;
+	const review = reviewNote(view.reviews);
+	const reviewLine = review === undefined ? null : h("div", { className: "bt-mem-review" }, review);
 	if (!view.summary)
-		return h(Fragment, null, failed, failed ? null : h(Skeleton, { label: t("Writing the summary…") }));
+		return h(
+			Fragment,
+			null,
+			failed,
+			reviewLine,
+			failed || reviewLine ? null : h(Skeleton, { label: t("Writing the summary…") }),
+		);
 	return h(
 		Fragment,
 		null,
 		failed,
+		reviewLine,
 		h(
 			"div",
 			{ key: view.summary.at, className: "bt-mem-summary", "data-stale": !view.fresh || undefined },
@@ -166,6 +175,33 @@ function Summary({ owner, view, regenerate }: any) {
 			),
 		),
 	);
+}
+
+// What the last automatic review of these conversations did, in one line, or nothing when
+// there is nothing worth saying. A valid empty answer and a clean application are silent;
+// a partial application or a batch that needs repair is not.
+export function reviewNote(reviews: any[]): string | undefined {
+	const latest = (reviews ?? [])[0];
+	if (latest === null || typeof latest !== "object") return undefined;
+	const repair = latest.repair;
+	if (repair?.status === "repair_required") {
+		return t("The last review could not be read and is waiting to be fixed ({tries} tries).", {
+			tries: Number(repair.attempts ?? 0),
+		});
+	}
+	switch (latest.status) {
+		case "partial":
+			return t("The last review kept {count} of its changes out of memory.", {
+				count: Number(latest.leftOut ?? 0),
+			});
+		case "parse_failed":
+		case "write_failed":
+			return t("The last review could not be applied; it will be tried again.");
+		case "repair_required":
+			return t("The last review needs a fix before memory can move on.");
+		default:
+			return undefined;
+	}
 }
 
 const groupEntries = (entries: any) =>

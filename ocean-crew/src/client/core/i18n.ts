@@ -6,6 +6,12 @@
 export const NAMESPACE = "ocean-crew";
 
 const ZH: Record<string, string> = {
+	// Memory review outcome
+	"The last review could not be read and is waiting to be fixed ({tries} tries).":
+		"上次回顾读不懂，正在等待修复（已尝试 {tries} 次）。",
+	"The last review kept {count} of its changes out of memory.": "上次回顾有 {count} 条改动没能写进记忆。",
+	"The last review could not be applied; it will be tried again.": "上次回顾没能应用，稍后会再试。",
+	"The last review needs a fix before memory can move on.": "上次回顾需要修复后才能继续整理记忆。",
 	// Group work rows
 	"Group work": "群里的工作",
 	"Waiting for a summary": "等汇总",

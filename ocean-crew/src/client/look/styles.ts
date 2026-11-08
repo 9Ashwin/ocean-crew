@@ -870,6 +870,8 @@ body[data-ds-dark-theme] .bt-theme-chip i{background:var(--da)}
 .bt-mem-menu{position:absolute;top:52px;right:50px;min-width:220px;--bt-origin:top right}
 .bt-mem-menu button:disabled{opacity:.4;cursor:default;background:none}
 .bt-mem-body{flex:1;overflow-y:auto;padding:22px 28px 24px;scrollbar-width:thin;display:flex;flex-direction:column;gap:12px}
+/* The review outcome line: what the automatic review of these chats last did. */
+.bt-mem-review{font-size:12px;line-height:18px;color:var(--bt-ink-2);overflow-wrap:anywhere}
 .bt-mem-summary{transition:opacity .3s ease}
 .bt-mem-summary[data-stale]{opacity:.55}
 .bt-mem-summary h3{margin:20px 0 6px;font-size:17px;line-height:26px;font-weight:600}
