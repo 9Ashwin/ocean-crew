@@ -3667,6 +3667,40 @@ export function install(rt: Runtime): void {
 	let reviewChain: Promise<void> = Promise.resolve();
 	let reviewsRunning = 0;
 	const memoryReviews = (): number => reviewTimers.size + reviewQueue.size + reviewsRunning;
+
+	// What the last review of each conversation did: applied, a legitimate empty answer,
+	// a partial application, or a batch that still needs repair. The interface shows these
+	// apart, because "nothing new" and "could not read the answer" are not the same result.
+	const memoryReviewStates = (): Record<string, unknown> => {
+		const out: Record<string, unknown> = {};
+		for (const [key, entry] of Object.entries(reviewedNow())) {
+			if (typeof entry === "number") continue;
+			const batches = Object.values(entry.batches ?? {}).sort((a, b) => b.at - a.at);
+			const latest = batches[0];
+			const repair = entry.repair;
+			if (latest === undefined && repair === undefined) continue;
+			out[key] = {
+				...(latest === undefined
+					? {}
+					: {
+							status: latest.status,
+							at: latest.at,
+							...(latest.leftOut === undefined ? {} : { leftOut: latest.leftOut }),
+							...(latest.message === undefined ? {} : { message: latest.message }),
+						}),
+				...(repair === undefined
+					? {}
+					: {
+							repair: {
+								status: repair.status,
+								attempts: repair.attempts,
+								...(repair.message === undefined ? {} : { message: repair.message }),
+							},
+						}),
+			};
+		}
+		return out;
+	};
 	// A conversation waits in the line once: a later turn's copy of a group log joins
 	// the one that already waits.
 	function queueReview(seen: SeenReview): void {
@@ -3800,6 +3834,7 @@ export function install(rt: Runtime): void {
 		archiveGroupMemory,
 		memoryEndpoint,
 		memoryReviews,
+		memoryReviewStates,
 		memoryNews: () => Object.fromEntries(news),
 		botShot,
 		memorySearch,

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { format as formatText } from "node:util";
 import type { Runtime } from "../src/host/core/runtime.ts";
@@ -1615,4 +1615,40 @@ test("a forget reports the layers it covered instead of implying a full delete",
 	assert.equal(result.forgotten.layers.journal, "kept-without-restore");
 	assert.equal(result.forgotten.layers.chats, "untouched");
 	assert.equal(result.forgotten.layers.backups, "untouched");
+});
+
+test("the last review's outcome is visible per conversation", async (t) => {
+	const { call, home, rt, stop } = await start();
+	t.after(() => stop());
+	// A stored review state is what the interface reads: a legitimate empty answer and a
+	// partial application are different results and must not look the same.
+	const reviewedPath = join(home, "memory", "reviewed.json");
+	mkdirSync(dirname(reviewedPath), { recursive: true });
+	writeFileSync(
+		reviewedPath,
+		JSON.stringify({
+			"chat:b1": {
+				cursor: 10,
+				batches: {
+					other: { id: "other", status: "valid_empty", attempts: 1, at: 1 },
+					latest: {
+						id: "latest",
+						status: "partial",
+						attempts: 1,
+						leftOut: 2,
+						message: "2 entries were refused",
+						at: 2,
+					},
+				},
+				repair: { id: "r", status: "repair_required", attempts: 2, message: "unreadable answer", at: 3 },
+			},
+		}),
+	);
+	const view = (rt as any).memoryReviewStates?.() ?? {};
+	const state = view["chat:b1"];
+	assert.ok(state !== undefined, "the conversation has a visible review state");
+	assert.equal(state.status, "partial");
+	assert.equal(state.leftOut, 2);
+	assert.equal(state.repair.status, "repair_required");
+	assert.equal(state.repair.attempts, 2);
 });

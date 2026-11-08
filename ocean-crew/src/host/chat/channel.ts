@@ -396,6 +396,7 @@ export function install(rt: Runtime): void {
 		},
 		memoryNews: sync("memoryNews") ?? {},
 		memoryReviews: sync("memoryReviews") ?? {},
+		memoryReviewStates: sync("memoryReviewStates") ?? {},
 		learning: sync("learningView") ?? {},
 		learningSettled: sync("learningSettledView") ?? {},
 		connectors: sync("connectorsView") ?? {},
