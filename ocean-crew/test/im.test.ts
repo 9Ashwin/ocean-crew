@@ -864,10 +864,7 @@ test("outbox capacity never evicts a message whose outcome is unknown", async (t
 		attempts: 1,
 		body: `lost ${index}`,
 	}));
-	writeFileSync(
-		join(s.home, "im", `${conn.id}.outbox.json`),
-		JSON.stringify({ chats: { "dm-u2": unknown } }),
-	);
+	writeFileSync(join(s.home, "im", `${conn.id}.outbox.json`), JSON.stringify({ chats: { "dm-u2": unknown } }));
 	const next = await start(t, { home: s.home, keep: true });
 	await next.rt.imEndpoint("im-retry", { id: conn.id });
 	// A new pairing request goes through the accept path, which applies the bound.
@@ -877,4 +874,3 @@ test("outbox capacity never evicts a message whose outcome is unknown", async (t
 	const kept = (after.chats["dm-u2"] ?? []).filter((record: any) => record.state === "unknown");
 	assert.equal(kept.length, 60, "records the user may need to see are not evicted");
 });
-;
