@@ -238,3 +238,51 @@ test("whenText names a time today, and the day and time before that", async () =
 // The memory panel and the "Runs on" card hold no pure derivation of their own: their
 // visible logic is hooks and rendered elements (the task grouping behind both lives in
 // model-menu.ts), so tsc and the client build cover them, as the task says.
+
+// The group work rows: what a task was asked under, where it stands, whether it arrived.
+test("workRows names the state and the delivery, and marks a stale goal answer", async () => {
+	const { workRows } = await loadPage("goal");
+	const roster = { byId: { a: { id: "a", name: "Chief" }, b: { id: "b", name: "Writer" } } };
+	const rows = workRows(
+		[
+			{
+				id: "call1",
+				roomId: "r1",
+				by: "a",
+				members: ["b"],
+				status: "partial",
+				delivery: "abandoned",
+				goal: { revision: 1 },
+				currentGoal: { revision: 2 },
+				result: "Draft only",
+				reason: "the summary never posted",
+			},
+			{ id: "call2", roomId: "r1", by: "a", members: [], status: "completed", delivery: "delivered" },
+		],
+		roster,
+	);
+	assert.equal(rows.length, 2);
+	assert.equal(rows[0].statusLabel, "Partly done");
+	assert.equal(rows[0].deliveryLabel, "Delivery abandoned");
+	assert.equal(rows[0].stale, "Answered goal revision 1 · now 2");
+	assert.equal(rows[0].result, "Draft only");
+	assert.equal(rows[0].reason, "the summary never posted");
+	assert.equal(rows[0].by.name, "Chief");
+	assert.equal(rows[0].members[0].name, "Writer");
+	// A task that answered the current goal carries no stale note.
+	assert.equal(rows[1].stale, undefined);
+	assert.equal(rows[1].deliveryLabel, "Delivered");
+});
+
+test("goalView exposes the group work rows under the goal", async () => {
+	const { goalView } = await loadPage("goal");
+	const roster = { byId: { a: { id: "a", name: "A" } } };
+	const goal = { status: "active", current: 0, title: "Ship", stages: [{ title: "Build", status: "current" }] };
+	const view = goalView(goal, {
+		roster,
+		roomTasks: [{ id: "call1", by: "a", members: [], status: "running", delivery: "open" }],
+	});
+	assert.equal(view.tasks.length, 1);
+	assert.equal(view.tasks[0].statusLabel, "Working");
+	assert.equal(view.tasks[0].deliveryLabel, "Not delivered yet");
+});

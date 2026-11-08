@@ -27,7 +27,7 @@ export const canSetGoal = (room: any, roster: any) =>
 // What the island and panel draw, as plain data: goal + live room work in, the
 // capsule number, the bar's label, the stage segments, the faces and the
 // panel's stage rows out.
-export function goalView(goal: any, { roster = {}, roomWork = [] }: any = {}) {
+export function goalView(goal: any, { roster = {}, roomWork = [], roomTasks = [] }: any = {}) {
 	if (goal === null || goal === undefined) return null;
 	const stages = goal.stages ?? [];
 	const count = stages.length;
@@ -112,7 +112,56 @@ export function goalView(goal: any, { roster = {}, roomWork = [] }: any = {}) {
 		barLabel,
 		faces,
 		stages: stageViews,
+		tasks: workRows(roomTasks ?? [], roster),
 	};
+}
+
+// Where one group task stands, in the words the panel uses. Kept as a pure derivation
+// so the panel and the tests read the same mapping.
+const TASK_STATUS: Record<string, string> = {
+	running: "Working",
+	waiting_summary: "Waiting for a summary",
+	completed: "Done",
+	partial: "Partly done",
+	failed: "Failed",
+	stopped: "Stopped",
+};
+
+const DELIVERY: Record<string, string> = {
+	open: "Not delivered yet",
+	pending: "Delivery owed",
+	delivered: "Delivered",
+	abandoned: "Delivery abandoned",
+};
+
+// The user-facing rows for the work this group ran: who was called, where it stands, what
+// came back, and whether the answer reached them. A result that answered an older goal
+// revision says so, so it is not read as an answer to the goal as it stands.
+export function workRows(tasks: any[], roster: any = {}): any[] {
+	return (tasks ?? []).slice(0, 8).map((task: any) => {
+		const by = roster.byId?.[task.by];
+		const members = (task.members ?? []).map((id: string) => roster.byId?.[id]).filter(Boolean);
+		const answered = task.goal?.revision;
+		const current = task.currentGoal?.revision;
+		const stale =
+			typeof answered === "number" && typeof current === "number" && answered !== current
+				? t("Answered goal revision {was} · now {now}", { was: answered, now: current })
+				: undefined;
+		return {
+			id: String(task.id),
+			by,
+			members,
+			status: String(task.status ?? ""),
+			statusLabel: t(TASK_STATUS[String(task.status)] ?? "Working"),
+			delivery: String(task.delivery ?? ""),
+			deliveryLabel: t(DELIVERY[String(task.delivery)] ?? "Not delivered yet"),
+			...(stale === undefined ? {} : { stale }),
+			...(typeof task.result === "string" && task.result !== "" ? { result: task.result } : {}),
+			...(typeof task.summary === "string" && task.summary !== "" ? { summary: task.summary } : {}),
+			...(typeof task.error === "string" && task.error !== "" ? { error: task.error } : {}),
+			...(typeof task.reason === "string" && task.reason !== "" ? { reason: task.reason } : {}),
+		};
+	});
 }
 
 // The transcript's one event line per goal change.
@@ -232,6 +281,38 @@ const STOP_ARM_MS = 3000;
 
 // The open pod focuses one stage: a stepper across the top, the selected
 // stage's checks and tasks under it, and a bottom row with the rest.
+// One finished or running group task in the panel: the caller, the members, where it
+// stands, whether the answer was delivered, and the start of what came back.
+function WorkRow({ row }: any) {
+	return h(
+		"div",
+		{ className: "bt-goal-task", "data-delivery": row.delivery },
+		h(
+			"span",
+			{ className: "bt-goal-tav" },
+			row.by ? h(BotAvatar, { bot: row.by, size: 20, state: row.status === "running" ? "working" : "idle" }) : null,
+		),
+		h(
+			"span",
+			{ className: "bt-goal-ttext" },
+			h(
+				"span",
+				{ className: "bt-goal-tname", style: row.by ? { color: inkText(colorOf(row.by)) } : undefined },
+				row.by?.name ?? t("a Bot"),
+			),
+			row.members.length > 0 ? ` → ${row.members.map((member: any) => member.name).join(", ")}` : "",
+			" · ",
+			row.statusLabel,
+			" · ",
+			row.deliveryLabel,
+			row.stale !== undefined ? h("span", { className: "bt-goal-tnote" }, ` · ${row.stale}`) : null,
+			row.result !== undefined ? h("span", { className: "bt-goal-tnote" }, ` — ${row.result}`) : null,
+			row.error !== undefined ? h("span", { className: "bt-goal-tnote" }, ` — ${row.error}`) : null,
+			row.reason !== undefined ? h("span", { className: "bt-goal-tnote" }, ` — ${row.reason}`) : null,
+		),
+	);
+}
+
 function GoalPanel({ goal, view, room, roster, actions, working }: any) {
 	const at = RUNNING.has(view.status) && goal.current < view.stages.length ? goal.current : -1;
 	const [selected, setSelected] = useState(at);
@@ -374,6 +455,15 @@ function GoalPanel({ goal, view, room, roster, actions, working }: any) {
 									: null,
 							),
 			),
+			// The group's own work, newest first: what was asked under which goal revision,
+			// where it stands, and whether the answer reached the user.
+			view.tasks.length > 0
+				? h(
+						"div",
+						{ className: "bt-goal-tasks", "aria-label": t("Group work") },
+						view.tasks.map((row: any) => h(WorkRow, { key: row.id, row })),
+					)
+				: null,
 			checks && hasChecks
 				? h(
 						"div",
@@ -671,6 +761,9 @@ export const GOAL_CSS = `
 .bt-goal-tdone svg{width:9px;height:9px}
 .bt-goal-ttext{flex:0 1 auto;min-width:0;overflow-wrap:anywhere}
 .bt-goal-tname{font-weight:500}
+/* The group work rows reuse the task row; the trailing note is the result or the reason. */
+.bt-goal-tnote{color:var(--bt-ink-2)}
+.bt-goal-task[data-delivery=abandoned] .bt-goal-tnote{color:var(--bt-danger)}
 .bt-goal-ckbody{display:flex;flex-direction:column;gap:10px;padding:0 14px 10px;font-size:13px;line-height:18px;text-align:left}
 /* The bottom row: disclosure on the left, controls on the right. */
 .bt-goal-foot{display:flex;align-items:center;gap:8px;height:40px;flex:none;padding:0 8px 0 14px;border-top:.5px solid var(--bt-line)}

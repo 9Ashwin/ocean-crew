@@ -128,7 +128,14 @@ export function HeaderPill({
 	// subscribe to a constant so their header does not redraw on work.
 	const roomWorkKey = useWork?.((work: any) => (room ? JSON.stringify(work.rooms?.[sessionId] ?? []) : "")) ?? "[]";
 	const roomWork = room ? JSON.parse(roomWorkKey || "[]") : [];
-	const view = goal ? goalView(goal, { roster, roomWork }) : null;
+	// The group's saved work rows: what it ran, under which goal revision, and whether the
+	// answer reached the user. Only a group's header subscribes to them.
+	const roomTasksKey =
+		useWork?.((work: any) =>
+			room ? JSON.stringify((work.tasks ?? []).filter((task: any) => task.roomId === sessionId)) : "",
+		) ?? "[]";
+	const roomTasks = room ? JSON.parse(roomTasksKey || "[]") : [];
+	const view = goal ? goalView(goal, { roster, roomWork, roomTasks }) : null;
 	const goalShown = room !== undefined && !away && goal !== undefined;
 	const detailsOpen = useUi((state: any) => state.details === sessionId);
 	const name = bot?.name ?? room?.name ?? "";

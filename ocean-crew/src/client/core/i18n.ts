@@ -6,6 +6,14 @@
 export const NAMESPACE = "ocean-crew";
 
 const ZH: Record<string, string> = {
+	// Group work rows
+	"Group work": "群里的工作",
+	"Waiting for a summary": "等汇总",
+	Delivered: "已交付",
+	"Not delivered yet": "尚未交付",
+	"Delivery owed": "待交付",
+	"Delivery abandoned": "交付已放弃",
+	"Answered goal revision {was} · now {now}": "回答的是目标版本 {was}，当前 {now}",
 	// Shared
 	"Main Bot": "主 Bot",
 	Working: "进行中",
