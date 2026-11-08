@@ -208,29 +208,170 @@ const mediaTypeOf = (data: Buffer): string => {
 	return "application/octet-stream";
 };
 
-// Feishu sends a post as {title, content: [[{tag, text, ...}]]}: keep the title
-// and the text/link elements of each paragraph, drop images and formatting.
+// Feishu sends a post (and forwarded history) as paragraphs of typed elements. Rendering
+// the element tags keeps what the sender meant: a mention keeps its name, a code block
+// keeps its fence, and a line break stays a line break. Dropping them loses structure
+// that the model needs to answer.
+const postPayload = (content: any): any => {
+	if (content === null || typeof content !== "object") return undefined;
+	// A post may arrive wrapped, and its body may sit under one locale key per language.
+	if (content.post !== undefined && typeof content.post === "object") return content.post;
+	if (Array.isArray(content.content)) return content;
+	for (const [key, value] of Object.entries(content)) {
+		if (/^[a-z]{2}_[a-z]{2}$/i.test(key) && value !== null && typeof value === "object") return value;
+	}
+	return content;
+};
+
+const renderPostElement = (element: any): string => {
+	if (element === null || typeof element !== "object") return "";
+	const tag = String(element.tag ?? element.type ?? "");
+	switch (tag) {
+		case "text":
+			return String(element.text ?? "");
+		case "a":
+		case "link": {
+			const label = String(element.text ?? "").trim();
+			const href = String(element.href ?? element.url ?? "");
+			if (href === "") return label;
+			return label === "" ? href : `[${label}](${href})`;
+		}
+		case "at":
+			// @all is the platform's everyone marker; a person keeps the name it was given.
+			return `@${String(element.user_name ?? element.user_id ?? "all")}`;
+		case "emotion":
+		case "emoji":
+			return `:${String(element.emoji_type ?? element.emoji_key ?? "")}:`;
+		case "br":
+			return "\n";
+		case "hr":
+		case "divider":
+			return "\n---\n";
+		case "code_block":
+		case "pre": {
+			const language = String(element.language ?? "").replace(/[^\w+#.-]/g, "");
+			const code = String(element.text ?? element.content ?? "");
+			return `\n\`\`\`${language}\n${code}\n\`\`\`\n`;
+		}
+		case "img":
+		case "image":
+			return "[Image]";
+		case "media":
+		case "file":
+		case "audio":
+		case "video": {
+			const name = String(element.file_name ?? element.file_key ?? "").trim();
+			return name === "" ? "[Attachment]" : `[Attachment: ${name}]`;
+		}
+		default:
+			for (const key of ["text", "title", "content", "children", "elements"]) {
+				const value = element[key];
+				if (Array.isArray(value)) return value.map(renderPostElement).join("");
+				if (typeof value === "string" && value !== "") return value;
+			}
+			return "";
+	}
+};
+
 const postText = (content: any): string => {
-	if (content === null || typeof content !== "object") return "";
+	const payload = postPayload(content);
+	if (payload === undefined || payload === null) return "";
 	const lines: string[] = [];
-	const title = withoutMentions(content.title);
+	const title = withoutMentions(String(payload.title ?? ""));
 	if (title !== "") lines.push(title);
-	for (const paragraph of Array.isArray(content.content) ? content.content : []) {
+	for (const paragraph of Array.isArray(payload.content) ? payload.content : []) {
 		if (!Array.isArray(paragraph)) continue;
-		const text = paragraph
-			.filter(
-				(element: any) =>
-					element !== null &&
-					typeof element === "object" &&
-					["text", "a", "link"].includes(element.tag) &&
-					typeof element.text === "string",
-			)
-			.map((element: any) => element.text)
-			.join("");
-		const line = withoutMentions(text);
-		if (line !== "") lines.push(line);
+		const text = paragraph.map(renderPostElement).join("");
+		for (const line of withoutMentions(text).split("\n")) if (line.trim() !== "") lines.push(line.trimEnd());
 	}
 	return lines.join("\n");
+};
+
+const firstText = (payload: any, keys: string[], depth = 0): string => {
+	if (payload === null || typeof payload !== "object" || depth > 4) return "";
+	for (const key of keys) {
+		const value = payload[key];
+		if (typeof value === "string" && value.trim() !== "") return value.trim();
+		// Feishu wraps a card title as {title: {tag, content}} rather than a bare string.
+		if (value !== null && typeof value === "object" && typeof value.content === "string") {
+			if (value.content.trim() !== "") return value.content.trim();
+		}
+	}
+	for (const value of Object.values(payload)) {
+		if (value !== null && typeof value === "object") {
+			const found = firstText(value, keys, depth + 1);
+			if (found !== "") return found;
+		}
+	}
+	return "";
+};
+
+// A forwarded conversation arrives as a title plus entries; the first few carry the
+// context the user is pointing at, and a silent drop loses the whole message.
+const mergeForwardText = (content: any): string => {
+	const lines: string[] = [];
+	const title = firstText(content, ["title", "summary", "preview"]);
+	if (title !== "") lines.push(title);
+	const entries: any[] = [];
+	for (const key of ["messages", "items", "message_list", "records", "content"]) {
+		const value = content?.[key];
+		if (Array.isArray(value)) entries.push(...value);
+	}
+	for (const entry of entries.slice(0, 8)) {
+		if (entry === null || typeof entry !== "object") {
+			const text = String(entry ?? "").trim();
+			if (text !== "") lines.push(`- ${text}`);
+			continue;
+		}
+		const sender = firstText(entry, ["sender_name", "user_name", "sender", "name"]);
+		const type = String(entry.message_type ?? entry.msg_type ?? "");
+		const body =
+			type === "post"
+				? postText(entry.content ?? entry)
+				: firstText(entry, ["text", "summary", "preview", "content", "title"]);
+		if (body !== "") lines.push(`- ${sender === "" ? body : `${sender}: ${body}`}`);
+	}
+	return lines.join("\n");
+};
+
+const shareChatText = (content: any): string => {
+	const name = firstText(content, ["chat_name", "name", "title"]);
+	const id = String(content?.chat_id ?? content?.open_chat_id ?? content?.share_chat_id ?? "");
+	const lines = [name === "" ? "Shared chat" : `Shared chat: ${name}`];
+	if (id !== "") lines.push(`Chat ID: ${id}`);
+	return lines.join("\n");
+};
+
+// A card carries its title, a few text lines and its buttons; rendering those is what
+// lets the model answer a question that arrived as a card.
+const interactiveText = (content: any): string => {
+	const card = content?.card !== undefined && typeof content.card === "object" ? content.card : content;
+	const lines: string[] = [];
+	const actions: string[] = [];
+	const title = firstText(card, ["title", "summary", "subtitle"]);
+	if (title !== "") lines.push(title);
+	const walk = (node: any, depth: number): void => {
+		if (node === null || typeof node !== "object" || depth > 5) return;
+		if (Array.isArray(node)) {
+			for (const item of node) walk(item, depth + 1);
+			return;
+		}
+		if (node.tag === "button" || node.tag === "action") {
+			const label = String(node.text?.content ?? node.text ?? "").trim();
+			if (label !== "") actions.push(label);
+			for (const action of Array.isArray(node.actions) ? node.actions : []) walk(action, depth + 1);
+			return;
+		}
+		for (const key of ["elements", "body", "content", "children"]) {
+			if (node[key] !== undefined) walk(node[key], depth + 1);
+		}
+		const text = typeof node.content === "string" ? node.content : typeof node.text === "string" ? node.text : "";
+		if (text.trim() !== "") lines.push(text.trim());
+	};
+	walk(card, 0);
+	const body = lines.filter((line, index) => index === 0 || line !== title).slice(0, 12);
+	if (actions.length > 0) body.push(`Actions: ${actions.join(", ")}`);
+	return body.join("\n");
 };
 
 // A reply as Feishu renders Markdown, so **bold**, lists, links and `code` show as
@@ -261,9 +402,15 @@ const POST_ROWS = (content: string): Array<Array<{ tag: string; text: string }>>
 };
 const post = (content: string): string => JSON.stringify({ zh_cn: { content: POST_ROWS(content) } });
 
+// A card is an event, not a paragraph: a coloured header makes an approval read as one
+// at a glance, the way a chat client shows a pending decision.
 const card = (text: string, buttons: any[]): string =>
 	JSON.stringify({
 		schema: "2.0",
+		header: {
+			title: { tag: "plain_text", content: "Action needed" },
+			template: "orange",
+		},
 		body: {
 			elements: [
 				{ tag: "markdown", content: text },
@@ -283,6 +430,70 @@ const card = (text: string, buttons: any[]): string =>
 			],
 		},
 	});
+
+/** A quoted message renders to the same text a live one would; cached per message. */
+const quotedCache = new Map<string, string>();
+const quotedText = async (
+	client: any,
+	messageId: string,
+	scrub: (text: unknown) => string,
+	warn: (template: string, error: unknown) => void,
+): Promise<string> => {
+	const held = quotedCache.get(messageId);
+	if (held !== undefined) return held;
+	let text = "";
+	try {
+		const body = await call(
+			"Feishu quoted message",
+			() => client.im.message.get({ path: { message_id: messageId } }),
+			scrub,
+		);
+		const item = Array.isArray(body?.data?.items) ? body.data.items[0] : undefined;
+		const type = String(item?.msg_type ?? item?.message_type ?? "");
+		const content = parseJson(item?.body?.content ?? item?.content);
+		if (type === "post") text = postText(content);
+		else if (type === "text") text = String(content?.text ?? "");
+		else if (type === "merge_forward") text = mergeForwardText(content);
+		else if (type === "share_chat") text = shareChatText(content);
+		else if (type === "interactive") text = interactiveText(content);
+		else if (type === "image") text = "[Image]";
+		else if (type === "file" || type === "audio" || type === "media") {
+			text = `[Attachment: ${String(content?.file_name ?? type)}]`;
+		}
+	} catch (error) {
+		warn("ocean-crew im: feishu quoted message not readable: %s", error);
+	}
+	if (quotedCache.size > MAX_SEEN_MESSAGES) quotedCache.clear();
+	quotedCache.set(messageId, text);
+	return text;
+};
+
+/** A sender's display name, so the Bot does not read opaque open_ids. Cached with a TTL. */
+const SENDER_TTL_MS = 10 * 60_000;
+const senderNames = new Map<string, { name: string; at: number }>();
+const senderName = async (client: any, senderId: string, scrub: (text: unknown) => string): Promise<string> => {
+	if (senderId === "") return "";
+	const held = senderNames.get(senderId);
+	if (held !== undefined && Date.now() - held.at < SENDER_TTL_MS) return held.name;
+	let name = "";
+	try {
+		const body = await call(
+			"Feishu sender",
+			() =>
+				client.contact.v3.user.get({
+					params: { user_id_type: "open_id" },
+					path: { user_id: senderId },
+				}),
+			scrub,
+		);
+		name = String(body?.data?.user?.name ?? body?.data?.user?.en_name ?? "");
+	} catch {
+		// A bot or a user outside the app's scope has no contact record; the id is enough.
+	}
+	if (senderNames.size > MAX_SEEN_MESSAGES) senderNames.clear();
+	senderNames.set(senderId, { name, at: Date.now() });
+	return name;
+};
 
 /** One chat's remembered name and kind, so a chat.get is not run per message. */
 interface ChatInfo {
@@ -388,7 +599,23 @@ const feishu = {
 							: mentions.some((mention: any) => String(mention?.id?.open_id ?? "") === botOpenId);
 					const content = parseJson(message.content);
 					const type = String(message.message_type ?? "");
-					const text = type === "text" ? withoutMentions(content.text) : type === "post" ? postText(content) : "";
+					const rendered =
+						type === "text"
+							? withoutMentions(content.text)
+							: type === "post"
+								? postText(content)
+								: type === "merge_forward"
+									? mergeForwardText(content)
+									: type === "share_chat"
+										? shareChatText(content)
+										: type === "interactive"
+											? interactiveText(content)
+											: "";
+					// A reply quotes the message it answers; without it the model cannot tell
+					// which earlier message this one refers to.
+					const quotedId = String(message.parent_id ?? message.upper_message_id ?? "");
+					const quoted = quotedId === "" ? "" : await quotedText(client, quotedId, scrub, warn);
+					const text = quoted === "" ? rendered : `[Replying to: "${quoted.slice(0, 500)}"]\n\n${rendered}`.trim();
 					const images: Array<{ mediaType: string; data: string }> = [];
 					const files: Array<{ name: string; data: Buffer }> = [];
 					if (type === "image" && typeof content.image_key === "string" && content.image_key !== "") {
@@ -415,9 +642,10 @@ const feishu = {
 					if (stopped) return;
 					const sender = event.sender ?? {};
 					const senderId = String(sender.sender_id?.open_id ?? sender.sender_id?.user_id ?? "");
+					const senderLabel = String(sender.sender_name ?? "") || (await senderName(client, senderId, scrub));
 					await handlers.onMessage({
 						chat: { key: chatId, kind: chat.kind, title: chat.title },
-						sender: { id: senderId, name: String(sender.sender_name ?? senderId) },
+						sender: { id: senderId, name: senderLabel === "" ? senderId : senderLabel },
 						text,
 						images,
 						files,

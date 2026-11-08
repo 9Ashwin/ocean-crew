@@ -32,6 +32,8 @@ function fakeSdk(overrides: any = {}) {
 		patches: [] as any[],
 		updates: [] as any[],
 		replies: [] as any[],
+		messageGets: [] as any[],
+		contactGets: [] as any[],
 		reactionCreates: [] as any[],
 		reactionDeletes: [] as any[],
 		chatGets: [] as any[],
@@ -47,6 +49,8 @@ function fakeSdk(overrides: any = {}) {
 		updateResult: overrides.updateResult,
 		replyResult: overrides.replyResult,
 		replyGone: overrides.replyGone,
+		quotedMessages: overrides.quotedMessages ?? {},
+		contactNames: overrides.contactNames ?? {},
 		reactionCreateResult: overrides.reactionCreateResult,
 		reactionDeleteResult: overrides.reactionDeleteResult,
 		resources: overrides.resources ?? {},
@@ -61,8 +65,27 @@ function fakeSdk(overrides: any = {}) {
 	};
 	fake.Client = class {
 		im: any;
+		contact: any;
 		constructor(options: any) {
 			fake.clientOptions.push(options);
+			this.contact = {
+				v3: {
+					user: {
+						get: (payload: any) => {
+							fake.contactGets.push(payload);
+							const name = fake.contactNames[payload?.path?.user_id];
+							if (name === undefined) {
+								return Promise.reject(
+									Object.assign(new Error("no such user"), {
+										response: { status: 400, data: { code: 41050, msg: "no user authority" } },
+									}),
+								);
+							}
+							return settle(undefined, { code: 0, data: { user: { name } } });
+						},
+					},
+				},
+			};
 			this.im = {
 				message: {
 					create: (payload: any) => {
@@ -82,6 +105,18 @@ function fakeSdk(overrides: any = {}) {
 					update: (payload: any) => {
 						fake.updates.push(payload);
 						return settle(fake.updateResult, { code: 0, data: {} });
+					},
+					get: (payload: any) => {
+						fake.messageGets.push(payload);
+						const held = fake.quotedMessages[payload?.path?.message_id];
+						if (held === undefined) {
+							return Promise.reject(
+								Object.assign(new Error("message not found"), {
+									response: { status: 400, data: { code: 230011, msg: "message not found" } },
+								}),
+							);
+						}
+						return settle(undefined, { code: 0, data: { items: [held] } });
 					},
 					reply: (payload: any) => {
 						fake.replies.push(payload);
@@ -465,7 +500,8 @@ test("a post message contributes the text of its title and paragraphs", async ()
 		() => messages.length === 1,
 	);
 	assert.equal(messages.length, 1);
-	assert.equal(messages[0].text, "Report\nfirst link\nsecond");
+	// A link keeps its target, and a mention placeholder is still stripped from plain text.
+	assert.equal(messages[0].text, "Report\nfirst [link](https://example.com)\nsecond");
 });
 
 test("a card action reports its button data and chat identity", async () => {
@@ -716,4 +752,127 @@ test("every send carries a uuid so a retry cannot double-post", async () => {
 	const { handle } = await setup(fake);
 	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "hello" });
 	assert.match(fake.creates[0].data.uuid, /^[0-9a-f-]{36}$/);
+});
+
+// A reply quotes the message it answers: the model cannot resolve "this one" otherwise.
+test("a replied-to message is inlined before the reply text", async () => {
+	const fake = fakeSdk({
+		quotedMessages: {
+			om_q: { msg_type: "text", body: { content: JSON.stringify({ text: "明天几点出发？" }) } },
+		},
+	});
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({ message_id: "om_2", parent_id: "om_q", content: JSON.stringify({ text: "九点" }) }),
+		() => messages.length > 0,
+	);
+	assert.equal(messages[0].text, '[Replying to: "明天几点出发？"]\n\n九点');
+	// The quoted message is fetched once and cached for the next reply.
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({ message_id: "om_3", parent_id: "om_q", content: JSON.stringify({ text: "好" }) }),
+		() => messages.length > 1,
+	);
+	assert.equal(fake.messageGets.length, 1);
+});
+
+test("a sender without a name is resolved through the contact API", async () => {
+	const fake = fakeSdk({ contactNames: { ou_u1: "Alice" } });
+	const { messages } = await setup(fake);
+	const event = messageEvent({});
+	event.sender = { sender_id: { open_id: "ou_u1" } } as any;
+	await dispatch(fake, "im.message.receive_v1", event, () => messages.length > 0);
+	assert.equal(messages[0].sender.name, "Alice");
+	// The name is cached, so a second message does not call the API again.
+	await dispatch(fake, "im.message.receive_v1", messageEvent({ message_id: "om_9" }), () => messages.length > 1);
+	assert.equal(fake.contactGets.length, 1);
+});
+
+test("a forwarded conversation keeps its title and entries", async () => {
+	const fake = fakeSdk();
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_type: "merge_forward",
+			content: JSON.stringify({
+				title: "运维讨论",
+				message_list: [
+					{ sender_name: "Bob", text: "磁盘满了" },
+					{ sender_name: "Carol", text: "先清日志" },
+				],
+			}),
+		}),
+		() => messages.length > 0,
+	);
+	assert.match(messages[0].text, /运维讨论/);
+	assert.match(messages[0].text, /Bob: 磁盘满了/);
+	assert.match(messages[0].text, /Carol: 先清日志/);
+});
+
+test("a shared chat and an interactive card are no longer dropped", async () => {
+	const fake = fakeSdk();
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({ message_type: "share_chat", content: JSON.stringify({ chat_id: "oc_x", chat_name: "值班群" }) }),
+		() => messages.length > 0,
+	);
+	assert.match(messages[0].text, /值班群/);
+	assert.match(messages[0].text, /oc_x/);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_id: "om_card",
+			message_type: "interactive",
+			content: JSON.stringify({
+				card: {
+					header: { title: { content: "部署确认" } },
+					elements: [
+						{ tag: "markdown", content: "要发布到生产吗？" },
+						{ tag: "action", actions: [{ tag: "button", text: { content: "发布" } }] },
+					],
+				},
+			}),
+		}),
+		() => messages.length > 1,
+	);
+	assert.match(messages[1].text, /部署确认/);
+	assert.match(messages[1].text, /要发布到生产吗/);
+	assert.match(messages[1].text, /Actions: 发布/);
+});
+
+test("post elements keep mentions, line breaks and code blocks", async () => {
+	const fake = fakeSdk();
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_type: "post",
+			content: JSON.stringify({
+				zh_cn: {
+					title: "周报",
+					content: [
+						[
+							{ tag: "at", user_name: "Bob" },
+							{ tag: "text", text: " 看下" },
+						],
+						[{ tag: "text", text: "第一行" }, { tag: "br" }, { tag: "text", text: "第二行" }],
+						[{ tag: "code_block", language: "js", text: "const a = 1;" }],
+					],
+				},
+			}),
+		}),
+		() => messages.length > 0,
+	);
+	assert.match(messages[0].text, /@Bob 看下/);
+	assert.match(messages[0].text, /第一行\n第二行/);
+	assert.match(messages[0].text, /```js\nconst a = 1;\n```/);
 });
