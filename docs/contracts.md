@@ -56,15 +56,23 @@
 
 ## IM 回复路由
 
-每条入站消息记下来源（`state.im.origins[sessionId] = {connId, chatKey, at}`），Bot 的回复只回到这个
-聊天。同一 Bot 绑定多个渠道时，其他渠道收不到——这是 Hermes `DeliveryTarget(origin)` 与 memoh
-`ReplyTarget` 的同一策略，也明确避开了 Hermes 注释里指出的错误做法：用「当前活跃事件」兜底会造成串台。
+来源按**请求**记录，不按会话：`state.im.origins` 的键是这次入站的 request id（`im:<platform>:<uuid>`），值是
+`{ connId, chatKey, ownerKey, messageId?, actor?, revision, at }`。`ownerKey` 是这次请求指向的 Bot 或群；
+`revision` 是连接绑定当时的代数。记录不可变，后一条请求不会覆盖前一条。
 
-- `mirror: "source"`（默认）：只回来源聊天。`mirror: "all"`：仍向该连接上监听此 Bot 的所有聊天广播。
-- 窗口（DSH Desktop）发起的 Turn 没有来源，默认**完全不发**到 IM。设置 `imDeliverAnswers: true` 后，
-  在 Turn 结束时只发**最终回答**，不发各个 step 的中间文本（对齐 dsh-im 的会话同步）。
-- 来源记录随 `state.json` 持久化，重启后仍然生效；超过 24 小时的来源视为过期，不再据此路由。
-- 来源聊天已解绑时跳过该目标，不报错。
+一节 Turn 属于哪次请求，由 DSH 在 `user/message` 上回显的 `source.rpcId` 决定：host 把它绑定到
+`会话 id + turn`。窗口里发起的 Turn 绑定到空，因此不会继承更早的 IM 来源。出站只按绑定解析：
+`assistant/message`、`view` 和群发言都发回该请求自己的聊天；没有绑定（例如进程重启后的旧 Turn）不外发。
+
+必须保持：
+
+- `conn.revision` 在改变绑定（`im-pair`、`im-unpair`、`im-chat`、`im-update` 的 bot/启用变更）时递增；
+  记录里的 `revision` 与当前连接不一致时，该路由作废，不外发，也不换到「最近的聊天」。
+- `mirror: "source"`（默认）：只回来源聊天。`mirror: "all"`：仍向该连接上监听此 Bot 或该群的所有聊天广播。
+- 没有来源的 Turn（窗口发起）默认**完全不发**到 IM。设置 `imDeliverAnswers: true` 后只投递最终回答。
+- 目标 Bot/群已被删除、聊天已解绑或目标已改指向别处时，不外发。
+
+若被破坏：一条后台结果会进到最后说话的聊天；换段或改绑后回复会静默消失或错投。
 
 ## IM 投递与 outbox
 

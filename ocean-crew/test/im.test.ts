@@ -565,8 +565,11 @@ test("a permanent send error shows in the status and is not retried", async (t) 
 	await dm(s, "u1", "hi");
 	s.fake.fails.push(Object.assign(new Error("forbidden"), { status: 403, permanent: true }));
 	s.emitEvent("a", "assistant/message", { message: { content: [{ type: "text", text: "will fail" }] } });
-	await s.flush();
-	assert.equal(s.rt.imStatusView()[conn.id].state, "error");
+	// The durable queue means the send settles a tick later; wait for its verdict.
+	assert.ok(
+		await s.until(() => s.rt.imStatusView()[conn.id].state === "error"),
+		"the permanent failure reaches the status",
+	);
 	assert.match(s.rt.imStatusView()[conn.id].error, /forbidden/);
 	assert.match(s.rt.imStatusView()[conn.id].referenceId, /^MF-[0-9a-f]{8}$/);
 	const before = s.fake.sent.length;
@@ -726,13 +729,14 @@ test("a reply answers the chat the message came from, not every bound chat", asy
 	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
 	await dm(s, "u1", "hello from this chat");
 	await s.flush();
-	// The origin is recorded for the Session, so a later background result goes there
+	// The origin is recorded for the request, so a later background result goes there
 	// rather than to whichever chat spoke last.
-	assert.deepEqual(s.rt.state.im.origins.a, {
-		connId: conn.id,
-		chatKey: "dm-u1",
-		at: s.rt.state.im.origins.a.at,
-	});
+	const records = Object.values(s.rt.state.im.origins) as any[];
+	assert.equal(records.length, 1);
+	assert.equal(records[0].connId, conn.id);
+	assert.equal(records[0].chatKey, "dm-u1");
+	assert.equal(records[0].ownerKey, "a");
+	assert.equal(typeof records[0].at, "number");
 	assert.ok(s.fake.sent.length > 0, "the message was answered in its own chat");
 	assert.ok(
 		s.fake.sent.every((entry: any) => String(entry.chat?.key ?? "").startsWith("dm-")),
@@ -873,4 +877,75 @@ test("outbox capacity never evicts a message whose outcome is unknown", async (t
 	const after = JSON.parse(readFileSync(join(next.home, "im", `${conn.id}.outbox.json`), "utf8"));
 	const kept = (after.chats["dm-u2"] ?? []).filter((record: any) => record.state === "unknown");
 	assert.equal(kept.length, 60, "records the user may need to see are not evicted");
+});
+
+// ---------------------------------------------------------------------------
+// A reply belongs to the request that started the work, not to the session's
+// most recent message.
+
+test("a later message in another chat does not steal an earlier turn's reply", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	for (const id of ["u1", "u2"]) {
+		await dm(s, id, "hello");
+		await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: id, allow: true });
+	}
+	// Both are paired now; each message starts its own turn.
+	await dm(s, "u1", "first chat asks");
+	await dm(s, "u2", "second chat asks");
+	await s.flush();
+	const firstRequest = s.prompts.at(-2)?.requestId;
+	assert.match(String(firstRequest), /^im:fake:/);
+	// DSH echoes the request on the user message and stamps the turn; that is what ties
+	// the turn to the chat it came from.
+	s.emitEvent("a", "user/message", {
+		source: { kind: "user", rpcId: firstRequest },
+		turn: 7,
+		content: [],
+	});
+	s.emitEvent("a", "user/message", {
+		source: { kind: "user", rpcId: s.prompts.at(-1)?.requestId },
+		turn: 8,
+		content: [],
+	});
+	s.fake.sent.length = 0;
+	// Turn 7's late output arrives after turn 8 started: it still belongs to the first chat.
+	s.emitEvent("a", "assistant/message", { turn: 7, message: { content: [{ type: "text", text: "late first" }] } });
+	s.emitEvent("a", "assistant/message", { turn: 8, message: { content: [{ type: "text", text: "second" }] } });
+	assert.ok(await s.until(() => s.fake.sent.length === 2));
+	const byChat = s.fake.sent.map((entry: any) => `${entry.chat.key}:${entry.text}`).sort();
+	assert.deepEqual(byChat, ["dm-u1:late first", "dm-u2:second"]);
+});
+
+test("a window turn clears the session's route instead of inheriting it", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "from im");
+	await s.flush();
+	s.fake.sent.length = 0;
+	// The user types in the window: this turn has no IM request, so it must not inherit
+	// the chat the previous IM message came from.
+	s.emitEvent("a", "user/message", { turn: 3, content: [{ type: "text", text: "typed in the window" }] });
+	s.emitEvent("a", "assistant/message", { turn: 3, message: { content: [{ type: "text", text: "window answer" }] } });
+	await s.flush();
+	assert.deepEqual(s.fake.sent, [], "a window turn is not sent to IM");
+});
+
+test("changing a chat's target invalidates routes recorded before it", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "from im");
+	await s.flush();
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, turn: 4, content: [] });
+	s.fake.sent.length = 0;
+	// The chat is pointed somewhere else: the old route must not deliver to it.
+	await s.rt.imEndpoint("im-chat", { id: conn.id, chatKey: "dm-u1", target: null });
+	s.emitEvent("a", "assistant/message", { turn: 4, message: { content: [{ type: "text", text: "late" }] } });
+	await s.flush();
+	assert.deepEqual(s.fake.sent, [], "a stale binding sends nothing");
 });

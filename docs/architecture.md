@@ -72,9 +72,10 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 请求 id 以 `im:` 开头。
 
 **一条 Bot 回复出去。** IM host 监听 `session/event`。`displayItems` 为某个 Bot 会话产出的每个 `bot` 或
-`view` 项，都通过连接的按聊天发送队列，回到产生这一轮的那个聊天：host 在入站时把来源记进
-`state.im.origins`，出站只发那里，同一 Bot 的其他绑定聊天收不到。连接设了 `mirror: "all"` 时恢复广播；
-没有来源的轮次（在窗口里发起）不发 IM，开启 `imDeliverAnswers` 时只发最终回答。群聊发言
+`view` 项，都通过连接的按聊天发送队列，回到产生这一轮的那个聊天：host 在入站时按 request id 把来源记进
+`state.im.origins`，并用 DSH 回显的 `source.rpcId` 把「会话 + turn」绑定到该请求，出站只发那里，同一 Bot
+的其他绑定聊天收不到。连接设了 `mirror: "all"` 时恢复广播；没有来源的轮次（在窗口里发起）不发 IM，
+开启 `imDeliverAnswers` 时只发最终回答。群聊发言
 （`rt.onRoomLine`）和审批（`rt.onApproval`）走同一条路径。`edit` 在卡片得到回答后结算它；平台支持
 表情回应时，用一个状态表情标出请求这项工作的消息。
 
