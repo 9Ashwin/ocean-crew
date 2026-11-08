@@ -314,22 +314,29 @@ export function install(rt: any) {
 	//
 	// It is persisted in `state.im.origins` on purpose: resolving it from the "current"
 	// event instead is what makes a background result land in whichever chat spoke last.
-	const origins = (): Record<string, { connId: string; chatKey: string; at: number }> => {
+	const origins = (): Record<string, { connId: string; chatKey: string; at: number; messageId?: string }> => {
 		// `im` is optional in the saved state; a team made before IM existed gets one here.
 		state.im ??= { connections: {} };
 		const held = state.im as Record<string, any>;
 		held.connections ??= {};
 		if (held.origins === null || typeof held.origins !== "object" || Array.isArray(held.origins)) held.origins = {};
-		return held.origins as Record<string, { connId: string; chatKey: string; at: number }>;
+		return held.origins as Record<string, { connId: string; chatKey: string; at: number; messageId?: string }>;
 	};
-	const noteOrigin = (sessionId: string, conn: any, chat: any) => {
+	const noteOrigin = (sessionId: string, conn: any, chat: any, messageId?: string) => {
 		const all = origins();
 		const before = all[sessionId];
 		if (before?.connId === conn.id && before?.chatKey === chat.key) {
 			before.at = Date.now();
+			// The newest message is the one a reply belongs under.
+			if (typeof messageId === "string" && messageId !== "") before.messageId = messageId;
 			return;
 		}
-		all[sessionId] = { connId: conn.id, chatKey: chat.key, at: Date.now() };
+		all[sessionId] = {
+			connId: conn.id,
+			chatKey: chat.key,
+			at: Date.now(),
+			...(typeof messageId === "string" && messageId !== "" ? { messageId } : {}),
+		};
 		// The origin is part of the team state, so another window sees the same routing.
 		void rt.save().catch((error: any) => rt.warn("ocean-crew: im origin not saved: %s", error));
 	};
@@ -508,8 +515,8 @@ export function install(rt: any) {
 	};
 	const sendText = (conn: any, chat: any, body: any, buttons?: any, after?: any) =>
 		enqueue(conn, chat.key, { chat, text: body, buttons, after });
-	const sendTo = (conn: any, chatKey: any, chat: any, body: any, buttons?: any, after?: any) =>
-		enqueue(conn, chatKey, { chat, text: body, buttons, after });
+	const sendTo = (conn: any, chatKey: any, chat: any, body: any, buttons?: any, after?: any, replyTo?: string) =>
+		enqueue(conn, chatKey, { chat, text: body, buttons, after, ...(replyTo ? { replyTo } : {}) });
 
 	// Status reactions mark the message that asked for the work while its turn runs
 	// and settle to the outcome when the turn ends (dsh-im's status-reaction
@@ -730,7 +737,7 @@ export function install(rt: any) {
 			}
 		}
 		if (content.length === 0) return;
-		noteOrigin(sessionId, conn, msg.chat);
+		noteOrigin(sessionId, conn, msg.chat, msg.messageId);
 		const requestId = `im:${conn.platform}:${randomUUID()}`;
 		await rt.sendUser({ sessionId, content, requestId });
 		// A room message is answered by member Bot turns under their own sessions, so
@@ -1481,8 +1488,17 @@ export function install(rt: any) {
 				item.kind === "bot"
 					? item.text
 					: viewCardText({ title: item.title, view: item.view }) || (item.title ?? "");
+			const replyTo = originOf(session.id)?.messageId;
 			for (const { conn, chatKey, chat } of targets)
-				sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body);
+				sendTo(
+					conn,
+					chatKey,
+					{ key: chatKey, kind: chat.kind, title: chat.title },
+					body,
+					undefined,
+					undefined,
+					replyTo,
+				);
 		}
 	});
 

@@ -152,29 +152,63 @@ function forceCut(block: Block, limit: number): TelegramChunk[] {
 }
 
 // Chunks of one Markdown message, each under `limit` rendered characters. Block
-// boundaries are kept where possible; a fence is only split when it alone is too big.
-// Plain markdown chunks at a byte-pair limit: paragraphs and lines first, a
-// hard cut at the limit for one over-long run. For platforms that take
-// markdown as-is (Discord, QQ, WeCom, DingTalk, Slack has its own converter).
-export function chunkMarkdown(markdown: string | null | undefined, limit: number): string[] {
-	const chunks: string[] = [];
-	let rest = String(markdown ?? "");
-	while (rest !== "") {
-		if (points(rest) <= limit) {
-			chunks.push(rest);
-			break;
-		}
-		let at = limit;
-		const newline = rest.lastIndexOf("\n", at);
-		if (newline > limit / 2) at = newline;
-		else {
-			const space = rest.lastIndexOf(" ", at);
-			if (space > limit / 2) at = space;
-		}
-		chunks.push(rest.slice(0, at));
-		rest = rest.slice(at).replace(/^\s+/, "");
+// A fence left open at a cut would render the next chunk as a bare body, so the cut closes
+// it and the next chunk reopens it with the same language. When the reply is split into
+// more than one part, each part says which one it is, so the reader knows more is coming.
+const FENCE_LINE = /^\s*(?:```|~~~)(.*)$/;
+const fenceOpen = (text: string): { open: boolean; lang: string } => {
+	let open = false;
+	let lang = "";
+	for (const line of text.split("\n")) {
+		const found = FENCE_LINE.exec(line);
+		if (found === null) continue;
+		if (!open) lang = found[1].trim();
+		open = !open;
 	}
-	return chunks;
+	return { open, lang };
+};
+
+export function chunkMarkdown(markdown: string | null | undefined, limit: number): string[] {
+	const whole = String(markdown ?? "").trimEnd();
+	if (whole === "") return [];
+	if (points(whole) <= limit) return [whole];
+	// A part marker is only useful when the budget is much larger than the marker itself;
+	// on a tiny limit it would eat the text and say nothing.
+	const marked = limit >= 128;
+	// Room for "(i/n)" comes out of the limit, so every part stays within it.
+	const budgetTotal = Math.max(1, limit - (marked ? 8 : 0));
+	const raw: string[] = [];
+	let rest = whole;
+	let inside = false;
+	let lang = "";
+	while (points(rest) > budgetTotal) {
+		const opening = inside ? `\`\`\`${lang}\n` : "";
+		const closing = inside || FENCE_LINE.test(rest) ? 4 : 0;
+		const budget = Math.max(1, budgetTotal - points(opening) - closing);
+		const chars = [...rest];
+		let at = budget;
+		const slice = chars.slice(0, budget).join("");
+		const newline = slice.lastIndexOf("\n");
+		if (newline > budget / 2) at = newline;
+		else {
+			const space = slice.lastIndexOf(" ");
+			if (space > budget / 2) at = space;
+		}
+		const body = chars.slice(0, at).join("");
+		rest = chars.slice(at).join("").replace(/^\s+/, "");
+		let state: boolean = inside;
+		for (const line of body.split("\n")) {
+			const found = FENCE_LINE.exec(line);
+			if (found === null) continue;
+			if (!state) lang = found[1].trim();
+			state = !state;
+		}
+		raw.push(`${opening}${body}${state ? "\n```" : ""}`);
+		inside = state;
+	}
+	if (rest !== "") raw.push(`${inside ? `\`\`\`${lang}\n` : ""}${rest}`);
+	if (!marked || raw.length <= 1) return raw;
+	return raw.map((piece, index) => `${piece} (${index + 1}/${raw.length})`);
 }
 
 export function chunkTelegram(markdown: string, limit = 4096): TelegramChunk[] {

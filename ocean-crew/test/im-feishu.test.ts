@@ -30,6 +30,8 @@ function fakeSdk(overrides: any = {}) {
 		requests: [] as any[],
 		creates: [] as any[],
 		patches: [] as any[],
+		updates: [] as any[],
+		replies: [] as any[],
 		reactionCreates: [] as any[],
 		reactionDeletes: [] as any[],
 		chatGets: [] as any[],
@@ -40,7 +42,11 @@ function fakeSdk(overrides: any = {}) {
 		botResult: overrides.botResult,
 		chatResult: overrides.chatResult,
 		createResult: overrides.createResult,
+		createFailures: overrides.createFailures ? [...overrides.createFailures] : [],
 		patchResult: overrides.patchResult,
+		updateResult: overrides.updateResult,
+		replyResult: overrides.replyResult,
+		replyGone: overrides.replyGone,
 		reactionCreateResult: overrides.reactionCreateResult,
 		reactionDeleteResult: overrides.reactionDeleteResult,
 		resources: overrides.resources ?? {},
@@ -61,11 +67,32 @@ function fakeSdk(overrides: any = {}) {
 				message: {
 					create: (payload: any) => {
 						fake.creates.push(payload);
+						const failure = fake.createFailures.shift();
+						if (failure !== undefined) {
+							const rejected: any = new Error(failure);
+							rejected.response = { status: 400, data: { code: 230001, msg: failure } };
+							return Promise.reject(rejected);
+						}
 						return settle(fake.createResult, { code: 0, data: { message_id: `om_${++fake.sent}` } });
 					},
 					patch: (payload: any) => {
 						fake.patches.push(payload);
 						return settle(fake.patchResult, { code: 0, data: {} });
+					},
+					update: (payload: any) => {
+						fake.updates.push(payload);
+						return settle(fake.updateResult, { code: 0, data: {} });
+					},
+					reply: (payload: any) => {
+						fake.replies.push(payload);
+						const gone = fake.replyGone;
+						if (gone !== undefined) {
+							// The SDK rejects with the platform answer on `response.data`.
+							const failure: any = new Error("reply target is gone");
+							failure.response = { status: 400, data: { code: gone, msg: "message not found" } };
+							return Promise.reject(failure);
+						}
+						return settle(fake.replyResult, { code: 0, data: { message_id: `om_r${++fake.sent}` } });
 					},
 				},
 				messageReaction: {
@@ -482,13 +509,15 @@ test("send chunks the text and turns the last chunk into a card", async () => {
 	assert.equal(first.data.receive_id, "oc_group");
 	// Prose is a Markdown post, so the platform renders emphasis and lists itself.
 	assert.equal(first.data.msg_type, "post");
-	assert.deepEqual(JSON.parse(first.data.content), {
-		zh_cn: { content: [[{ tag: "md", text: "a".repeat(4000) }]] },
-	});
+	const firstText = JSON.parse(first.data.content).zh_cn.content[0][0].text;
+	// A split reply marks each part, and the marker fits inside the limit.
+	assert.match(firstText, / \(1\/2\)$/);
+	assert.ok([...firstText].length <= 4000, `part is within the limit: ${[...firstText].length}`);
 	assert.equal(last.data.msg_type, "interactive");
 	const card = JSON.parse(last.data.content);
 	assert.equal(card.schema, "2.0");
-	assert.deepEqual(card.body.elements[0], { tag: "markdown", content: "a" });
+	// 4001 chars split at the limit leaves the remainder plus the marker.
+	assert.deepEqual(card.body.elements[0], { tag: "markdown", content: `${"a".repeat(9)} (2/2)` });
 	assert.equal(card.body.elements[1].tag, "action");
 	assert.deepEqual(card.body.elements[1].actions[0].value, { v: "q:q1:0" });
 	assert.equal(card.body.elements[1].actions[0].text.content, "yes");
@@ -628,4 +657,63 @@ test("a refused reaction is a classified error the host can swallow", async () =
 		assert.equal(error.unknown, true);
 		return true;
 	});
+});
+
+// A reply threads under the message that asked for it; a gone target falls back.
+test("an answer replies to the message it answers, and only the first bubble does", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	const sent = await handle.send(
+		{ key: "oc_p2p", kind: "direct" },
+		{ text: `${"a".repeat(4001)}`, replyTo: "om_ask" },
+	);
+	assert.equal(fake.replies.length, 1, "only the first bubble threads");
+	// The returned id is the last bubble sent, which here is the plainly-sent second one.
+	assert.equal(sent.messageId, "om_2");
+	assert.deepEqual(fake.replies[0].path, { message_id: "om_ask" });
+	assert.equal(fake.creates.length, 1, "the second bubble is a plain message");
+});
+
+test("a reply whose target is gone is sent plainly instead of lost", async () => {
+	const fake = fakeSdk({ replyGone: 230011 });
+	const { handle } = await setup(fake);
+	const sent = await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "hello", replyTo: "om_deleted" });
+	assert.equal(fake.replies.length, 1);
+	assert.equal(fake.creates.length, 1, "fell back to a plain message");
+	assert.equal(sent.messageId, "om_1");
+});
+
+test("edit patches a card and updates a post, each on its own endpoint", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_5", { text: "done" });
+	assert.equal(fake.updates.length, 1, "a post is updated in place");
+	assert.equal(fake.patches.length, 0);
+	assert.deepEqual(fake.updates[0].path, { message_id: "om_5" });
+	assert.equal(fake.updates[0].data.msg_type, "post");
+	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_6", {
+		text: "answered",
+		buttons: [{ data: "a:1:allow", label: "Allow" }],
+	});
+	assert.equal(fake.patches.length, 1, "a card is patched");
+	assert.equal(fake.updates.length, 1);
+});
+
+// A post Feishu refuses is retried as plain text, so the answer still arrives.
+test("a rejected post is sent as plain text instead of failing the reply", async () => {
+	const fake = fakeSdk({ createFailures: ["content format of the post type is incorrect"] });
+	const { handle } = await setup(fake);
+	const sent = await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "**bold** answer" });
+	assert.equal(fake.creates.length, 2, "first the post, then the fallback");
+	assert.equal(fake.creates[0].data.msg_type, "post");
+	assert.equal(fake.creates[1].data.msg_type, "text");
+	assert.match(fake.creates[1].data.content, /bold/);
+	assert.equal(sent.messageId, "om_1");
+});
+
+test("every send carries a uuid so a retry cannot double-post", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "hello" });
+	assert.match(fake.creates[0].data.uuid, /^[0-9a-f-]{36}$/);
 });

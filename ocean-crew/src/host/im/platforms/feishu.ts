@@ -5,8 +5,9 @@
 // counts when the bot's open_id is in its mentions; text goes out in 4000-char
 // chunks with the last chunk an interactive card when buttons are given, edited
 // by PATCH; images and files are fetched from messageResource.
+import { randomUUID } from "node:crypto";
 import * as Lark from "@larksuiteoapi/node-sdk";
-import { chunkMarkdown } from "../format.ts";
+import { chunkMarkdown, toPlain } from "../format.ts";
 
 const TEXT_LIMIT = 4000;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
@@ -118,6 +119,9 @@ const transportError = (what: string, cause: any, scrub: (text: unknown) => stri
 	const error = new Error(
 		scrub(`${what} failed: ${detail}${Number.isFinite(code) && code !== 0 ? ` (code ${code})` : ""}`),
 	) as FeishuError;
+	// The platform code is kept whichever branch below decides the failure class: callers
+	// such as the reply fallback need to tell one Feishu code from another.
+	if (Number.isFinite(code) && code !== 0) error.platformCode = code;
 	if (Number.isFinite(status)) {
 		if (status === 429) {
 			const after = retryAfterSeconds(cause);
@@ -126,7 +130,6 @@ const transportError = (what: string, cause: any, scrub: (text: unknown) => stri
 			error.permanent = true;
 		}
 	} else if (Number.isFinite(code) && code !== 0) {
-		error.platformCode = code;
 		if (code === UNKNOWN_RESULT_CODE) error.unknown = true;
 		else if (isPermanentCode(code)) error.permanent = true;
 	} else if (isNetworkError(cause)) {
@@ -513,35 +516,93 @@ const feishu = {
 		});
 
 		return {
-			send: async (chat: any, { text, buttons }: any = {}) => {
+			// An answer threads under the message that asked for it, which is what makes a
+			// private chat read as a conversation rather than a wall of separate bubbles.
+			send: async (chat: any, { text, buttons, replyTo }: any = {}) => {
 				const chunks = chunkMarkdown(String(text ?? ""), TEXT_LIMIT);
 				let messageId: string | undefined;
+				let replyToId = typeof replyTo === "string" && replyTo !== "" ? replyTo : undefined;
 				for (const [index, chunk] of chunks.entries()) {
 					const interactive = buttons !== undefined && index === chunks.length - 1;
-					const body = await call(
-						"Feishu send",
-						() =>
-							client.im.message.create({
-								params: { receive_id_type: "chat_id" },
-								data: {
-									receive_id: String(chat?.key ?? ""),
-									msg_type: interactive ? "interactive" : "post",
-									content: interactive ? card(chunk, buttons) : post(chunk),
-								},
-							}),
-						scrub,
-					);
+					const msgType = interactive ? "interactive" : "post";
+					const content = interactive ? card(chunk, buttons) : post(chunk);
+					const plain = msgType === "interactive" ? msgType : "text";
+					const plainContent = msgType === "interactive" ? content : JSON.stringify({ text: toPlain(chunk) });
+					const createBody = (type: string, body: string) => ({
+						params: { receive_id_type: "chat_id" },
+						data: {
+							receive_id: String(chat?.key ?? ""),
+							msg_type: type,
+							content: body,
+							// A retried send must not arrive twice.
+							uuid: randomUUID(),
+						},
+					});
+					const create = () =>
+						call("Feishu send", () => client.im.message.create(createBody(msgType, content)), scrub).catch(
+							async (failure: any) => {
+								if (msgType === "interactive" || !POST_INVALID.test(String(failure?.message ?? ""))) {
+									throw failure;
+								}
+								env.log?.warn?.("ocean-crew im: feishu rejected the post; sending plain text");
+								return call(
+									"Feishu send",
+									() => client.im.message.create(createBody(plain, plainContent)),
+									scrub,
+								);
+							},
+						);
+					let body: any;
+					if (replyToId === undefined) body = await create();
+					else {
+						try {
+							body = await call(
+								"Feishu send",
+								() =>
+									client.im.message.reply({
+										path: { message_id: replyToId },
+										data: { msg_type: msgType, content, uuid: randomUUID() },
+									}),
+								scrub,
+							);
+						} catch (failure) {
+							// The message being answered is gone (recalled, or from an expired context).
+							// That code is otherwise classified as a permanent send failure, so it is
+							// handled here: post the answer on its own instead of losing it.
+							if (!isReplyGone(failure)) throw failure;
+							env.log?.warn?.("ocean-crew im: feishu reply target is gone; sending plainly");
+							body = await create();
+						}
+					}
 					messageId = String(body?.data?.message_id ?? messageId ?? "");
+					// Only the first bubble threads under the question.
+					replyToId = undefined;
 				}
 				return { messageId };
 			},
+			// Which endpoint settles a message depends on how it was sent: a card is patched
+			// (the only endpoint that accepts one), a post or text is updated in place. Using
+			// patch for everything would fail on any message that is not an interactive card.
 			edit: async (_chat: any, messageId: string, { text, buttons }: any = {}) => {
+				const body = String(text ?? "").slice(0, TEXT_LIMIT);
+				if (buttons !== undefined && buttons.length > 0) {
+					await call(
+						"Feishu edit",
+						() =>
+							client.im.message.patch({
+								path: { message_id: String(messageId ?? "") },
+								data: { content: card(body, buttons) },
+							}),
+						scrub,
+					);
+					return;
+				}
 				await call(
-					"Feishu edit",
+					"Feishu update",
 					() =>
-						client.im.message.patch({
+						client.im.message.update({
 							path: { message_id: String(messageId ?? "") },
-							data: { content: card(String(text ?? "").slice(0, TEXT_LIMIT), buttons) },
+							data: { msg_type: "post", content: post(body) },
 						}),
 					scrub,
 				);
@@ -581,6 +642,17 @@ const feishu = {
 			},
 		};
 	},
+};
+
+// A reply whose target no longer exists: Feishu says so with one of these codes.
+// Feishu says a post payload was rejected with this message; the same content as text
+// usually goes through, and a plain answer beats no answer.
+const POST_INVALID = /content format of the post type is incorrect/i;
+const REPLY_GONE = new Set([230011, 231003]);
+const isReplyGone = (failure: any): boolean => {
+	// The adapter's own errors carry the Feishu code on `platformCode`.
+	const code = Number(failure?.platformCode ?? failure?.code ?? failure?.response?.data?.code);
+	return REPLY_GONE.has(code);
 };
 
 export default feishu;

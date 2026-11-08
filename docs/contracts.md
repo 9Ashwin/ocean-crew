@@ -30,8 +30,8 @@
 | --- | --- | --- |
 | `check(fields, env)` | `{ account: { id, name } }` | 在保存连接之前调用，字段改动后再次调用；拒绝会展示给用户。 |
 | `connect(fields, env, handlers)` | 句柄 | 每条运行中的连接调用一次；可以返回带 `stop()` 的句柄。 |
-| `send(chat, { text, buttons })` | `{ messageId? }` | 必需。`chat` 是 `{ key, kind, title }`。 |
-| `edit(chat, messageId, { text, buttons })` | — | 可选；没有它，结算后的卡片只能作为文本回答重新发送。 |
+| `send(chat, { text, buttons, replyTo? })` | `{ messageId? }` | 必需。`chat` 是 `{ key, kind, title }`；`replyTo` 是这一轮提问的消息 id，平台支持时回答挂在该消息下。 |
+| `edit(chat, messageId, { text, buttons })` | — | 可选；没有它，结算后的卡片只能作为文本回答重新发送。有按钮时编辑的是卡片，否则是普通消息，两者在飞书上走不同端点。 |
 | `typing(chat)` | — | 可选；目标有轮次在跑时由 host 调用。 |
 | `stopTyping(chat)` | — | 可选；目标不再忙时由 host 调用，用来结束「正在输入」。没有它就只能等平台自己过期。 |
 | `addReaction(chat, messageId, emoji)` / `removeReaction(chat, messageId, reactionId)` | reaction id | 两个都提供才启用；只给其中一个就没有状态表情。 |
