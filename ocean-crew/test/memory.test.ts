@@ -1567,3 +1567,31 @@ test("a tombstone holds no text, only a hash", async (t) => {
 	assert.ok(!saved.includes("X1234"), "the tombstone keeps no value");
 	assert.equal(JSON.parse(saved).hashes.length, 1);
 });
+
+test("undoing a forget cannot bring the forgotten text back", async (t) => {
+	const { tool, call, stop } = await start();
+	t.after(() => stop());
+	await tool("remember", { text: "The user's card ends in 4242" }, "m1");
+	await tool("forget", { entry: "card ends in 4242", range: true }, "m1");
+	// Undoing a forget means restoring its `remove` row, which carries the text in
+	// `before`; the tombstone must refuse that path too, not only the add row.
+	const history = await call("memory-history", { botId: "m1" });
+	const removed = history.rows.find((row: any) => row.op === "remove");
+	assert.ok(removed !== undefined, "the remove row is in the change log");
+	await assert.rejects(async () => await call("memory-restore", { botId: "m1", id: removed.id }), /forget this/i);
+	// The change log does not show the text either: the row stays, its content does not.
+	assert.equal(removed.text, "[forgotten]");
+});
+
+test("an unreadable tombstone file does not read as an empty one", async (t) => {
+	const { tool, home, call, stop } = await start();
+	t.after(() => stop());
+	await tool("remember", { text: "The user's card ends in 4242" }, "m1");
+	await tool("forget", { entry: "card ends in 4242", range: true }, "m1");
+	const path = join(home, "memory", "bots", "m1", "tombstones.json");
+	writeFileSync(path, "{not json");
+	// A damaged tombstone file must not let the fact back in, nor be treated as absent.
+	await assert.rejects(async () => await call("memory-history", { botId: "m1" }), /could not be read/i);
+	const kept = readdirSync(join(home, "memory", "bots", "m1")).filter((name) => name.includes(".corrupt-"));
+	assert.equal(kept.length, 1, "the damaged file is kept for inspection");
+});

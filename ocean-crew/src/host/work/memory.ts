@@ -920,8 +920,20 @@ export function install(rt: Runtime): void {
 			const value = JSON.parse(raw) as { hashes?: unknown };
 			const hashes = Array.isArray(value?.hashes) ? value.hashes.filter((item) => typeof item === "string") : [];
 			return { hashes: hashes as string[] };
-		} catch {
-			return { hashes: [] };
+		} catch (error) {
+			// An unreadable tombstone file must not read as "nothing was forgotten": that
+			// would let every forgotten fact back in. Keep it for inspection and refuse,
+			// the way every other unreadable memory file is handled.
+			const kept = `${tombstonesPath(scope)}.corrupt-${Date.now()}`;
+			try {
+				renameSync(tombstonesPath(scope), kept);
+			} catch {
+				/* the file may already be gone */
+			}
+			throw unreadable(
+				`${tombstonesPath(scope)}${JSON.stringify(error) !== "{}" ? ` (kept at ${kept})` : ""}`,
+				error,
+			);
 		}
 	};
 	const forgotten = (scope: MemoryScope, text: string): boolean => readTombstones(scope).hashes.includes(hashOf(text));
@@ -2732,21 +2744,30 @@ export function install(rt: Runtime): void {
 		}
 		const page = slice.slice(0, HISTORY_PAGE);
 		return {
-			rows: page.map((row) => ({
-				id: row.id,
-				time: row.time,
-				op: row.op,
-				scope:
-					row.scope === "team"
-						? "team"
-						: typeof row.scope === "string" && row.scope.startsWith("group:")
-							? "group"
-							: "own",
-				text: splitMeta(String((row.op === "remove" ? row.before : row.after) ?? "").replace(/^\s*[-*]\s+/, ""))
-					.text,
-				by: row.actor === "user" ? "user" : String(row.actorName ?? row.actor ?? ""),
-				restored: undone.has(String(row.id)),
-			})),
+			rows: page.map((row) => {
+				const recorded = splitMeta(
+					String((row.op === "remove" ? row.before : row.after) ?? "").replace(/^\s*[-*]\s+/, ""),
+				).text;
+				// A forgotten fact is not shown back to the user through the change log:
+				// the row stays (it happened) but its text does not.
+				const scope = journalScope(row.scope);
+				const text =
+					scope !== undefined && recorded !== "" && forgotten(scope, recorded) ? "[forgotten]" : recorded;
+				return {
+					id: row.id,
+					time: row.time,
+					op: row.op,
+					scope:
+						row.scope === "team"
+							? "team"
+							: typeof row.scope === "string" && row.scope.startsWith("group:")
+								? "group"
+								: "own",
+					text,
+					by: row.actor === "user" ? "user" : String(row.actorName ?? row.actor ?? ""),
+					restored: undone.has(String(row.id)),
+				};
+			}),
 			more: slice.length > HISTORY_PAGE ? (page.at(-1)?.id ?? null) : null,
 		};
 	}
@@ -2797,8 +2818,10 @@ export function install(rt: Runtime): void {
 			writable(scope, USER);
 			const label = labelOf(scope);
 			// A restore is a way back in: a fact the user asked to forget is not restored,
-			// whatever the change log still holds.
-			const comingBack = typeof row.after === "string" ? splitMeta(row.after).text : "";
+			// whatever the change log still holds. A `remove` row carries the text in
+			// `before` — undoing the removal would otherwise resurrect what was forgotten.
+			const carrying = row.op === "remove" ? row.before : row.after;
+			const comingBack = typeof carrying === "string" ? splitMeta(carrying).text : "";
 			if (comingBack !== "") refuseIfForgotten(scope, comingBack, label);
 			const files = loadScope(scope);
 			const target = files.find((file) => file.file === row.file);
