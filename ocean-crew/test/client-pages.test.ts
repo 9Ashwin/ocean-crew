@@ -272,6 +272,9 @@ test("workRows names the state and the delivery, and marks a stale goal answer",
 	// A task that answered the current goal carries no stale note.
 	assert.equal(rows[1].stale, undefined);
 	assert.equal(rows[1].deliveryLabel, "Delivered");
+	// A group blocked on the user reads as waiting, not as running.
+	const waiting = workRows([{ id: "p", by: "a", members: [], status: "waiting_user", delivery: "pending" }], roster);
+	assert.equal(waiting[0].statusLabel, "Waiting for you");
 });
 
 test("goalView exposes the group work rows under the goal", async () => {

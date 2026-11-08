@@ -121,6 +121,7 @@ export function goalView(goal: any, { roster = {}, roomWork = [], roomTasks = []
 const TASK_STATUS: Record<string, string> = {
 	running: "Working",
 	waiting_summary: "Waiting for a summary",
+	waiting_user: "Waiting for you",
 	completed: "Done",
 	partial: "Partly done",
 	failed: "Failed",

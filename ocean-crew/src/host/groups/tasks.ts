@@ -7,7 +7,14 @@ import type { Runtime } from "../core/runtime.ts";
 import type { CallBatchState, CallGoal, CallResult, CallSummary, GroupRoom, SavedRelayCall } from "./types.ts";
 
 /** Where one task stands, in the terms the chat shows. */
-export type TaskStatus = "running" | "waiting_summary" | "completed" | "partial" | "failed" | "stopped";
+export type TaskStatus =
+	| "running"
+	| "waiting_summary"
+	| "waiting_user"
+	| "completed"
+	| "partial"
+	| "failed"
+	| "stopped";
 
 /** Whether the user has been told, as far as the saved state can prove. */
 export type TaskDelivery = "open" | "pending" | "delivered" | "abandoned";
@@ -22,7 +29,7 @@ export interface TaskResultView {
 
 export interface TaskCardView {
 	id: string;
-	kind: "call" | "relay";
+	kind: "call" | "relay" | "pending";
 	roomId: string;
 	roomName?: string;
 	/** The Bot that opened the call. */
@@ -148,6 +155,43 @@ export const cardsOfRoom = (room: GroupRoom): TaskCardView[] => {
 	return cards;
 };
 
+// What the group is waiting on the user for: an open question in its chat, or an approval
+// a member's turn is holding. It is a task card of its own, not a note on another one.
+const pendingOfRoom = (rt: Runtime, room: GroupRoom): TaskCardView | undefined => {
+	const state = rt.state as Record<string, any>;
+	const roomSession = rt.sessionOfRoom(room as unknown as Parameters<Runtime["sessionOfRoom"]>[0]) ?? "";
+	const sessions = new Set<string>([room.id, roomSession]);
+	for (const member of room.members ?? []) {
+		const memberSession = room.sessions?.[member];
+		if (typeof memberSession === "string") sessions.add(memberSession);
+		const ownChat = rt.chatOf?.(member);
+		if (typeof ownChat === "string" && rt.groupOwners?.get(ownChat)?.roomId === room.id) sessions.add(ownChat);
+	}
+	const waiting: string[] = [];
+	for (const [sessionId, question] of Object.entries((state?.questions ?? {}) as Record<string, any>)) {
+		if (!sessions.has(sessionId) || question === null || typeof question !== "object") continue;
+		waiting.push(String(question.question ?? question.title ?? "A question"));
+	}
+	for (const approval of (rt.approvalsView?.() ?? []) as Array<Record<string, any>>) {
+		if (String(approval.roomId ?? "") !== room.id) continue;
+		waiting.push(String(approval.reason ?? approval.tool ?? approval.title ?? "An approval"));
+	}
+	if (waiting.length === 0) return undefined;
+	return {
+		id: `pending:${room.id}`,
+		kind: "pending",
+		roomId: room.id,
+		...(typeof room.name === "string" && room.name !== "" ? { roomName: room.name } : {}),
+		members: [],
+		status: "waiting_user",
+		statusAt: Date.now(),
+		results: [],
+		delivery: "pending",
+		result: waiting[0],
+		...(waiting.length > 1 ? { summary: `${waiting.length} items are waiting for you` } : {}),
+	};
+};
+
 /** Every group task the user may want to check, newest first. */
 export const tasksViewOf = (rt: Runtime): TaskCardView[] => {
 	const state = rt.state as Record<string, any>;
@@ -156,6 +200,8 @@ export const tasksViewOf = (rt: Runtime): TaskCardView[] => {
 	for (const room of Object.values(rooms)) {
 		if (room === null || typeof room !== "object") continue;
 		cards.push(...cardsOfRoom(room));
+		const pending = pendingOfRoom(rt, room);
+		if (pending !== undefined) cards.push(pending);
 	}
 	return cards.sort((a, b) => b.statusAt - a.statusAt);
 };

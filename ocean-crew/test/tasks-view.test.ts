@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cardsOfRoom } from "../src/host/groups/tasks.ts";
+import { cardsOfRoom, tasksViewOf } from "../src/host/groups/tasks.ts";
 
 const room = (extra: Record<string, unknown> = {}): any => ({
 	id: "r1",
@@ -123,4 +123,40 @@ test("a finished relay call is completed and delivered", () => {
 	);
 	assert.equal(card.status, "completed");
 	assert.equal(card.delivery, "delivered");
+});
+
+// A group blocked on the user shows up as its own card, not as a note on other work.
+test("a group waiting on the user gets a waiting card", () => {
+	const fake = {
+		state: {
+			rooms: { r1: room() },
+			questions: { r1: { id: "q1", question: "Which provider?" } },
+		},
+		sessionOfRoom: () => "g-room",
+		chatOf: () => undefined,
+		groupOwners: new Map(),
+		approvalsView: () => [{ id: "a1", roomId: "r1", reason: "publish the release" }],
+	} as any;
+	const cards = (tasksViewOf as any)(fake);
+	const pending = cards.find((card: any) => card.kind === "pending");
+	assert.ok(pending !== undefined, "the waiting card exists");
+	assert.equal(pending.status, "waiting_user");
+	assert.equal(pending.delivery, "pending");
+	assert.equal(pending.result, "Which provider?");
+	assert.equal(pending.summary, "2 items are waiting for you");
+});
+
+test("a group with nothing waiting has no waiting card", () => {
+	const fake = {
+		state: { rooms: { r1: room() }, questions: {} },
+		sessionOfRoom: () => "g-room",
+		chatOf: () => undefined,
+		groupOwners: new Map(),
+		approvalsView: () => [],
+	} as any;
+	const cards = (tasksViewOf as any)(fake);
+	assert.equal(
+		cards.some((card: any) => card.kind === "pending"),
+		false,
+	);
 });
