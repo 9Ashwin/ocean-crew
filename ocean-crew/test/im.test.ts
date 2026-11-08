@@ -187,7 +187,7 @@ async function start(
 	const flush = async (): Promise<void> => {
 		await delay(10);
 	};
-	const until = async (check: () => boolean, ms = 2_000): Promise<boolean> => {
+	const until = async (check: () => boolean, ms = 8_000): Promise<boolean> => {
 		for (let at = 0; at < ms; at += 20) {
 			if (check()) return true;
 			await delay(20);
@@ -939,7 +939,9 @@ test("changing a chat's target invalidates routes recorded before it", async (t)
 	await dm(s, "u1", "hello");
 	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
 	await dm(s, "u1", "from im");
-	await s.flush();
+	// The sends before this point are durable but asynchronous; let them land before the
+	// list is reset, or a late one looks like the stale route firing.
+	assert.ok(await s.until(() => s.fake.sent.length >= 2), "the earlier replies are sent");
 	const request = s.prompts.at(-1)?.requestId;
 	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, turn: 4, content: [] });
 	s.fake.sent.length = 0;

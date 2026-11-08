@@ -612,7 +612,11 @@ export function install(rt: any) {
 				const sent = await withSendTimeout(runner.handle.send(job.chat, job));
 				job.after?.(sent);
 				queue.jobs.shift();
-				if (job.outboxId !== undefined) await outboxRemove(conn.id, chatKey, job.outboxId).catch(() => {});
+				if (job.outboxId !== undefined) {
+					void outboxRemove(conn.id, chatKey, job.outboxId).catch((error) =>
+						rt.warn("ocean-crew: im outbox for %s not cleaned up: %s", conn.id, error),
+					);
+				}
 				if (statuses.get(conn.id)?.messageError === true) {
 					setStatus(conn.id, { state: "ready", error: undefined, referenceId: undefined, messageError: false });
 				}
