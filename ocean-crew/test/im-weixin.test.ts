@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createCipheriv, createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import weixin, { chunk } from "../src/host/im/platforms/weixin.ts";
+import weixin, { chunk, withQuoted } from "../src/host/im/platforms/weixin.ts";
 
 // The iLink client version the adapter identifies itself as: 2.4.6 packed as 0x00MMNNPP.
 const ILINK_CLIENT_VERSION = String((2 << 16) | (4 << 8) | 6);
@@ -1027,5 +1027,57 @@ test("a long reply packs whole blocks and never splits a fence", () => {
 		parts.some((part) => part.includes(code.slice(0, 20))),
 		"the fence survives in one piece",
 	);
-	for (const part of parts) assert.ok(part.length <= 500, "no part exceeds the platform limit");
+	for (const part of parts) assert.ok([...part].length <= 500, `part exceeds the limit: ${[...part].length}`);
+});
+
+test("a long code block closes and reopens its fence in every bubble", () => {
+	const body = `${"const value = 1;\n".repeat(200)}`;
+	const parts = chunk("```js\n" + body + "```", 300);
+	assert.ok(parts.length > 1, "the block is split");
+	for (const [index, part] of parts.entries()) {
+		const fences = part.split("\n").filter((line) => /^\s*```/.test(line)).length;
+		assert.equal(fences % 2, 0, `bubble ${index} has balanced fences:\n${part}`);
+	}
+	// The language tag survives every reopening.
+	for (const part of parts.slice(1)) assert.match(part, /^```js/);
+});
+
+test("an empty reply sends no bubble", () => {
+	assert.deepEqual(chunk("", 1800), []);
+	assert.deepEqual(chunk("   \n  ", 1800), []);
+});
+
+test("a limit counts visible characters, not UTF-16 units", () => {
+	// Each emoji is two UTF-16 units but one character; a 10-character limit holds 10.
+	const parts = chunk("🙂".repeat(25), 10);
+	assert.ok(
+		parts.every((part) => [...part].length <= 10),
+		JSON.stringify(parts),
+	);
+	assert.equal(parts.join(""), "🙂".repeat(25));
+});
+
+// A quoted message travels to the model as part of the text.
+test("a quoted text message is inlined before the reply", () => {
+	assert.equal(
+		withQuoted("好的", { title: "", message_item: { type: 1, text_item: { text: "明天几点出发？" } } }),
+		"[引用: 明天几点出发？]\n好的",
+	);
+	assert.equal(
+		withQuoted("收到", { title: "队长", message_item: { type: 1, text_item: { text: "看下这个" } } }),
+		"[引用: 队长 | 看下这个]\n收到",
+	);
+});
+
+test("a quoted image or file is named, not inlined", () => {
+	assert.equal(
+		withQuoted("这张不错", { title: "海边.jpg", message_item: { type: 2, image_item: {} } }),
+		"[引用媒体: 海边.jpg]\n这张不错",
+	);
+	assert.equal(withQuoted("就这样", { title: "", message_item: { type: 4, file_item: {} } }), "[引用媒体]\n就这样");
+});
+
+test("a message with no quote is unchanged", () => {
+	assert.equal(withQuoted("你好", undefined), "你好");
+	assert.equal(withQuoted("你好", {}), "你好");
 });

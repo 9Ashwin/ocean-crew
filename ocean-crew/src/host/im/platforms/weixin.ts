@@ -15,6 +15,8 @@ import { createDecipheriv, createHash, randomBytes } from "node:crypto";
 const QR_BASE = "https://ilinkai.weixin.qq.com/";
 const BOT_TYPE = "3";
 const TEXT_LIMIT = 1800;
+// The pause between two bubbles of one reply.
+const BUBBLE_GAP_MS = 450;
 const POLL_TIMEOUT_MS = 35_000;
 const POLL_GRACE_MS = 15_000;
 const ILINK_APP_ID = "bot";
@@ -362,7 +364,9 @@ const weixin = {
 			const files: Array<{ name: string; data: undefined }> = [];
 			const texts: string[] = [];
 			for (const item of msg.item_list ?? []) {
-				if (item.type === 1 && item.text_item?.text !== undefined) texts.push(String(item.text_item.text));
+				if (item.type === 1 && item.text_item?.text !== undefined) {
+					texts.push(withQuoted(String(item.text_item.text), item.ref_msg));
+				}
 				// Voice items carry their transcript in voice_item.text.
 				else if (item.type === 3 && item.voice_item?.text !== undefined) texts.push(String(item.voice_item.text));
 				else if (item.type === 2 && item.image_item?.media !== undefined) {
@@ -524,13 +528,56 @@ const weixin = {
 		handlers.onStatus({ state: "connecting" });
 		void startSession();
 
+		// Every chat the adapter currently shows as typing, so a stop is only sent when
+		// there was something to stop.
+		const typingShown = new Set<string>();
+		const typingTickets = new Map<string, { ticket: string; at: number }>();
+		const TICKET_TTL_MS = 10 * 60_000;
+		const typingTicket = async (chatKey: string): Promise<string> => {
+			const held = typingTickets.get(chatKey);
+			if (held !== undefined && Date.now() - held.at < TICKET_TTL_MS) return held.ticket;
+			const contextToken = contextTokenFor(chatKey);
+			const config = await request(
+				env,
+				base(env, fields),
+				token,
+				"getconfig",
+				{ ilink_user_id: chatKey, ...(contextToken ? { context_token: contextToken } : {}) },
+				8_000,
+				{ signal: lifecycle.signal },
+			).catch(() => undefined);
+			const ticket = String(config?.typing_ticket ?? "");
+			if (ticket !== "") typingTickets.set(chatKey, { ticket, at: Date.now() });
+			return ticket;
+		};
+		const sendTyping = async (chatKey: string, ticket: string, status: number, contextToken?: string) => {
+			await request(
+				env,
+				base(env, fields),
+				token,
+				"sendtyping",
+				{
+					ilink_user_id: chatKey,
+					typing_ticket: ticket,
+					status,
+					...(contextToken ? { context_token: contextToken } : {}),
+				},
+				8_000,
+				{ signal: lifecycle.signal },
+			).catch(() => {});
+		};
+
 		return {
 			send: async (chat: any, { text }: any = {}) => {
 				const chatKey = String(chat.key);
 				const chunks = chunk(String(text ?? ""), TEXT_LIMIT);
+				if (chunks.length === 0) return {};
 				const contextToken = contextTokenFor(chatKey);
 				let messageId: string | undefined;
-				for (const chunkText of chunks) {
+				for (const [index, chunkText] of chunks.entries()) {
+					// A short pause between bubbles reads as someone typing; back-to-back
+					// bubbles read as a paste. The last one sends without waiting.
+					if (index > 0) await new Promise((resolve) => setTimeout(resolve, BUBBLE_GAP_MS));
 					const clientId = `ocean-crew-${randomBytes(8).toString("hex")}`;
 					const message = {
 						from_user_id: "",
@@ -580,34 +627,24 @@ const weixin = {
 				}
 				return { messageId };
 			},
+			// The host ticks this while a turn runs, so the ticket is cached: `getconfig` is a
+			// second round trip that would otherwise run on every tick.
 			typing: async (chat: any) => {
 				const chatKey = String(chat.key);
-				const contextToken = contextTokenFor(chatKey);
-				const config = await request(
-					env,
-					base(env, fields),
-					token,
-					"getconfig",
-					{ ilink_user_id: chatKey, ...(contextToken ? { context_token: contextToken } : {}) },
-					8_000,
-					{ signal: lifecycle.signal },
-				).catch(() => undefined);
-				const ticket = String(config?.typing_ticket ?? "");
+				const ticket = await typingTicket(chatKey);
 				if (ticket === "") return;
-				await request(
-					env,
-					base(env, fields),
-					token,
-					"sendtyping",
-					{
-						ilink_user_id: chatKey,
-						typing_ticket: ticket,
-						status: 1,
-						...(contextToken ? { context_token: contextToken } : {}),
-					},
-					8_000,
-					{ signal: lifecycle.signal },
-				).catch(() => {});
+				const contextToken = contextTokenFor(chatKey);
+				await sendTyping(chatKey, ticket, 1, contextToken);
+				typingShown.add(chatKey);
+			},
+			// A chat that stops being busy stops showing "typing"; iLink also expires it,
+			// but saying so is what makes the indicator end when the answer does.
+			stopTyping: async (chat: any) => {
+				const chatKey = String(chat.key);
+				if (!typingShown.delete(chatKey)) return;
+				const ticket = await typingTicket(chatKey);
+				if (ticket === "") return;
+				await sendTyping(chatKey, ticket, 2, contextTokenFor(chatKey));
 			},
 			stop: () => {
 				stopped = true;
@@ -620,26 +657,76 @@ const weixin = {
 	},
 };
 
-// Text chunks: paragraphs/lines first, a hard cut at the limit otherwise.
-const pack = (text: unknown, limit: number): string[] => {
-	const chunks: string[] = [];
-	let rest = String(text);
-	while (rest !== "") {
-		if (rest.length <= limit) {
-			chunks.push(rest);
-			break;
-		}
-		let at = limit;
-		const newline = rest.lastIndexOf("\n", at);
-		if (newline > limit / 2) at = newline;
-		else {
-			const space = rest.lastIndexOf(" ", at);
-			if (space > limit / 2) at = space;
-		}
-		chunks.push(rest.slice(0, at));
-		rest = rest.slice(at).replace(/^\s+/, "");
+// Visible length: a limit counts what the reader sees, so an emoji costs one, not two.
+const width = (text: string): number => [...text].length;
+
+// A cut in the middle of a fenced block would leave the first bubble with an unclosed
+// fence and the next with a bare body. The cut closes the fence and reopens it with the
+// same language, so each bubble renders on its own.
+const FENCE = /^\s*(?:```|~~~)(.*)$/;
+// The fence written around a cut: a plain ``` line, kept out of a template literal so the
+// source stays readable.
+const CLOSE = "```";
+// Whether any line of a multi-line block opens or closes a fence.
+const FENCE_ANY = /^\s*(?:```|~~~)/m;
+const OPEN = "```";
+const fenceState = (text: string): { open: boolean; lang: string } => {
+	let open = false;
+	let lang = "";
+	for (const line of text.split("\n")) {
+		const found = FENCE.exec(line);
+		if (found === null) continue;
+		if (!open) lang = found[1].trim();
+		open = !open;
 	}
-	return chunks;
+	return { open, lang };
+};
+
+/**
+ * Split one block that is longer than the limit into bubbles that each render alone.
+ *
+ * A cut inside a fenced block would leave one bubble with an unclosed fence and the next
+ * with a bare body, so the cut closes the fence and reopens it with the same language.
+ * The state is carried in `inside` and the reopening fence is added when the bubble is
+ * emitted — never counted as a fence of the content, which is what would make the
+ * synthetic opener read as the closer.
+ */
+const cut = (text: string, limit: number): string[] => {
+	const out: string[] = [];
+	let rest = text;
+	let inside = false;
+	let lang = "";
+	while (width(rest) > limit) {
+		const opening = inside ? `${OPEN}${lang}\n` : "";
+		// A bubble may need to close a fence that its own body opens, not only one it
+		// entered with, so the four characters are reserved whenever the block has any
+		// fence left in it.
+		const closing = inside || FENCE_ANY.test(rest) ? 4 : 0;
+		const budget = Math.max(1, limit - width(opening) - closing);
+		const chars = [...rest];
+		const slice = chars.slice(0, budget).join("");
+		let at = budget;
+		const newline = slice.lastIndexOf("\n");
+		if (newline > budget / 2) at = width(slice.slice(0, newline));
+		else {
+			const space = slice.lastIndexOf(" ");
+			if (space > budget / 2) at = width(slice.slice(0, space));
+		}
+		const body = chars.slice(0, at).join("");
+		rest = chars.slice(at).join("").replace(/^\s+/, "");
+		// Only the content's own fences move the state.
+		let state: boolean = inside;
+		for (const line of body.split("\n")) {
+			const found = FENCE.exec(line);
+			if (found === null) continue;
+			if (!state) lang = found[1].trim();
+			state = !state;
+		}
+		out.push(`${opening}${body}${state ? `\n${CLOSE}` : ""}`);
+		inside = state;
+	}
+	if (rest !== "") out.push(`${inside ? `${OPEN}${lang}\n` : ""}${rest}`);
+	return out;
 };
 
 // A short, chat-like block is sent as one bubble per line, the way a person texts,
@@ -700,8 +787,9 @@ const blocks = (text: string): string[] => {
  * whole, and a fenced block is never torn.
  */
 export const chunk = (text: unknown, limit: number): string[] => {
-	const whole = String(text ?? "");
-	if (whole.length <= limit) {
+	const whole = String(text ?? "").trimEnd();
+	if (whole.trim() === "") return [];
+	if (width(whole) <= limit) {
 		// A short cascade of chat lines becomes a few bubbles; anything else stays one.
 		if (!chatty(whole)) return [whole];
 		return whole
@@ -722,7 +810,7 @@ export const chunk = (text: unknown, limit: number): string[] => {
 			current = block;
 			continue;
 		}
-		out.push(...pack(block, limit));
+		out.push(...cut(block, limit));
 		current = "";
 	}
 	if (current !== "") out.push(current);
@@ -848,4 +936,28 @@ async function image(media: any, env: any): Promise<Buffer | undefined> {
 	return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
 
+// A reply quotes the message it answers. The model needs that context as part of the
+// text, since the platform carries it as a nested item rather than a field: a quoted
+// image, video, file or voice is named by its title, a quoted text is inlined.
+const QUOTED_MEDIA = new Set([2, 3, 4, 5]);
+const quotedText = (item: any): string => {
+	if (item === undefined || item === null) return "";
+	if (item.type === 1) return String(item.text_item?.text ?? "").trim();
+	if (item.type === 3) return String(item.voice_item?.text ?? "").trim();
+	return "";
+};
+const withQuoted = (text: string, ref: any): string => {
+	const inner = ref?.message_item;
+	if (inner === undefined || inner === null) return text;
+	const title = String(ref?.title ?? "").trim();
+	if (QUOTED_MEDIA.has(Number(inner.type))) {
+		return `${title === "" ? "[引用媒体]" : `[引用媒体: ${title}]`}\n${text}`.trim();
+	}
+	const quoted = quotedText(inner);
+	const parts = [title, quoted].filter((part) => part !== "");
+	if (parts.length === 0) return text;
+	return `[引用: ${parts.join(" | ")}]\n${text}`.trim();
+};
+
 export default weixin;
+export { withQuoted };

@@ -1054,10 +1054,9 @@ export function install(rt: any) {
 			if (typeof runner.handle?.typing === "function") {
 				runner.typing = setInterval(() => {
 					for (const { chat, target } of targetsOf(fresh(conn.id) ?? conn)) {
-						if (target !== undefined && busyOf(target))
-							void runner.handle
-								.typing({ key: chat.key ?? chat, kind: chat.kind, title: chat.title })
-								.catch?.(() => {});
+						const busy = target !== undefined && busyOf(target);
+						const key = { key: chat.key ?? chat, kind: chat.kind, title: chat.title };
+						void (busy ? runner.handle.typing?.(key) : runner.handle.stopTyping?.(key))?.catch?.(() => {});
 					}
 				}, TYPING_MS);
 				runner.typing.unref?.();
