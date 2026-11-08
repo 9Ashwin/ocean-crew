@@ -60,7 +60,6 @@ import { GROUP_SETTINGS_CSS } from "./pages/group-settings.ts";
 import { IM_CSS } from "./pages/im-page.ts";
 import { DeepSeekSignIn, MODEL_CSS, ModelChoiceDock } from "./pages/model-menu.ts";
 import { SCHEDULE_CSS } from "./pages/schedules.ts";
-import { USAGE_CSS } from "./pages/usage-page.ts";
 import { atSources, CHATS_SOURCE } from "./shell/at-menu.ts";
 import { ComposerPlus, menuIcons } from "./shell/composer.ts";
 import { steerQueued } from "./shell/enter-steer.ts";
@@ -1437,7 +1436,6 @@ export function apply(ctx: ClientContext): void {
 				MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + AGENT_CARDS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS,
 				"models",
 			),
-		() => installCompiledStyles(USAGE_CSS, "usage"),
 		() => installCompiledStyles(SCHEDULE_CSS, "schedules"),
 		() => installCompiledStyles(FEEDBACK_CSS, "feedback"),
 		() => installCompiledStyles(ABOUT_CSS, "about"),

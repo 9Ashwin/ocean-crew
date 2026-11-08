@@ -1541,6 +1541,13 @@ const ZH: Record<string, string> = {
 	"Reset now": "确认重置",
 	"Reinitialize…": "重新初始化…",
 	"The team was reinitialized. Backup: {path}": "团队已重新初始化。备份：{path}",
+	"Team total": "团队合计",
+	"Cache read": "缓存读取",
+	"Cache write": "缓存写入",
+	Tokens: "Token",
+	"By Bot and group": "按 Bot 与群聊",
+	"This DSH does not provide token usage.": "这个 DSH 版本不提供 token 用量。",
+	"No tokens have been spent yet.": "还没有 token 用量。",
 };
 
 // Host errors stay English, since Bots read them too; they are translated where the

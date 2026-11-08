@@ -55,7 +55,7 @@
 
 ## 重新初始化
 
-`reset-team` 是破坏性端点：它把 `bot/` 下的 `state.json`、`memory/`、`learning/`、`im/`、`chat-index.sqlite`、`inflight.json`、`scheduler-state.json` 复制到 `backups/reset-<ISO 时间戳>/`，然后用空团队覆盖 `state.json` 并重建第一个 Main Bot。保留 `secrets.json`、团队工作区设置、`logs/`、`usage.sqlite` 和 DSH 自己的会话。执行中若有 turn 在跑返回 `bot/busy`，只读 host 返回 `bot/read-only`；如果没有可运行的工作，重置也会完成。若被破坏：用户的团队数据在没有备份的情况下被删除，或者重置后没有主 Bot 可用。
+`reset-team` 是破坏性端点：它把 `bot/` 下的 `state.json`、`memory/`、`learning/`、`im/`、`chat-index.sqlite`、`inflight.json`、`scheduler-state.json` 复制到 `backups/reset-<ISO 时间戳>/`，然后用空团队覆盖 `state.json` 并重建第一个 Main Bot。保留 `secrets.json`、团队工作区设置、`logs/` 和 DSH 自己的会话。执行中若有 turn 在跑返回 `bot/busy`，只读 host 返回 `bot/read-only`；如果没有可运行的工作，重置也会完成。若被破坏：用户的团队数据在没有备份的情况下被删除，或者重置后没有主 Bot 可用。
 
 ## 团队数据
 
@@ -68,7 +68,7 @@ host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件
 | `secrets.json` | 保存的密钥名和值，权限 600 | 只归 host。不要打印、复制进日志或提交；Bot 以 `$DSH_SECRET_*` 收到值。 |
 | `im/<connection id>.json` | 适配器运行时和已发送的卡片，权限 600 | IM host 写，适配器读。丢了可能重发卡片或重答消息。 |
 | `update.json` | 更新安装留给下次启动的说明 | 由 `update.ts` 写和消费；不是用户数据。 |
-| `chat-index.sqlite`、`usage.sqlite`、`logs/diagnostics.jsonl` | 索引和日志 | 可重建，或可安全删除。 |
+| `chat-index.sqlite`、`logs/diagnostics.jsonl` | 索引和日志 | 可重建，或可安全删除。 |
 
 聊天本身是 DSH 自己存储里的 DSH 会话，位于 `home` 之外；插件从不直接写它们。
 

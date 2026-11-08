@@ -60,7 +60,7 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 | `ocean-crew/src/host/browser/browser.ts`、`browser/`、`browser-plugins.ts` | Bot 浏览器通道与每个 Bot 一个 profile；浏览器后端在 `browser/`，由本机 Chrome 驱动，`browser-plugins.ts` 挂载 `refs`、`script`、`task` 之一。 |
 | `ocean-crew/src/host/connectors/` | GitHub 和邮箱，通过本机 MCP 网关挂载。 |
 | `ocean-crew/src/host/computer/` | 电脑操作通道、应用目录与租约。 |
-| `ocean-crew/src/host/work/schedules.ts`、`usage.ts`、`update.ts`、`dsh-update.ts`、`diagnostics.ts` | 定时任务、token 用量、插件与 DSH 更新，以及错误日志。 |
+| `ocean-crew/src/host/work/schedules.ts`、`usage.ts`、`update.ts`、`dsh-update.ts`、`diagnostics.ts` | 定时任务、从 DSH token-meter 读取的 token 用量、插件与 DSH 更新，以及错误日志。 |
 | `ocean-crew/src/client/` | client 半边，每个界面一个模块；构建成 `client.js`。 |
 | `ocean-crew/src/shared/` | 两边共用的代码与类型：配置、状态、api、IM 平台表、@提及解析、群回复解析。 |
 | `ocean-crew/test/`、`ocean-crew/dev/` | 单元测试与假 DSH context；本地安装、冒烟测试和构建检查。 |
@@ -89,5 +89,5 @@ DSH 的槽位（`conversation.*`、`sidebar.*`、`settings.*`、`shell.overlay`�
 **磁盘上的状态。** host 把团队保存在内存里，整份原子写入 `state.json`（先写临时文件，再替换），并递增
 `revision`。只有持锁者能写；同一份数据上的另一个 host 只回答读，拒绝写。密钥单独放在
 `secrets.json`（权限 600），所以团队备份和密钥备份是两件事。每条连接的 IM 运行时（`im/<id>.json`）携带
-适配器跨重启需要的东西，例如已投递的消息 id 和已发送的卡片。`chat-index.sqlite` 和 `usage.sqlite` 是
+适配器跨重启需要的东西，例如已投递的消息 id 和已发送的卡片。`chat-index.sqlite` 是
 可重建的索引；聊天本身是 DSH 自己存储里的 DSH 会话，不在插件 home 里。
