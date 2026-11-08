@@ -43,21 +43,6 @@ MIT License, Copyright (c) Upstash
   - ocean-crew/src/client/connector-marks.ts keeps the Context7 connector mark
     from public/context7-icon.svg, without the brand square.
 
-Microsoft Playwright (https://github.com/microsoft/playwright) and
-Playwright MCP (https://github.com/microsoft/playwright-mcp)
-Apache License, Version 2.0, Copyright (c) Microsoft Corporation
-
-  - ocean-crew/src/host/browser/ follows the browser tools of Playwright MCP:
-    the ARIA page snapshot with [ref=eN] element refs, a fresh snapshot
-    returned by every action, and the per-action tool set (open, snapshot,
-    click, upload, type, select, press, tabs, back, screenshot). The session
-    drives the browser through the Playwright API itself
-    (ariaSnapshot({ mode: 'ai' }) and the aria-ref locators those refs
-    resolve to). The playwright-core package is a runtime dependency of the
-    plugin; it is installed from npm and is not bundled, and the plugin loads
-    it at run time from the install it is pointed at (playwrightUrl), the same
-    way it uses the host's @deepseek-ai/* packages.
-
 dsh-im (https://github.com/xmanrui/dsh-im)
 MIT License, Copyright (c) 2026 xmanrui
 
@@ -92,8 +77,6 @@ own license):
 
   - @larksuiteoapi/node-sdk 1.76.0 — MIT — the Feishu/Lark long connection
     and OpenAPI calls in host/im/platforms/feishu.ts.
-  - playwright-core 1.65.0 — Apache-2.0 — the browser engine, loaded at run
-    time; see Microsoft Playwright above.
   - imapflow 2.9.1 — MIT — the IMAP transport of the mail connector.
   - mailparser 3.12.4 — MIT — the message parser of the mail connector.
   - nodemailer 10.2.1 — MIT-0 — the SMTP transport of the mail connector.

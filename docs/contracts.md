@@ -33,6 +33,7 @@
 | `send(chat, { text, buttons })` | `{ messageId? }` | 必需。`chat` 是 `{ key, kind, title }`。 |
 | `edit(chat, messageId, { text, buttons })` | — | 可选；没有它，结算后的卡片只能作为文本回答重新发送。 |
 | `typing(chat)` | — | 可选；目标有轮次在跑时由 host 调用。 |
+| `stopTyping(chat)` | — | 可选；目标不再忙时由 host 调用，用来结束「正在输入」。没有它就只能等平台自己过期。 |
 | `addReaction(chat, messageId, emoji)` / `removeReaction(chat, messageId, reactionId)` | reaction id | 两个都提供才启用；只给其中一个就没有状态表情。 |
 | `loginStart(env)` / `loginWait(loginId, env)` | `{ loginId, qr, expiresAt }` / `{ status, connection?, owner? }` | 可选，扫码登录；`status` 是 `waiting`、`scanned`、`expired` 或 `done`，只有 `done` 会创建连接。目前只有 `weixin` 提供。 |
 
@@ -113,6 +114,7 @@ host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件
 | `imReconcileMs` | `15000` | IM 健康检查间隔；大于 0 的值会替换默认值。 |
 | `imSendTimeoutMs` | `60000` | 单条消息发送超时；大于 0 的值会替换默认值。 |
 | `imReactions` | `true` | `false` 关闭状态表情。 |
+| `imDeliverAnswers` | `false` | `true` 时把窗口里发起的轮次也只投递最终回答到该 Bot 的 IM 聊天；默认不投递。 |
 | `im` | 无 | 按平台的适配器配置，作为 `env.config` 传给适配器。 |
 | `checkRatio` | `0.8` | 上下文管家做决定的位置占可用窗口的比例；必须在 0 和 1 之间。 |
 | `memory` | `true` | `false` 移除记忆工具、记忆面板和学习轮。 |

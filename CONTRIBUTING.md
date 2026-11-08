@@ -24,7 +24,7 @@
    ```
 
    它生成 `ocean-crew/dist/`（host 构建产物）和 `ocean-crew/client.js`（client 构建产物）。两者
-   都是生成物，要和源码一起提交；`client.js` 禁止手改。
+   都是生成物，由 `.gitignore` 忽略、不进 git，安装前必须先构建；`client.js` 禁止手改。
 3. 给可观察行为补回归测试（`ocean-crew/test/`，用 `node:test`）。测试夹具不要带用户数据、
    凭据或本机状态。
 4. 跑下面的检查。host 改动再跑一次 smoke 测试；client 改动还要在 DSH Desktop 里看一眼结果。

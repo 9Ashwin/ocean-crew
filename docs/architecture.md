@@ -50,12 +50,12 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 | `ocean-crew/src/index.ts` | 插件入口：`name`、`inject`、`apply`、`createRuntime`、`MODULES` 列表和默认值（`mainName`、`mainRole`）。 |
 | `ocean-crew/src/host/core/runtime.ts`、`store.ts` | `Runtime` 形状与团队文件：加载、迁移、保存、`state.lock`，以及把会话映射到 Bot 或群聊的索引。 |
 | `ocean-crew/src/host/team/roster.ts`、`groups/` | Bot 与群聊：创建、修改、删除、主 Bot、成员、轮次和 @提及。 |
-| `ocean-crew/src/host/chat/parts.ts`、`steward.ts`、`chat-index.ts` | 分段与交接说明、上下文决策、更早分段的翻页，以及全文索引。 |
+| `ocean-crew/src/host/chat/parts.ts`、`chat-index.ts`，`work/steward.ts` | 分段与交接说明、更早分段的翻页、全文索引，以及上下文决策。 |
 | `ocean-crew/src/host/chat/turns.ts`、`delivery.ts`、`steer.ts`、`resume.ts`、`feed.ts` | 轮次跟踪、把消息送进会话、转向、DSH 丢掉的工作，以及实时信息流（SSE）。 |
-| `ocean-crew/src/host/team/tools.ts`、`prompt.ts`、`capabilities.ts`、`memory.ts`、`learning.ts` | Bot 会话拿到的东西：工具及其作用域、提示词分区、能力、记忆和学习轮。 |
+| `ocean-crew/src/host/team/tools.ts`、`prompt.ts`，`work/capabilities.ts`、`work/memory.ts`、`work/learning.ts` | Bot 会话拿到的东西：工具及其作用域、提示词分区、能力、记忆和学习轮。 |
 | `ocean-crew/src/host/chat/channel.ts` | `POST /api/bot` 的各个端点，以及客户端渲染的团队视图。 |
-| `ocean-crew/src/host/im/` | IM host：连接、配对、目标、卡片、发送队列、`supervisor.ts` 和 `format.ts`；`platforms/` 里每个平台一个适配器。 |
-| `ocean-crew/src/host/work/secrets.ts`、`providers.ts`、`models.ts` | `secrets.json`、保存值的脱敏，以及模型提供方与每个 Bot 的模型选择。 |
+| `ocean-crew/src/host/im/` | IM host：连接、配对、路由与来源、卡片、发送队列与持久 outbox、`supervisor.ts` 和 `format.ts`；`platforms/` 里每个平台一个适配器。 |
+| `ocean-crew/src/host/work/secrets.ts`，`team/providers.ts`、`team/models.ts` | `secrets.json`、保存值的脱敏，以及模型提供方与每个 Bot 的模型选择。 |
 | `ocean-crew/src/host/connectors/` | GitHub 和邮箱，通过本机 MCP 网关挂载。 |
 | `ocean-crew/src/host/work/schedules.ts`、`usage.ts`、`update.ts`、`dsh-update.ts`、`diagnostics.ts` | 定时任务、从 DSH token-meter 读取的 token 用量、插件与 DSH 更新，以及错误日志。 |
 | `ocean-crew/src/client/` | client 半边，每个界面一个模块；构建成 `client.js`。 |
@@ -72,7 +72,9 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 请求 id 以 `im:` 开头。
 
 **一条 Bot 回复出去。** IM host 监听 `session/event`。`displayItems` 为某个 Bot 会话产出的每个 `bot` 或
-`view` 项，都通过连接的按聊天发送队列，发给监听该 Bot 或该群聊的每个 IM 聊天；群聊发言
+`view` 项，都通过连接的按聊天发送队列，回到产生这一轮的那个聊天：host 在入站时把来源记进
+`state.im.origins`，出站只发那里，同一 Bot 的其他绑定聊天收不到。连接设了 `mirror: "all"` 时恢复广播；
+没有来源的轮次（在窗口里发起）不发 IM，开启 `imDeliverAnswers` 时只发最终回答。群聊发言
 （`rt.onRoomLine`）和审批（`rt.onApproval`）走同一条路径。`edit` 在卡片得到回答后结算它；平台支持
 表情回应时，用一个状态表情标出请求这项工作的消息。
 
@@ -86,5 +88,6 @@ DSH 的槽位（`conversation.*`、`sidebar.*`、`settings.*`、`shell.overlay`�
 **磁盘上的状态。** host 把团队保存在内存里，整份原子写入 `state.json`（先写临时文件，再替换），并递增
 `revision`。只有持锁者能写；同一份数据上的另一个 host 只回答读，拒绝写。密钥单独放在
 `secrets.json`（权限 600），所以团队备份和密钥备份是两件事。每条连接的 IM 运行时（`im/<id>.json`）携带
-适配器跨重启需要的东西，例如已投递的消息 id 和已发送的卡片。`chat-index.sqlite` 是
-可重建的索引；聊天本身是 DSH 自己存储里的 DSH 会话，不在插件 home 里。
+适配器跨重启需要的东西，例如已投递的消息 id 和已发送的卡片；`im/<id>.outbox.json` 记下还没确认
+送达的文本，重启后继续投递。`chat-index.sqlite` 是可重建的索引；聊天本身是 DSH 自己存储里的
+DSH 会话，不在插件 home 里。

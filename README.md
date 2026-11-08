@@ -121,7 +121,7 @@ CI（`.github/workflows/test.yml`）在 push 到 `main` 时运行类型检查、
 - 公开契约：[docs/contracts.md](docs/contracts.md)
 - 界面规范：[docs/design/ui-standard.md](docs/design/ui-standard.md)
 - 已知问题：[docs/known-issues.md](docs/known-issues.md)
-- 任务记录：[tasks 目录](tasks/)（每个任务的需求与进展在 `tasks/<task>/`，验证证据在 `tasks/<task>/evidence/`）
+- 任务记录：本机 `tasks/<task>/`（`prd.md`、`progress.md`、`checkpoint.md`），不进 git
 - 版本变化：[CHANGELOG.md](CHANGELOG.md)
 
 ## 许可
