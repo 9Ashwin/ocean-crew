@@ -139,7 +139,13 @@ export function install(rt: any) {
 					code: "bot/read-only",
 				});
 			}
-			await mkdir(imDir, { recursive: true });
+			try {
+				await mkdir(imDir, { recursive: true });
+			} catch (error: any) {
+				// Two connections writing at once can race the recursive mkdir on Linux;
+				// the directory existing is exactly the outcome this needs.
+				if (error?.code !== "EEXIST") throw error;
+			}
 			const temp = join(imDir, `${id}.outbox.${process.pid}.tmp`);
 			try {
 				await writeFile(temp, JSON.stringify(held.data), { encoding: "utf8", mode: 0o600 });
