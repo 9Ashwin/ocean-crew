@@ -230,6 +230,34 @@ const postText = (content: any): string => {
 	return lines.join("\n");
 };
 
+// A reply as Feishu renders Markdown, so **bold**, lists, links and `code` show as
+// themselves instead of as punctuation. Feishu's md renderer drops what follows a fenced
+// code block inside one element, so the reply is split at real fences: prose in one row,
+// each fenced block in its own.
+const POST_ROWS = (content: string): Array<Array<{ tag: string; text: string }>> => {
+	const rows: Array<Array<{ tag: string; text: string }>> = [];
+	let current: string[] = [];
+	let fenced = false;
+	const flush = (): void => {
+		if (current.length === 0) return;
+		const text = current.join("\n");
+		if (text.trim() !== "") rows.push([{ tag: "md", text }]);
+		current = [];
+	};
+	for (const line of content.split("\n")) {
+		const fence = /^\s*(?:```|~~~)/.test(line);
+		if (fence && !fenced) flush();
+		current.push(line);
+		if (fence) {
+			fenced = !fenced;
+			if (!fenced) flush();
+		}
+	}
+	flush();
+	return rows.length > 0 ? rows : [[{ tag: "md", text: content }]];
+};
+const post = (content: string): string => JSON.stringify({ zh_cn: { content: POST_ROWS(content) } });
+
 const card = (text: string, buttons: any[]): string =>
 	JSON.stringify({
 		schema: "2.0",
@@ -497,8 +525,8 @@ const feishu = {
 								params: { receive_id_type: "chat_id" },
 								data: {
 									receive_id: String(chat?.key ?? ""),
-									msg_type: interactive ? "interactive" : "text",
-									content: interactive ? card(chunk, buttons) : JSON.stringify({ text: chunk }),
+									msg_type: interactive ? "interactive" : "post",
+									content: interactive ? card(chunk, buttons) : post(chunk),
 								},
 							}),
 						scrub,

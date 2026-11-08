@@ -708,3 +708,49 @@ test("a record interrupted mid-send is reported unknown and never resent", async
 		"an interrupted send is never repeated",
 	);
 });
+
+// ---------------------------------------------------------------------------
+// Where a reply goes: back to the chat it came from, not to every bound chat.
+
+test("a reply answers the chat the message came from, not every bound chat", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	// An unpaired sender only gets a request; pairing lets the message reach the Bot.
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "hello from this chat");
+	await s.flush();
+	// The origin is recorded for the Session, so a later background result goes there
+	// rather than to whichever chat spoke last.
+	assert.deepEqual(s.rt.state.im.origins.a, {
+		connId: conn.id,
+		chatKey: "dm-u1",
+		at: s.rt.state.im.origins.a.at,
+	});
+	assert.ok(s.fake.sent.length > 0, "the message was answered in its own chat");
+	assert.ok(
+		s.fake.sent.every((entry: any) => String(entry.chat?.key ?? "").startsWith("dm-")),
+		"nothing went to another chat",
+	);
+});
+
+test("a turn started in the window sends nothing to IM by default", async (t) => {
+	const s = await start(t);
+	await add(s);
+	const before = s.fake.sent.length;
+	// The window starts the turn: no IM message led to it, so no origin exists.
+	s.emitEvent("a", "user/message", { content: [{ type: "text", text: "typed in the window" }] });
+	s.emitEvent("a", "assistant/message", { content: [{ type: "text", text: "a window answer" }] });
+	s.emitEvent("a", "turn/end", { reason: { kind: "stop" } });
+	await s.flush();
+	assert.equal(s.fake.sent.length, before, "the window's turn is not mirrored into IM");
+});
+
+test("a mirroring connection still reaches every chat of that Bot", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await s.rt.imEndpoint("im-update", { id: conn.id, mirror: "all" });
+	await dm(s, "u1", "hello");
+	await s.flush();
+	assert.ok(s.fake.sent.length > 0, "the message was answered");
+});

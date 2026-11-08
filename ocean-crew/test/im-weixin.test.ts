@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createCipheriv, createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import weixin from "../src/host/im/platforms/weixin.ts";
+import weixin, { chunk } from "../src/host/im/platforms/weixin.ts";
 
 // The iLink client version the adapter identifies itself as: 2.4.6 packed as 0x00MMNNPP.
 const ILINK_CLIENT_VERSION = String((2 << 16) | (4 << 8) | 6);
@@ -998,4 +998,34 @@ test("an image item downloads from its CDN URL and decrypts with its AES key", a
 	assert.deepEqual(Buffer.from(messages[0].images[0].data, "base64"), plain);
 	// A file item is reported by name; its bytes stay on the platform.
 	assert.deepEqual(messages[0].files, [{ name: "notes.txt", data: undefined }]);
+});
+
+// The reply as chat bubbles: a short cascade of lines is sent one per bubble, the way a
+// person texts; everything with structure stays whole.
+test("a short chat-like reply becomes one bubble per line", () => {
+	assert.deepEqual(chunk("Sure thing\nI'll take a look\nGive me a minute", 1800), [
+		"Sure thing",
+		"I'll take a look",
+		"Give me a minute",
+	]);
+});
+
+test("a reply with structure stays one message", () => {
+	const structured = "# Findings\n\n- first point that is quite long and explains something\n- second point";
+	assert.deepEqual(chunk(structured, 1800), [structured]);
+	// A heading-like first line means the block is a document, not chatter.
+	const headed = "Here is what I found:\nthe file is there\nthe build passes";
+	assert.deepEqual(chunk(headed, 1800), [headed]);
+});
+
+test("a long reply packs whole blocks and never splits a fence", () => {
+	const code = "```js\n" + "const x = 1;\n".repeat(60) + "```";
+	const text = `${"para ".repeat(200)}\n\n${code}\n\n${"tail ".repeat(200)}`;
+	const parts = chunk(text, 500);
+	assert.ok(parts.length > 1, "the reply is split");
+	assert.ok(
+		parts.some((part) => part.includes(code.slice(0, 20))),
+		"the fence survives in one piece",
+	);
+	for (const part of parts) assert.ok(part.length <= 500, "no part exceeds the platform limit");
 });

@@ -53,6 +53,18 @@
 - 必须保持：`client.js` 用 DSH 的加载器注册一个模块——`window.__ModuleLoader__.load({ id: 'ocean-crew', factory })`——它的 factory 只 require `react`、`react-dom` 和 `@deepseek-ai/dsh-client-ui-primitives`，导出恰好是 `apply` 和 `inject`，其中 `inject` 列出 `sessions`、`uiWorkspace`、`uiConversation`、`slots`、`theme` 和 `layout`。若被破坏：DSH 加载不了 client，或者加载时用到 shell 没有准备好的槽位或服务。
 - 必须保持：`client.js` 是 `ocean-crew/src/client/` 的构建结果，`dist/` 是 `ocean-crew/src/` 的构建结果。若被破坏：装进 DSH 的代码与源码不一致，检查门禁也会失败。
 
+## IM 回复路由
+
+每条入站消息记下来源（`state.im.origins[sessionId] = {connId, chatKey, at}`），Bot 的回复只回到这个
+聊天。同一 Bot 绑定多个渠道时，其他渠道收不到——这是 Hermes `DeliveryTarget(origin)` 与 memoh
+`ReplyTarget` 的同一策略，也明确避开了 Hermes 注释里指出的错误做法：用「当前活跃事件」兜底会造成串台。
+
+- `mirror: "source"`（默认）：只回来源聊天。`mirror: "all"`：仍向该连接上监听此 Bot 的所有聊天广播。
+- 窗口（DSH Desktop）发起的 Turn 没有来源，默认**完全不发**到 IM。设置 `imDeliverAnswers: true` 后，
+  在 Turn 结束时只发**最终回答**，不发各个 step 的中间文本（对齐 dsh-im 的会话同步）。
+- 来源记录随 `state.json` 持久化，重启后仍然生效；超过 24 小时的来源视为过期，不再据此路由。
+- 来源聊天已解绑时跳过该目标，不报错。
+
 ## IM 投递与 outbox
 
 普通文本发送前先写 `im/<连接 id>.outbox.json`，发送结果确定后删除该记录。记录状态是

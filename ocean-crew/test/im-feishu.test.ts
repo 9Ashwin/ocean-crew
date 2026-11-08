@@ -480,8 +480,11 @@ test("send chunks the text and turns the last chunk into a card", async () => {
 	const [first, last] = fake.creates;
 	assert.deepEqual(first.params, { receive_id_type: "chat_id" });
 	assert.equal(first.data.receive_id, "oc_group");
-	assert.equal(first.data.msg_type, "text");
-	assert.deepEqual(JSON.parse(first.data.content), { text: "a".repeat(4000) });
+	// Prose is a Markdown post, so the platform renders emphasis and lists itself.
+	assert.equal(first.data.msg_type, "post");
+	assert.deepEqual(JSON.parse(first.data.content), {
+		zh_cn: { content: [[{ tag: "md", text: "a".repeat(4000) }]] },
+	});
 	assert.equal(last.data.msg_type, "interactive");
 	const card = JSON.parse(last.data.content);
 	assert.equal(card.schema, "2.0");
@@ -499,7 +502,7 @@ test("send posts text and edit patches the card", async () => {
 	assert.equal(sent.messageId, "om_1");
 	assert.equal(fake.creates.length, 1);
 	assert.equal(fake.creates[0].data.receive_id, "oc_p2p");
-	assert.equal(fake.creates[0].data.msg_type, "text");
+	assert.equal(fake.creates[0].data.msg_type, "post");
 	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_9", {
 		text: "done",
 		buttons: [{ data: "a:1:allow", label: "Allow" }],

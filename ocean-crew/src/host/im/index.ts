@@ -308,6 +308,42 @@ export function install(rt: any) {
 		statuses.set(id, next);
 		return next;
 	};
+	// Where a Session last came from: the connection and chat of the IM message that
+	// reached it. A reply goes back there and nowhere else unless that connection mirrors;
+	// a turn that started in the window has no origin and sends nothing to IM.
+	//
+	// It is persisted in `state.im.origins` on purpose: resolving it from the "current"
+	// event instead is what makes a background result land in whichever chat spoke last.
+	const origins = (): Record<string, { connId: string; chatKey: string; at: number }> => {
+		// `im` is optional in the saved state; a team made before IM existed gets one here.
+		state.im ??= { connections: {} };
+		const held = state.im as Record<string, any>;
+		held.connections ??= {};
+		if (held.origins === null || typeof held.origins !== "object" || Array.isArray(held.origins)) held.origins = {};
+		return held.origins as Record<string, { connId: string; chatKey: string; at: number }>;
+	};
+	const noteOrigin = (sessionId: string, conn: any, chat: any) => {
+		const all = origins();
+		const before = all[sessionId];
+		if (before?.connId === conn.id && before?.chatKey === chat.key) {
+			before.at = Date.now();
+			return;
+		}
+		all[sessionId] = { connId: conn.id, chatKey: chat.key, at: Date.now() };
+		// The origin is part of the team state, so another window sees the same routing.
+		void rt.save().catch((error: any) => rt.warn("ocean-crew: im origin not saved: %s", error));
+	};
+	const originOf = (sessionId: string) => {
+		const held = origins()[sessionId];
+		// A turn older than a day is no longer something a reply belongs to.
+		if (held === undefined || Date.now() - held.at > 24 * 60 * 60_000) return undefined;
+		return held;
+	};
+
+	// The last text a window turn produced, held until the turn ends so one answer goes
+	// out instead of every step. Only used when `imDeliverAnswers` is on.
+	const windowAnswers = new Map<string, string>();
+
 	const targetsOf = (conn: any) => {
 		const out: any[] = [];
 		for (const [chatKey, chat] of Object.entries((conn.chats ?? {}) as Record<string, any>)) {
@@ -324,6 +360,32 @@ export function install(rt: any) {
 				return target?.roomId === match.roomId && rt.roomOf(target.roomId) !== undefined;
 			return false;
 		});
+
+	// The chats one Bot's reply reaches. Default: the chat the turn came from, on the
+	// connection it came from. `mirror: "all"` on that connection keeps the old behaviour
+	// of every chat that listens to the Bot. No origin means the turn started in the
+	// window, and the window is not mirrored into IM.
+	const replyTargets = (sessionId: string, botId: string): Array<{ conn: any; chatKey: string; chat: any }> => {
+		const origin = originOf(sessionId);
+		const out: Array<{ conn: any; chatKey: string; chat: any }> = [];
+		for (const conn of Object.values(connections())) {
+			if (!runners.has(conn.id)) continue;
+			const fromHere = origin?.connId === conn.id;
+			const mirror = fromHere && conn.mirror === "all";
+			if (mirror) {
+				for (const { chatKey, chat } of listeners(conn, { botId })) out.push({ conn, chatKey, chat });
+				continue;
+			}
+			if (!fromHere || origin === undefined) continue;
+			// The chat the message came from, if it still listens to this Bot.
+			const target = targetsOf(conn).find(
+				({ chatKey }) =>
+					chatKey === origin.chatKey && listeners(conn, { botId }).some((row) => row.chatKey === chatKey),
+			);
+			if (target !== undefined) out.push({ conn, chatKey: target.chatKey, chat: target.chat });
+		}
+		return out;
+	};
 
 	// A job waits in the in-memory queue and, written first, in the outbox: a crash
 	// between the two leaves a record that the next start resends, never a silent loss.
@@ -668,6 +730,7 @@ export function install(rt: any) {
 			}
 		}
 		if (content.length === 0) return;
+		noteOrigin(sessionId, conn, msg.chat);
 		const requestId = `im:${conn.platform}:${randomUUID()}`;
 		await rt.sendUser({ sessionId, content, requestId });
 		// A room message is answered by member Bot turns under their own sessions, so
@@ -1152,6 +1215,8 @@ export function install(rt: any) {
 				paired: [],
 				requests: [],
 				chats: {},
+				// The default is that a reply answers the chat it came from.
+				mirror: body.mirror === "all" ? "all" : "source",
 				createdAt: Date.now(),
 			};
 			await saveSecrets(conn, platform, fields);
@@ -1162,6 +1227,7 @@ export function install(rt: any) {
 		},
 		async "im-update"(body: any) {
 			const conn = connections()[String(body.id ?? "")];
+			if (conn !== undefined && (body.mirror === "source" || body.mirror === "all")) conn.mirror = body.mirror;
 			if (conn === undefined) throw new Error("No such IM bot");
 			const platform = imPlatform(conn.platform);
 			if (platform === undefined) throw new Error("No such platform");
@@ -1364,6 +1430,19 @@ export function install(rt: any) {
 				for (const held of pendingReactions.values()) if (held.requestId === rpcId) held.started = true;
 		}
 		if (event.type === "turn/end") {
+			const held = windowAnswers.get(session.id);
+			if (held !== undefined) {
+				windowAnswers.delete(session.id);
+				if (held.trim() !== "") {
+					const owner = rt.chatOwners.get(session.id);
+					if (owner !== undefined)
+						for (const conn of Object.values(connections())) {
+							if (!runners.has(conn.id) || conn.mirror !== "all") continue;
+							for (const { chatKey, chat } of listeners(conn, { botId: owner }))
+								sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, held);
+						}
+				}
+			}
 			// An aborted or interrupted turn gets no verdict: the processing mark is
 			// removed and the message stays unmarked, the way dsh-im clears it.
 			const kind = event.data?.reason?.kind;
@@ -1385,17 +1464,26 @@ export function install(rt: any) {
 		if (typeof rpcId === "string" && rpcId.startsWith("im:") && Number.isInteger(event.seq)) {
 			imVia.set(session.id, { ...imVia.get(session.id), [event.seq]: rpcId.split(":")[1] });
 		}
+		const targets = replyTargets(session.id, botId);
+		if (targets.length === 0) {
+			// A turn that started in the window answers the window. It reaches IM only when
+			// the user asked for that (`imDeliverAnswers`), and then as one final answer
+			// rather than every step, so a chat is not filled with a turn's working notes.
+			if (rt.config?.imDeliverAnswers !== true) return;
+			for (const item of rt.displayItems(session.id, [event])) {
+				if (item.kind !== "bot" || item.text.trim() === "") continue;
+				windowAnswers.set(session.id, item.text);
+			}
+			return;
+		}
 		for (const item of rt.displayItems(session.id, [event])) {
 			if (item.kind !== "bot" && item.kind !== "view") continue;
 			const body =
 				item.kind === "bot"
 					? item.text
 					: viewCardText({ title: item.title, view: item.view }) || (item.title ?? "");
-			for (const conn of Object.values(connections())) {
-				if (!runners.has(conn.id)) continue;
-				for (const { chatKey, chat } of listeners(conn, { botId }))
-					sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body);
-			}
+			for (const { conn, chatKey, chat } of targets)
+				sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body);
 		}
 	});
 
@@ -1408,8 +1496,26 @@ export function install(rt: any) {
 		)
 			return;
 		const body = `**${line.who}**: ${line.text}`;
+		// A group's lines go to the group chat the turn came from; a group with no IM
+		// origin sends nothing. The group's Session is the key, as its members' own
+		// Sessions are for a direct chat.
+		const roomSession = rt.sessionOfRoom(room) ?? "";
+		const origin = roomSession === "" ? undefined : originOf(roomSession);
 		for (const conn of Object.values(connections())) {
 			if (!runners.has(conn.id)) continue;
+			const mirror = origin?.connId === conn.id && conn.mirror === "all";
+			if (!mirror) {
+				if (origin === undefined || origin.connId !== conn.id) continue;
+				const target = targetsOf(conn).find(({ chatKey }) => chatKey === origin.chatKey);
+				if (target === undefined) continue;
+				sendTo(
+					conn,
+					target.chatKey,
+					{ key: target.chatKey, kind: target.chat.kind, title: target.chat.title },
+					body,
+				);
+				continue;
+			}
 			for (const { chatKey, chat } of listeners(conn, { roomId: room.id }))
 				sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body);
 		}

@@ -621,7 +621,7 @@ const weixin = {
 };
 
 // Text chunks: paragraphs/lines first, a hard cut at the limit otherwise.
-const chunk = (text: unknown, limit: number): string[] => {
+const pack = (text: unknown, limit: number): string[] => {
 	const chunks: string[] = [];
 	let rest = String(text);
 	while (rest !== "") {
@@ -640,6 +640,93 @@ const chunk = (text: unknown, limit: number): string[] => {
 		rest = rest.slice(at).replace(/^\s+/, "");
 	}
 	return chunks;
+};
+
+// A short, chat-like block is sent as one bubble per line, the way a person texts,
+// instead of one wall of text. Long prose, headings, lists and tables stay whole so a
+// structure is never torn apart, and a fenced block is never split.
+const CHATTY_MAX = 48;
+const chattyLine = (line: string): boolean => {
+	const text = line.trim();
+	if (text === "" || line.startsWith(" ") || line.startsWith("\t")) return false;
+	if (text.length > CHATTY_MAX) return false;
+	if (/^[>\-*【#|]/.test(text)) return false;
+	if (/^\*\*[^*]+\*\*$/.test(text)) return false;
+	if (/^\d+\.\s/.test(text)) return false;
+	return true;
+};
+const isHeading = (line: string): boolean => {
+	const text = line.trim();
+	return text.endsWith(":") || text.endsWith("：") || (text.length <= 24 && text.startsWith("#"));
+};
+const chatty = (block: string): boolean => {
+	const lines = block.split("\n").filter((line) => line.trim() !== "");
+	if (lines.length < 2 || lines.length > 6) return false;
+	if (isHeading(lines[0])) return false;
+	return lines.every(chattyLine);
+};
+// Blocks split at blank lines, fences kept whole.
+const blocks = (text: string): string[] => {
+	const out: string[] = [];
+	let current: string[] = [];
+	let fenced = false;
+	const flush = (): void => {
+		const block = current.join("\n").trim();
+		if (block !== "") out.push(block);
+		current = [];
+	};
+	for (const raw of text.split("\n")) {
+		const line = raw.replace(/\s+$/, "");
+		if (/^\s*(?:```|~~~)/.test(line)) {
+			if (!fenced) flush();
+			current.push(line);
+			fenced = !fenced;
+			if (!fenced) flush();
+			continue;
+		}
+		if (fenced) {
+			current.push(line);
+			continue;
+		}
+		if (line.trim() === "") flush();
+		else current.push(line);
+	}
+	flush();
+	return out;
+};
+/**
+ * One reply as the sequence of chat bubbles WeChat receives. Exported for the test that
+ * pins the split: short chat-like lines become separate bubbles, everything else stays
+ * whole, and a fenced block is never torn.
+ */
+export const chunk = (text: unknown, limit: number): string[] => {
+	const whole = String(text ?? "");
+	if (whole.length <= limit) {
+		// A short cascade of chat lines becomes a few bubbles; anything else stays one.
+		if (!chatty(whole)) return [whole];
+		return whole
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line !== "");
+	}
+	const out: string[] = [];
+	let current = "";
+	for (const block of blocks(whole)) {
+		const candidate = current === "" ? block : `${current}\n\n${block}`;
+		if (candidate.length <= limit) {
+			current = candidate;
+			continue;
+		}
+		if (current !== "") out.push(current);
+		if (block.length <= limit) {
+			current = block;
+			continue;
+		}
+		out.push(...pack(block, limit));
+		current = "";
+	}
+	if (current !== "") out.push(current);
+	return out.filter((piece) => piece !== "");
 };
 
 // iLink only carries getupdates for an opened session: before msg/notifystart

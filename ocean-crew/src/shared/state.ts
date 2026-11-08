@@ -254,6 +254,10 @@ export interface ImConnection {
 	settings: Record<string, string | undefined>;
 	pairees: { id: string; name: string; at: number }[];
 	secrets: Record<string, string>;
+	// Where a Bot's reply may go. "source" (the default) answers only the chat the
+	// message came from; "all" mirrors every chat of this connection that listens to the
+	// Bot. A conversation that started in the window sends nothing to IM at all.
+	mirror?: "source" | "all";
 	[key: string]: unknown;
 }
 
