@@ -207,6 +207,12 @@ async function start(
 const FIELDS: Record<string, any> = { fake: { token: "tok-1234" }, feishu: { appId: "cli-1", appSecret: "sec-1234" } };
 const add = (s: Host, fields: any = FIELDS[s.platform] ?? {}): Promise<any> =>
 	s.rt.imEndpoint("im-add", { platform: s.platform, botId: "a", fields });
+// A durable queue means the send starts a tick after the caller returns; a test that
+// reads the last sent message waits for it instead of assuming it already happened.
+const lastSent = async (s: Host, after = 0): Promise<any> => {
+	await s.until(() => s.fake.sent.length > after);
+	return s.fake.sent[s.fake.sent.length - 1];
+};
 const dm = (s: Host, senderId: string, text: string, extra: any = {}): Promise<any> =>
 	s.fake.handlers.onMessage({
 		chat: { key: `dm-${senderId}`, kind: "direct", title: senderId },
@@ -263,15 +269,15 @@ test("unpaired DM asks once, allow pairs it, next message prompts the Bot", asyn
 	const [one] = Object.values(s.rt.state.im.connections) as any[];
 	await dm(s, "u1", "hello");
 	assert.equal(one.requests.length, 1);
-	assert.equal(s.fake.sent.length, 1);
+	assert.ok(await s.until(() => s.fake.sent.length === 1), "sent 1 message(s)");
 	assert.match(s.fake.sent[0].text, /connection request/);
 	assert.equal(s.prompts.length, 0);
 	await dm(s, "u1", "hello again");
 	assert.equal(one.requests.length, 1);
-	assert.equal(s.fake.sent.length, 1);
+	assert.ok(await s.until(() => s.fake.sent.length === 1), "sent 1 message(s)");
 	await s.rt.imEndpoint("im-pair", { id: one.id, senderId: "u1", allow: true });
 	assert.equal(one.paired.length, 1);
-	assert.match(s.fake.sent.at(-1).text, /talk to Chief/);
+	assert.match((await lastSent(s, 1)).text, /talk to Chief/);
 	await dm(s, "u1", "do a thing");
 	assert.equal(s.prompts.length, 1);
 	assert.equal(s.prompts[0].sessionId, "a");
@@ -290,7 +296,7 @@ test("unbound group mention replies unbound and records the chat; binding routes
 	assert.equal(s.prompts.length, 0);
 	await gm(s, "u1", "@fakebot hello group");
 	assert.equal(s.rt.state.im.connections[conn.id].chats.g1?.kind, "group");
-	assert.equal(s.fake.sent.length, 1);
+	assert.ok(await s.until(() => s.fake.sent.length === 1), "sent 1 message(s)");
 	assert.match(s.fake.sent[0].text, /not bound/);
 	assert.equal(s.prompts.length, 0);
 	await s.rt.imEndpoint("im-chat", { id: conn.id, chatKey: "g1", target: { roomId: "r1" } });
@@ -320,7 +326,7 @@ test("outbound: an assistant message goes to the paired chat, hidden turns and u
 	});
 	s.emitEvent("a", "user/message", { source: { kind: "user" }, content: [{ type: "text", text: "user typed" }] });
 	await s.flush();
-	assert.equal(s.fake.sent.length, 1);
+	assert.ok(await s.until(() => s.fake.sent.length === 1), "sent 1 message(s)");
 });
 
 test("IM user messages are tagged by seq for the current part, and dropped when the part is gone", async (t) => {
@@ -397,7 +403,7 @@ test("numbered reply answers the newest open card on a no-button platform", asyn
 	s.rt.state.questions.a = { id: "q1", question: "Pick", options: [{ label: "x" }, { label: "y" }] };
 	await s.rt.save();
 	await s.flush();
-	const card = s.fake.sent.at(-1);
+	const card = await lastSent(s);
 	assert.equal(card.buttons, undefined);
 	await dm(s, "u1", "2");
 	assert.ok(s.rt.state.questions.a === undefined);
@@ -416,7 +422,7 @@ test("a pending secret request sends text without buttons", async (t) => {
 	};
 	await s.rt.save();
 	await s.flush();
-	const card = s.fake.sent.at(-1);
+	const card = await lastSent(s);
 	assert.match(card.text, /MY_KEY/);
 	assert.equal(card.buttons, undefined);
 });
@@ -449,7 +455,7 @@ test("/stop calls stopChat for a Bot target", async (t) => {
 	};
 	await dm(s, "u1", "/stop");
 	assert.equal(called, 1);
-	assert.match(s.fake.sent.at(-1).text, /Stopped|已停/);
+	assert.match((await lastSent(s)).text, /Stopped|已停/);
 	await dm(s, "u1", "/stop@fakebot");
 	assert.equal(called, 2);
 });
@@ -482,7 +488,7 @@ test("a deleted Bot target gets the unbound reply", async (t) => {
 	await s.rt.save();
 	s.fake.sent.length = 0;
 	await dm(s, "u1", "hi");
-	assert.match(s.fake.sent.at(-1).text, /not bound|还没绑定/);
+	assert.match((await lastSent(s)).text, /not bound|还没绑定/);
 	assert.equal(s.prompts.length, 0);
 });
 
@@ -754,3 +760,121 @@ test("a mirroring connection still reaches every chat of that Bot", async (t) =>
 	await s.flush();
 	assert.ok(s.fake.sent.length > 0, "the message was answered");
 });
+
+// ---------------------------------------------------------------------------
+// Slice: the outbox is a commit boundary, not a best-effort log.
+
+test("a message whose queued record cannot be written is not accepted", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	// Paired before the message, so the turn starts and records where it came from.
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hi");
+	await s.flush();
+	s.fake.sent.length = 0;
+	// A file where the im directory belongs makes every outbox write fail.
+	rmSync(join(s.home, "im"), { recursive: true, force: true });
+	writeFileSync(join(s.home, "im"), "not a directory");
+	s.emitEvent("a", "assistant/message", { message: { content: [{ type: "text", text: "hello" }] } });
+	await delay(200);
+	assert.deepEqual(s.fake.sent, [], "nothing is sent without a durable record");
+	const status: any = s.rt.imStatusView()[conn.id];
+	assert.match(String(status?.error ?? ""), /could not be queued for sending/);
+});
+
+test("the sending record is on disk before the platform is called", async (t) => {
+	const adapter = fakeAdapter();
+	const connect = adapter.connect;
+	const probe: { home: string; states: string[] } = { home: "", states: [] };
+	adapter.connect = (fields: any, env: any, handlers: any) => {
+		const handle = connect(fields, env, handlers);
+		const send = handle.send;
+		handle.send = async (chat: any, body: any) => {
+			// What recovery could see at the moment transport starts.
+			const dir = join(probe.home, "im");
+			const name = existsSync(dir) ? readdirSync(dir).find((entry) => entry.endsWith(".outbox.json")) : undefined;
+			if (name !== undefined) {
+				const data = JSON.parse(readFileSync(join(dir, name), "utf8"));
+				for (const list of Object.values(data.chats ?? {}) as any[][]) {
+					for (const record of list) probe.states.push(String(record.state));
+				}
+			}
+			return send(chat, body);
+		};
+		return handle;
+	};
+	const s = await start(t, { adapter });
+	probe.home = s.home;
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hi");
+	await s.flush();
+	s.fake.sent.length = 0;
+	probe.states.length = 0;
+	s.emitEvent("a", "assistant/message", { message: { content: [{ type: "text", text: "hi" }] } });
+	assert.ok(await s.until(() => s.fake.sent.length === 1));
+	assert.ok(probe.states.includes("sending"), `the attempt is recorded first, saw ${JSON.stringify(probe.states)}`);
+});
+
+test("a corrupt outbox is kept aside instead of being treated as empty", async (t) => {
+	const s = await start(t, { keep: true });
+	const conn = await add(s);
+	mkdirSync(join(s.home, "im"), { recursive: true });
+	writeFileSync(join(s.home, "im", `${conn.id}.outbox.json`), "{not json");
+	await s.stop();
+	const next = await start(t, { home: s.home, keep: true });
+	// Connecting is what reads the outbox back, so ask for a reconnect explicitly.
+	await next.rt.imEndpoint("im-retry", { id: conn.id });
+	await next.flush();
+	const kept = readdirSync(join(next.home, "im")).filter((name) => name.includes(".corrupt-"));
+	assert.equal(kept.length, 1, "the unreadable record is preserved for inspection");
+});
+
+test("a host that does not own the team does not accept a message for sending", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hi");
+	await s.flush();
+	s.fake.sent.length = 0;
+	// Another process owns the team: this host must not dispatch, or both would send.
+	const realMode = s.rt.writerMode;
+	s.rt.writerMode = () => "readonly";
+	s.rt.readOnly = () => "the team is held by another host";
+	s.emitEvent("a", "assistant/message", { message: { content: [{ type: "text", text: "hello" }] } });
+	await delay(150);
+	assert.deepEqual(s.fake.sent, [], "a read-only host sends nothing");
+	s.rt.writerMode = realMode;
+});
+
+test("outbox capacity never evicts a message whose outcome is unknown", async (t) => {
+	const s = await start(t, { keep: true });
+	const conn = await add(s);
+	await s.stop();
+	// A previous process left more settled-unknown records than the bound allows.
+	mkdirSync(join(s.home, "im"), { recursive: true });
+	const unknown = Array.from({ length: 60 }, (_, index) => ({
+		id: `u-${index}`,
+		chat: { key: "dm-u2", kind: "direct", title: "U2" },
+		state: "unknown",
+		attempts: 1,
+		body: `lost ${index}`,
+	}));
+	writeFileSync(
+		join(s.home, "im", `${conn.id}.outbox.json`),
+		JSON.stringify({ chats: { "dm-u2": unknown } }),
+	);
+	const next = await start(t, { home: s.home, keep: true });
+	await next.rt.imEndpoint("im-retry", { id: conn.id });
+	// A new pairing request goes through the accept path, which applies the bound.
+	await dm(next, "u2", "hello");
+	await next.flush();
+	const after = JSON.parse(readFileSync(join(next.home, "im", `${conn.id}.outbox.json`), "utf8"));
+	const kept = (after.chats["dm-u2"] ?? []).filter((record: any) => record.state === "unknown");
+	assert.equal(kept.length, 60, "records the user may need to see are not evicted");
+});
+;

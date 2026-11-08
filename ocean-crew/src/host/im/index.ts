@@ -3,7 +3,7 @@
 // The platform adapters (im/platforms/) own the wire; this module owns pairing,
 // routing, cards and the send queues. Only the dsh holding the team lock connects.
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { IM_PLATFORMS, imPlatform } from "../../shared/im-platforms.ts";
 import { viewCardText } from "../chat/parts.ts";
@@ -17,7 +17,6 @@ const RUNTIME_SAVE_MS = 400;
 // How many undelivered texts one chat keeps, and how long a send may stay unconfirmed
 // before it is reported as unknown rather than retried forever.
 const OUTBOX_LIMIT = 50;
-const OUTBOX_SAVE_MS = 200;
 const RETRY_MS = 5_000;
 const SEND_TIMEOUT_MS = 60_000;
 const QUEUE_LIMIT = 100;
@@ -99,10 +98,24 @@ export function install(rt: any) {
 		let held = outboxes.get(id);
 		if (held !== undefined) return held;
 		let data: any;
+		let unreadable: any;
 		try {
 			data = JSON.parse(await readFile(outboxPath(id), "utf8"));
-		} catch {
-			data = undefined;
+		} catch (error: any) {
+			// No file yet is the normal first start for a connection. Anything else means
+			// records exist but cannot be trusted: keep them for inspection and say so,
+			// instead of silently replacing them with an empty set.
+			if (error?.code !== "ENOENT") unreadable = error;
+		}
+		if (unreadable !== undefined) {
+			const kept = `${outboxPath(id)}.corrupt-${Date.now()}`;
+			await rename(outboxPath(id), kept).catch(() => {});
+			rt.warn(
+				"ocean-crew: im outbox %s is unreadable (%s); kept it at %s and started empty",
+				id,
+				String(unreadable?.message ?? unreadable),
+				kept,
+			);
 		}
 		held = {
 			data: {
@@ -114,28 +127,37 @@ export function install(rt: any) {
 		outboxes.set(id, held);
 		return held;
 	};
-	const writeOutbox = async (id: any) => {
-		const held = outboxes.get(id);
-		if (held === undefined || rt.readOnly() !== undefined) return;
-		await mkdir(imDir, { recursive: true });
-		const temp = join(imDir, `${id}.outbox.${process.pid}.tmp`);
+	// One write at a time per connection: two messages accepted together share the same
+	// temp path, and letting the writes interleave makes the loser fail for no reason.
+	const outboxWrites = new Map<any, Promise<unknown>>();
+	const writeOutbox = async (id: any): Promise<void> => {
+		const run = async () => {
+			const held = outboxes.get(id);
+			if (held === undefined) return;
+			if (rt.readOnly() !== undefined) {
+				throw Object.assign(new Error(`this host cannot write the im outbox: ${rt.readOnly()}`), {
+					code: "bot/read-only",
+				});
+			}
+			await mkdir(imDir, { recursive: true });
+			const temp = join(imDir, `${id}.outbox.${process.pid}.tmp`);
+			try {
+				await writeFile(temp, JSON.stringify(held.data), { encoding: "utf8", mode: 0o600 });
+				await chmod(temp, 0o600);
+				await replaceFile(temp, outboxPath(id));
+			} catch (error: any) {
+				await rm(temp, { force: true }).catch(() => {});
+				throw error;
+			}
+		};
+		const previous = outboxWrites.get(id) ?? Promise.resolve();
+		const next = previous.catch(() => {}).then(run);
+		outboxWrites.set(id, next);
 		try {
-			await writeFile(temp, JSON.stringify(held.data), { encoding: "utf8", mode: 0o600 });
-			await chmod(temp, 0o600);
-			await replaceFile(temp, outboxPath(id));
-		} catch (error: any) {
-			await rm(temp, { force: true }).catch(() => {});
-			throw error;
+			await next;
+		} finally {
+			if (outboxWrites.get(id) === next) outboxWrites.delete(id);
 		}
-	};
-	const scheduleOutboxWrite = (id: any) => {
-		const held = outboxes.get(id);
-		if (held === undefined || held.timer !== undefined) return;
-		held.timer = setTimeout(() => {
-			held.timer = undefined;
-			void writeOutbox(id).catch((error) => rt.warn("ocean-crew: im outbox %s not saved: %s", id, error));
-		}, OUTBOX_SAVE_MS);
-		held.timer.unref?.();
 	};
 	// Records for one chat, in send order; a chat with none is absent.
 	const outboxRecords = async (id: any, chatKey: any): Promise<any[]> => {
@@ -147,15 +169,17 @@ export function install(rt: any) {
 		const held = await outboxOf(id);
 		const list = Array.isArray(held.data.chats[chatKey]) ? held.data.chats[chatKey] : [];
 		list.push(record);
-		// The oldest queued texts go first when the chat is over its bound: a newer reply
-		// is more useful than a stale one, and an unknown record is never resent anyway.
+		// Over the bound, a message that was never attempted goes first: an `unknown` one
+		// is evidence the user may need to see and a `sending` one is still in flight, so
+		// neither is evicted the way a stale queued text can be.
 		while (list.length > OUTBOX_LIMIT) {
-			const at = list.findIndex((entry: any) => entry.state !== "sending");
+			const at = list.findIndex((entry: any) => entry.state === "queued" || entry.state === "failed");
 			if (at === -1) break;
 			list.splice(at, 1);
 		}
 		held.data.chats[chatKey] = list;
-		scheduleOutboxWrite(id);
+		// The record is durable before the caller may act on it.
+		await writeOutbox(id);
 	};
 	const outboxUpdate = async (id: any, chatKey: any, recordId: any, patch: any) => {
 		const held = await outboxOf(id);
@@ -164,7 +188,7 @@ export function install(rt: any) {
 		const record = list.find((entry: any) => entry.id === recordId);
 		if (record === undefined) return;
 		Object.assign(record, patch);
-		scheduleOutboxWrite(id);
+		await writeOutbox(id);
 	};
 	const outboxRemove = async (id: any, chatKey: any, recordId: any) => {
 		const held = await outboxOf(id);
@@ -174,7 +198,7 @@ export function install(rt: any) {
 		if (at === -1) return;
 		list.splice(at, 1);
 		if (list.length === 0) delete held.data.chats[chatKey];
-		scheduleOutboxWrite(id);
+		await writeOutbox(id);
 	};
 	ctx.effect(
 		() => () => {
@@ -396,9 +420,16 @@ export function install(rt: any) {
 
 	// A job waits in the in-memory queue and, written first, in the outbox: a crash
 	// between the two leaves a record that the next start resends, never a silent loss.
-	const enqueue = (conn: any, chatKey: any, job: any) => {
+	// Accepting a message therefore means its queued record is already on disk; a message
+	// whose record cannot be written is not accepted, because nothing would bring it back.
+	const enqueue = async (conn: any, chatKey: any, job: any): Promise<boolean> => {
 		const runner = runners.get(conn.id);
-		if (runner === undefined) return;
+		if (runner === undefined) return false;
+		// A host that does not own the team must not dispatch: the owner would send too.
+		if (rt.writerMode() === "readonly") {
+			rt.warn("ocean-crew: im send for %s refused: %s", conn.id, rt.readOnly());
+			return false;
+		}
 		const record = {
 			id: randomUUID(),
 			...(job.outboxId === undefined ? {} : { id: job.outboxId }),
@@ -418,16 +449,24 @@ export function install(rt: any) {
 			// Never drop the in-flight head: the successful send shifts its own job.
 			const at = queue.sending === queue.jobs[0] ? 1 : 0;
 			const [dropped] = queue.jobs.splice(at, 1);
-			if (dropped?.outboxId !== undefined) void outboxRemove(conn.id, chatKey, dropped.outboxId);
+			if (dropped?.outboxId !== undefined) await outboxRemove(conn.id, chatKey, dropped.outboxId).catch(() => {});
 			rt.warn("ocean-crew: im send queue for %s/%s is full; dropped the oldest message", conn.id, chatKey);
 		}
-		queue.jobs.push(job);
-		if (record.state === "queued" && job.restored !== true) {
-			void outboxAdd(conn.id, chatKey, record).catch((error) =>
-				rt.warn("ocean-crew: im outbox for %s not written: %s", conn.id, error),
-			);
+		if (job.restored !== true) {
+			try {
+				await outboxAdd(conn.id, chatKey, record);
+			} catch (error: any) {
+				rt.warn("ocean-crew: im message for %s not accepted: %s", conn.id, error);
+				setStatus(conn.id, {
+					state: "error",
+					error: `This message could not be queued for sending: ${rt.redactSecrets(String(error?.message ?? error)).slice(0, 200)}`,
+				});
+				return false;
+			}
 		}
-		if (queue.jobs.length === 1) void drain(conn, chatKey);
+		queue.jobs.push(job);
+		void drain(conn, chatKey);
+		return true;
 	};
 	// A platform send that never settles must not block this chat forever: the
 	// message is dropped as unknown after the timeout and the queue moves on.
@@ -464,7 +503,25 @@ export function install(rt: any) {
 		setStatus(conn.id, { referenceId: reference, error: message });
 		rt.warn("ocean-crew: im send for %s dropped (%s): %s", conn.id, reference, message);
 	};
-	const drain = async (conn: any, chatKey: any) => {
+	// One drain loop per chat. Enqueue cannot start a second one: with a durable write in
+	// front of the queue, two messages can be accepted while the first is still being
+	// persisted, and a "queue length is one" check would miss that case.
+	const drain = async (conn: any, chatKey: any): Promise<void> => {
+		const queue = runners.get(conn.id)?.queues.get(chatKey);
+		if (queue === undefined || queue.active === true) return;
+		queue.active = true;
+		try {
+			await drainLoop(conn, chatKey);
+		} finally {
+			queue.active = false;
+		}
+		// A message accepted while the loop was finishing still has to be sent, but a
+		// pending retry or a connection without a handle has its own wake-up.
+		if (queue.jobs.length > 0 && queue.retry === undefined && runners.get(conn.id)?.handle !== undefined) {
+			void drain(conn, chatKey);
+		}
+	};
+	const drainLoop = async (conn: any, chatKey: any) => {
 		const runner = runners.get(conn.id);
 		const queue = runner?.queues.get(chatKey);
 		// A reserved slot has no handle until connect() lands; start() re-kicks
@@ -474,15 +531,27 @@ export function install(rt: any) {
 			const job = queue.jobs[0];
 			queue.sending = job;
 			if (job.outboxId !== undefined) {
-				// Written before the attempt: a crash here leaves a record the next start
-				// reports as unknown rather than resending blindly.
-				void outboxUpdate(conn.id, chatKey, job.outboxId, { state: "sending" }).catch(() => {});
+				// Written before the attempt, and awaited: a crash after this point leaves a
+				// record the next start reports as unknown instead of resending blindly.
+				try {
+					await outboxUpdate(conn.id, chatKey, job.outboxId, { state: "sending" });
+				} catch (error: any) {
+					// The attempt cannot be recorded, so it must not start: sending anyway is
+					// how a message the platform accepted goes missing with no trace.
+					rt.warn("ocean-crew: im send for %s not attempted: %s", conn.id, error);
+					queue.retry = setTimeout(() => {
+						queue.retry = undefined;
+						void drain(conn, chatKey);
+					}, RETRY_MS);
+					queue.retry.unref?.();
+					return;
+				}
 			}
 			try {
 				const sent = await withSendTimeout(runner.handle.send(job.chat, job));
 				job.after?.(sent);
 				queue.jobs.shift();
-				if (job.outboxId !== undefined) void outboxRemove(conn.id, chatKey, job.outboxId).catch(() => {});
+				if (job.outboxId !== undefined) await outboxRemove(conn.id, chatKey, job.outboxId).catch(() => {});
 				if (statuses.get(conn.id)?.messageError === true) {
 					setStatus(conn.id, { state: "ready", error: undefined, referenceId: undefined, messageError: false });
 				}
@@ -491,7 +560,7 @@ export function install(rt: any) {
 				if (how === "retry") {
 					// The platform refused without accepting it: the record stays queued.
 					if (job.outboxId !== undefined)
-						void outboxUpdate(conn.id, chatKey, job.outboxId, { state: "queued" }).catch(() => {});
+						await outboxUpdate(conn.id, chatKey, job.outboxId, { state: "queued" }).catch(() => {});
 					const wait = Number(error?.retryAfter) > 0 ? error.retryAfter * 1000 : RETRY_MS;
 					queue.retry = setTimeout(() => {
 						void drain(conn, chatKey);
@@ -503,7 +572,7 @@ export function install(rt: any) {
 				// Nothing is resent automatically here: a permanent refusal and an unknown
 				// outcome both leave a record the user can see instead.
 				if (job.outboxId !== undefined)
-					void outboxUpdate(conn.id, chatKey, job.outboxId, {
+					await outboxUpdate(conn.id, chatKey, job.outboxId, {
 						state: how === "permanent" ? "failed" : "unknown",
 						error: rt.redactSecrets(String(error?.message ?? error)).slice(0, 300),
 					}).catch(() => {});
@@ -513,10 +582,10 @@ export function install(rt: any) {
 			}
 		}
 	};
-	const sendText = (conn: any, chat: any, body: any, buttons?: any, after?: any) =>
-		enqueue(conn, chat.key, { chat, text: body, buttons, after });
-	const sendTo = (conn: any, chatKey: any, chat: any, body: any, buttons?: any, after?: any, replyTo?: string) =>
-		enqueue(conn, chatKey, { chat, text: body, buttons, after, ...(replyTo ? { replyTo } : {}) });
+	const sendText = async (conn: any, chat: any, body: any, buttons?: any, after?: any) =>
+		await enqueue(conn, chat.key, { chat, text: body, buttons, after });
+	const sendTo = async (conn: any, chatKey: any, chat: any, body: any, buttons?: any, after?: any, replyTo?: string) =>
+		await enqueue(conn, chatKey, { chat, text: body, buttons, after, ...(replyTo ? { replyTo } : {}) });
 
 	// Status reactions mark the message that asked for the work while its turn runs
 	// and settle to the outcome when the turn ends (dsh-im's status-reaction
