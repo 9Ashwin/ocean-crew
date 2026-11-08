@@ -32,8 +32,8 @@ export function install(rt: Runtime): void {
 		if (busy(rt))
 			throw fail("A turn is still running. Stop it, or wait for it to finish, and reset again.", "bot/busy");
 		const home = rt.home;
-		const name = join("backups", `reset-${stamp()}`);
-		const path = join(home, name);
+		const name = `backups/reset-${stamp()}`;
+		const path = join(home, ...name.split("/"));
 		mkdirSync(path, { recursive: true });
 		const moved: string[] = [];
 		const take = (entry: string): void => {

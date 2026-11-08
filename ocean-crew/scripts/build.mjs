@@ -33,4 +33,3 @@ if (compiled.status !== 0) process.exit(compiled.status ?? 1);
 
 const { bundleClient } = await import(pathToFileURL(join(PLUGIN, "scripts", "build-client.mjs")).href);
 writeFileSync(join(PLUGIN, "client.js"), await bundleClient());
-console.log("built dist/ and client.js");
