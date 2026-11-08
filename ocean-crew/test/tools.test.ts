@@ -172,27 +172,32 @@ function start(options: StartOptions = {}) {
 			},
 		};
 		agent.listeners = [];
-		(agent as any).ctx = {
-			tools: {
-				register(tool: FakeTool): () => void {
-					const entry = tool;
-					agent.registered.push(entry);
-					return () => {
-						const at = agent.registered.indexOf(entry);
-						if (at !== -1) agent.registered.splice(at, 1);
-					};
-				},
-				restrict(filter: { deny?: string[] }): () => void {
-					const entry = { deny: [...(filter.deny ?? [])] };
-					if (restrictThrows !== undefined && entry.deny.includes(restrictThrows))
-						throw new Error(`"${restrictThrows}" is registered in this scope`);
-					agent.restricted.push(entry);
-					return () => {
-						const at = agent.restricted.indexOf(entry);
-						if (at !== -1) agent.restricted.splice(at, 1);
-					};
-				},
+		// The real service methods read `this`; a detached reference would throw there, so
+		// the fake checks that every call is made on the service object itself.
+		const surface = {
+			register(this: any, tool: FakeTool): () => void {
+				assert.equal(this, surface, "tools.register is called on the service");
+				const entry = tool;
+				agent.registered.push(entry);
+				return () => {
+					const at = agent.registered.indexOf(entry);
+					if (at !== -1) agent.registered.splice(at, 1);
+				};
 			},
+			restrict(this: any, filter: { deny?: string[] }): () => void {
+				assert.equal(this, surface, "tools.restrict is called on the service");
+				const entry = { deny: [...(filter.deny ?? [])] };
+				if (restrictThrows !== undefined && entry.deny.includes(restrictThrows))
+					throw new Error(`"${restrictThrows}" is registered in this scope`);
+				agent.restricted.push(entry);
+				return () => {
+					const at = agent.restricted.indexOf(entry);
+					if (at !== -1) agent.restricted.splice(at, 1);
+				};
+			},
+		};
+		(agent as any).ctx = {
+			tools: surface,
 			on(event: string, listener: (...args: any[]) => any): () => void {
 				const record = { event, listener, disposed: false };
 				agent.listeners.push(record);

@@ -1401,8 +1401,8 @@ export function install(rt: Runtime): void {
 			held = undefined;
 		}
 		if (!wanted || held?.tools === true) return;
-		const register = agent.ctx?.tools?.register;
-		if (typeof register !== "function") {
+		const surface = agent.ctx?.tools;
+		if (typeof surface?.register !== "function") {
 			if (!registerless.has(agent)) {
 				registerless.add(agent);
 				rt.warn("ocean-crew: %s needs the team tools but its Agent cannot register them yet", id);
@@ -1415,7 +1415,7 @@ export function install(rt: Runtime): void {
 		for (const def of rt.teamTools) {
 			if (relayOnly && def.name !== "group_relay") continue;
 			try {
-				const dispose = register(def);
+				const dispose = surface.register(def);
 				if (typeof dispose === "function") {
 					disposers.push(dispose);
 					held ??= holdOf(relayOnly);
@@ -1474,10 +1474,10 @@ export function install(rt: Runtime): void {
 		if (rt.teamTools.some((tool) => tool.name === def.name)) return;
 		rt.teamTools.push(def);
 		for (const held of scoped.values()) {
-			const register = held.agent?.ctx?.tools?.register;
-			if (held.relay || typeof register !== "function") continue;
+			const surface = held.agent?.ctx?.tools;
+			if (held.relay || typeof surface?.register !== "function") continue;
 			try {
-				const dispose = register(def);
+				const dispose = surface.register(def);
 				if (typeof dispose === "function") {
 					held.disposers.push(dispose);
 					held.toolLifts ??= new Map();
@@ -1503,8 +1503,8 @@ export function install(rt: Runtime): void {
 	// Per-Bot connector switches (state.connectors[id].offFor): deny the served tools
 	// matching each off connector's prefix. Re-applied on tools/change.
 	const maskConnectorTools = (agent: AgentLike, held: Held): void => {
-		const restrict = agent.ctx?.tools?.restrict;
-		if (typeof restrict !== "function" || typeof tools.schemas !== "function") return;
+		const surface = agent.ctx?.tools;
+		if (typeof surface?.restrict !== "function" || typeof tools.schemas !== "function") return;
 		const botId = rt.selfOf(agent.session?.id);
 		const prefixes: string[] = rt.connectorOffFor?.(botId) ?? [];
 		const served = new Set(tools.schemas(agent).map((schema) => schema.name));
@@ -1522,7 +1522,7 @@ export function install(rt: Runtime): void {
 		held.connectorDenied = new Set(deny);
 		for (const name of deny) {
 			try {
-				const lift = restrict({ deny: [name] });
+				const lift = surface.restrict({ deny: [name] });
 				if (typeof lift === "function") held.connectorLifts.push(lift as () => void);
 			} catch {
 				// a scoped name cannot be restricted; connectors are global
@@ -1542,8 +1542,8 @@ export function install(rt: Runtime): void {
 
 	// restrict() throws on a name this profile does not serve.
 	const maskHiddenTools = (agent: AgentLike, held: Held, served: Set<string>): void => {
-		const restrict = agent.ctx?.tools?.restrict;
-		if (typeof restrict !== "function") return;
+		const surface = agent.ctx?.tools;
+		if (typeof surface?.restrict !== "function") return;
 		const groups = HIDDEN_TOOL_GROUPS.map((group) => group.filter((name) => served.has(name))).filter(
 			(group) => group.length > 0,
 		);
@@ -1553,7 +1553,7 @@ export function install(rt: Runtime): void {
 		held.restricted = true;
 		for (const deny of groups) {
 			try {
-				const lift = restrict({ deny: [...deny] });
+				const lift = surface.restrict({ deny: [...deny] });
 				if (typeof lift === "function") held.disposers.push(lift as () => void);
 			} catch {
 				// A name in the Agent's own scope fails the whole list (restrict() masks
@@ -1561,7 +1561,7 @@ export function install(rt: Runtime): void {
 				// by the assembly filter and the guard.
 				for (const name of deny) {
 					try {
-						const lift = restrict({ deny: [name] });
+						const lift = surface.restrict({ deny: [name] });
 						if (typeof lift === "function") held.disposers.push(lift as () => void);
 					} catch {
 						// Expected for names in the Agent's own scope.
