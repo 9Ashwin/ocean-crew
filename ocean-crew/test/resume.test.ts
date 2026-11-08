@@ -83,8 +83,10 @@ const freshHome = (t: { after(fn: () => Promise<void>): void }, seed?: any): str
 	});
 	return home;
 };
+// Waiting on an async file write, so the budget is generous: a slow CI filesystem
+// (Windows in particular) must not turn a timing race into a failure.
 const settle = async (check: () => boolean, what = "condition"): Promise<void> => {
-	for (let count = 0; count < 500 && !check(); count += 1) await delay(2);
+	for (let count = 0; count < 5_000 && !check(); count += 1) await delay(2);
 	assert.ok(check(), `${what} not reached`);
 };
 
