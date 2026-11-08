@@ -138,6 +138,7 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 
 	"goal-draft",
 	"goal-control",
+	"room-budget",
 
 	"secret-set",
 	"secret-allow",
@@ -995,6 +996,17 @@ export function install(rt: Runtime): void {
 			await load();
 			const result = await callMember("goal-draft", "goalDraft", String(body.roomId ?? ""), body.text);
 			return result?.error !== undefined ? fail(result.error, result.code ?? "bot/refused") : ok(view());
+		},
+		async "room-budget"(body) {
+			const roomId = String(body.roomId ?? "");
+			const changing =
+				body.clear === true ||
+				(body.members !== undefined && body.members !== null) ||
+				(body.summary !== undefined && body.summary !== null);
+			if (changing) await callMember("room-budget", "setGroupBudget", roomId, body);
+			const view = await callMember("room-budget", "groupBudgetView", roomId);
+			if (view === undefined) return fail("No such group chat", "bot/not-found");
+			return ok(view);
 		},
 		async "goal-control"(body) {
 			await load();

@@ -671,4 +671,41 @@ export function installCalls(host: GroupHost): void {
 		const saved = rt.roomOf(roomId);
 		return saved === undefined ? undefined : host.budgetOf(asRoom(saved));
 	};
+
+	// What the group may spend before its calls are refused. A limit is a whole number of
+	// turns or tokens; an explicit null clears it, and `clear` removes both sides at once.
+	// The user sets this from the group's settings, so the shape is checked here.
+	rt.setGroupBudget = async (roomId: string, patch: Record<string, unknown>): Promise<GroupBudgetView | undefined> => {
+		const saved = rt.roomOf(roomId);
+		if (saved === undefined) return undefined;
+		const room = asRoom(saved);
+		room.budget ??= {};
+		const budget = room.budget;
+		const whole = (value: unknown, label: string): number | undefined => {
+			if (value === null) return undefined;
+			const number = Number(value);
+			if (!Number.isInteger(number) || number <= 0) {
+				throw Object.assign(new Error(`${label} must be a whole number above zero`), { code: "bot/invalid" });
+			}
+			return number;
+		};
+		const apply = (which: "members" | "summary", given: Record<string, unknown> | undefined): void => {
+			if (given === undefined || given === null || typeof given !== "object") return;
+			budget[which] ??= { spent: 0 };
+			const side = budget[which];
+			if ("limit" in given) side.limit = whole(given.limit, "The turn limit");
+			if ("tokenLimit" in given) side.tokenLimit = whole(given.tokenLimit, "The token limit");
+		};
+		if (patch.clear === true) {
+			budget.members = undefined;
+			budget.summary = undefined;
+		}
+		apply("members", patch.members as Record<string, unknown> | undefined);
+		apply("summary", patch.summary as Record<string, unknown> | undefined);
+		// A fresh limit says nothing about the notices already posted: the next overrun is
+		// a new event for the user.
+		if (budget.noticed !== undefined) budget.noticed = {};
+		await rt.save();
+		return host.budgetOf(room);
+	};
 }

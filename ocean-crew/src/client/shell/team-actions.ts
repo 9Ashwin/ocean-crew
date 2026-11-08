@@ -243,6 +243,9 @@ export function teamActions({
 		setMain: (id: string, main = true, options: Record<string, unknown> = {}) =>
 			after(call("set-main", { id, main, ...options })),
 		updateRoom: (id: string, patch: Record<string, unknown>) => after(call("update-room", { id, ...patch })),
+		// The group's spending budget: reading needs no patch, setting sends one side's
+		// limits. The answer is the budget view, so the form can show it without a reload.
+		roomBudget: (roomId: string, patch: Record<string, unknown> = {}) => call("room-budget", { roomId, ...patch }),
 		send: (sessionId: string, text: string) => after(call("send", { sessionId: partFor(sessionId), text })),
 		answerQuestion: (sessionId: string, questionId: string, answer: unknown) =>
 			after(call("answer-question", { sessionId: partFor(sessionId), questionId, answer })),

@@ -187,6 +187,7 @@ const PROBES: Record<string, unknown> = {
 	"approval-answer": { id: "approval-1", choice: "allow" },
 	"goal-draft": { roomId: "r1", text: "Ship the release" },
 	"goal-control": { roomId: "r1", action: "pause" },
+	"room-budget": { roomId: "r1" },
 	"view-reply": { sessionId: "sess-1", viewId: "v1", action: "submit", values: { answer: "B" } },
 	"btw-delete": { sessionId: "sess-1", cardId: "card-1" },
 	"side-new": { sessionId: "chief" },
@@ -244,6 +245,17 @@ function moduleMembers(calls: Array<[string, ...unknown[]]>): Record<string, Mem
 		goalControl: async (roomId: string, body: unknown) => {
 			rec("goalControl")(roomId, body);
 			return { room: roomId, body };
+		},
+		groupBudgetView: async (roomId: string) => ({
+			available: true,
+			members: { spent: 0 },
+			summary: { spent: 0 },
+			idle: { streak: 0, paused: false },
+			roomId,
+		}),
+		setGroupBudget: async (roomId: string, body: unknown) => {
+			rec("setGroupBudget")(roomId, body);
+			return { available: true, members: { spent: 0 }, summary: { spent: 0 }, idle: { streak: 0, paused: false } };
 		},
 		secretEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),
 		connectorEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),

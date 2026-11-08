@@ -13,6 +13,32 @@ export const ROOM_MODES: ReadonlyArray<readonly [string, string, string]> = [
 	["everyone", "Everyone", "Every member answers in turn, admin first."],
 ];
 
+// A limit is typed as text: empty means no limit, a whole number above zero is one, and
+// anything else is refused so a typo does not silently remove the limit.
+export function limitFromInput(text: string): number | null | undefined {
+	const trimmed = text.trim();
+	if (trimmed === "") return null;
+	if (!/^[0-9]+$/.test(trimmed)) return undefined;
+	const value = Number(trimmed);
+	return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+export function limitText(value: unknown): string {
+	return typeof value === "number" && value > 0 ? String(value) : "";
+}
+
+// What one side of the budget reads under its input: how much is used, and of what.
+export function budgetLine(side: any): string {
+	const used = Number(side?.spent ?? 0);
+	const tokens = Number(side?.tokens ?? 0);
+	const turns = t("{used} turns", { used });
+	return side?.limit === undefined
+		? tokens > 0
+			? `${turns} · ${t("about {count} tokens", { count: tokens })}`
+			: turns
+		: `${turns} ${t("of {limit}", { limit: side.limit })}${tokens > 0 ? ` · ${t("about {count} tokens", { count: tokens })}` : ""}`;
+}
+
 // Without an admin the host answers as everyone, whatever the stored mode says.
 export const shownMode = (room: any, roster: any): string => (roster.byId[room.admin] ? room.mode : "everyone");
 
@@ -50,6 +76,73 @@ function GroupPermission({ room, catalog, update }: any) {
 					}),
 				)
 			: null,
+	);
+}
+
+// Limits, in turns, for the two sides of a group's spending. They are kept apart on
+// purpose: member work and the admin's summaries are different costs.
+function BudgetCard({ room, actions, run }: any) {
+	const [view, setView] = useState<any>(null);
+	const [draft, setDraft] = useState<{ members: string; summary: string }>({ members: "", summary: "" });
+	const [problem, setProblem] = useState<string | null>(null);
+	useEffect(() => {
+		let live = true;
+		void Promise.resolve(actions.roomBudget(room.id))
+			.then((next: any) => {
+				if (!live || next === undefined) return;
+				setView(next);
+				setDraft({ members: limitText(next.members?.limit), summary: limitText(next.summary?.limit) });
+			})
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [room.id]);
+	const commit = async (which: "members" | "summary", text: string): Promise<void> => {
+		const limit = limitFromInput(text);
+		if (limit === undefined) {
+			setProblem(t("A limit is a whole number above zero, or empty for no limit."));
+			return;
+		}
+		setProblem(null);
+		const next = await run(actions.roomBudget(room.id, { [which]: { limit } }));
+		if (next === undefined) return;
+		setView(next);
+		setDraft({ members: limitText(next.members?.limit), summary: limitText(next.summary?.limit) });
+	};
+	if (view === null) return null;
+	const field = (which: "members" | "summary", label: string, side: any) =>
+		h(
+			"div",
+			{ className: "bt-set-row bt-bs-row" },
+			h("label", { className: "bt-bs-label" }, label, h("span", { className: "bt-bs-hint" }, budgetLine(side))),
+			h("input", {
+				className: "bt-input bt-bs-input",
+				type: "text",
+				inputMode: "numeric",
+				placeholder: t("No limit"),
+				value: draft[which],
+				"aria-label": label,
+				onChange: (event: any) => setDraft({ ...draft, [which]: event.target.value }),
+				onBlur: () => void commit(which, draft[which]),
+				onKeyDown: (event: any) => {
+					if (event.key === "Enter") void commit(which, draft[which]);
+				},
+			}),
+		);
+	return h(
+		Card,
+		{ title: t("Spending limits") },
+		problem !== null ? h("div", { className: "bt-bs-hint" }, problem) : null,
+		field("members", t("Member work"), view.members),
+		field("summary", t("Admin summaries"), view.summary),
+		h(
+			"div",
+			{ className: "bt-bs-hint" },
+			view.available
+				? t("Tokens are counted from DSH's token meter; turns are counted here.")
+				: t("DSH's token meter is not readable now, so only turns are counted."),
+		),
 	);
 }
 
@@ -174,6 +267,7 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }: any
 			),
 		),
 		h(GroupPermission, { room, catalog: roster.permissions, update }),
+		h(BudgetCard, { room, actions, run }),
 		h(
 			Card,
 			{ title: t("Members · {count}", { count: members.length }) },

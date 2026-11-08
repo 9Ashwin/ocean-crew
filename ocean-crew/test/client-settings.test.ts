@@ -23,7 +23,7 @@ const { outputFiles } = await build({
 		contents:
 			"export { folderName } from './src/client/pages/folder-menu.ts';" +
 			"export { presetDanger, presetName } from './src/client/pages/permission-picker.ts';" +
-			"export { ROOM_MODES, shownMode, roomSubtitle } from './src/client/pages/group-settings.ts';" +
+			"export { ROOM_MODES, shownMode, roomSubtitle, limitFromInput, limitText, budgetLine } from './src/client/pages/group-settings.ts';" +
 			"export { PermissionPicker } from './src/client/pages/permission-picker.ts';" +
 			"export { BotSettingsForm } from './src/client/pages/bot-settings.ts';",
 		resolveDir: PLUGIN,
@@ -421,4 +421,23 @@ test("a private Bot can always turn privacy off, and cannot become Main or be du
 			JSON.stringify(node).includes("Duplicate"),
 	);
 	assert.equal(duplicate, undefined);
+});
+
+// A budget limit is typed as text: empty clears it, a whole number sets it, a typo is
+// refused instead of silently removing the limit.
+test("a budget limit reads as text, and a typo is refused", () => {
+	const { limitFromInput, limitText, budgetLine } = helpers();
+	assert.equal(limitFromInput(""), null);
+	assert.equal(limitFromInput("  "), null);
+	assert.equal(limitFromInput("12"), 12);
+	assert.equal(limitFromInput("0"), undefined);
+	assert.equal(limitFromInput("-3"), undefined);
+	assert.equal(limitFromInput("1.5"), undefined);
+	assert.equal(limitFromInput("abc"), undefined);
+	assert.equal(limitText(12), "12");
+	assert.equal(limitText(undefined), "");
+	// The line under the input says what is spent, and of what when a limit is set.
+	assert.match(budgetLine({ spent: 3 }), /3/);
+	assert.match(budgetLine({ spent: 3, limit: 5 }), /3.*5/);
+	assert.match(budgetLine({ spent: 1, limit: 2, tokens: 40 }), /40/);
 });

@@ -628,3 +628,27 @@ test("a token budget is enforced from DSH usage and stops the next member", asyn
 	assert.match(String(notice.text), /member work budget is used up/);
 	await host.close();
 });
+
+// The user sets what a group may spend from its settings; the shape is checked there.
+test("group budget limits can be set, read back and cleared", async (t) => {
+	const host = await start(t);
+	const set = await host.rt.setGroupBudget("r1", {
+		members: { limit: 12, tokenLimit: 50_000 },
+		summary: { limit: 3 },
+	});
+	assert.equal(set.members.limit, 12);
+	assert.equal(set.members.tokenLimit, 50_000);
+	assert.equal(set.members.spent, 0);
+	assert.equal(set.summary.limit, 3);
+	// A second update keeps what was not given, and an explicit null clears one side.
+	const next = await host.rt.setGroupBudget("r1", { members: { tokenLimit: null } });
+	assert.equal(next.members.limit, 12);
+	assert.equal(next.members.tokenLimit, undefined);
+	// A limit that is not a whole number above zero is refused, not silently dropped.
+	await assert.rejects(async () => await host.rt.setGroupBudget("r1", { members: { limit: 0 } }), /whole number/);
+	await assert.rejects(async () => await host.rt.setGroupBudget("r1", { summary: { limit: 1.5 } }), /whole number/);
+	const cleared = await host.rt.setGroupBudget("r1", { clear: true });
+	assert.equal(cleared.members.limit, undefined);
+	assert.equal(cleared.summary.limit, undefined);
+	await host.close();
+});

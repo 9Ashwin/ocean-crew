@@ -6,6 +6,18 @@
 export const NAMESPACE = "ocean-crew";
 
 const ZH: Record<string, string> = {
+	// Group spending limits
+	"Spending limits": "花费上限",
+	"Member work": "成员工作",
+	"Admin summaries": "管理员汇总",
+	"No limit": "不限",
+	"A limit is a whole number above zero, or empty for no limit.": "上限要是大于零的整数；留空表示不限。",
+	"{used} turns": "已用 {used} 轮",
+	"of {limit}": "共 {limit}",
+	"about {count} tokens": "约 {count} tokens",
+	"Tokens are counted from DSH's token meter; turns are counted here.":
+		"token 数来自 DSH 的 token-meter，轮数由这里统计。",
+	"DSH's token meter is not readable now, so only turns are counted.": "当前读不到 DSH 的 token-meter，只统计轮数。",
 	// Memory review outcome
 	"The last review could not be read and is waiting to be fixed ({tries} tries).":
 		"上次回顾读不懂，正在等待修复（已尝试 {tries} 次）。",
