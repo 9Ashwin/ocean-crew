@@ -20,6 +20,12 @@
 - **端点是封闭集合。** `handle()` 对 `endpoint` 做分支：已知名字走它自己的分支，其余一律回答 `bot/not-found`。增加、重命名或删除端点都是客户端可见的改动。
 - **没有团队锁的 host 只回答 `READS`。** `READS`（在 `channel.ts` 里）列出第二个 dsh 仍可提供的端点——`state`、各个读取端点、诊断，以及更新和审批回答。其他端点都以 `bot/read-only` 失败，拒绝消息里会点名另一个 host。若被破坏：两个 host 都写团队文件，互相撤销对方的改动。
 - **错误码保留 `bot/` 前缀。** 抛出的错误若 `code` 以 `bot/` 开头就保留；`TypeError`、`ReferenceError`、`RangeError`、`SyntaxError` 或 `E*` 系统错误码变成 `bot/internal`（连同调用栈记入日志）；其余变成 `bot/refused`。在用的错误码包括 `bot/invalid`、`bot/not-found`、`bot/stale`、`bot/read-only`、`bot/forbidden`、`bot/unavailable`、`bot/busy`、`bot/missing`、`bot/internal`、`bot/refused` 和 `bot/error`。必须保持：已有错误码的含义不变。若被破坏：客户端会把用户的拒绝记成崩溃，或者把崩溃显示成拒绝。
+- **`room-budget` 读写一个群的花费上限。** 请求带 `{ roomId }` 时只返回视图 `{ available, scope?, members, summary, idle }`；
+  带 `members`/`summary`（各 `{ limit?, tokenLimit? }`）时先写再返回同一视图。上限必须是大于零的整数，
+  显式 `null` 清空该侧，`clear: true` 清空两侧；非法值返回 `bot/invalid`，不静默取消上限。
+  `members` 与 `summary` 分开计数：成员工作与管理员汇总的预算互不挪用；`idle` 是防死循环的计数，不是预算。
+  若被破坏：一个输入错误会静默变成「不限」，或两侧预算混用导致汇总被成员工作挤掉。
+
 - **`state` 是名册回答。** 它带有 `revision`、团队视图和 live 字段；配合上一次的 `revision`、`modelsKey` 和 `liveKey`，它可以回答 `{ revision, unchanged: true, liveKey }`，而 live 字段按各自的序列化缓存，所以没变化的回答就是一个小对象。必须保持：这三个键。若被破坏：打开着的窗口会停止更新，直到重新加载。
 
 ## IM 适配器
