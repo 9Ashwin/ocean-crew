@@ -130,6 +130,14 @@ else {
 for (const name of ['README.md', 'CONTRIBUTING.md', 'SECURITY_MODEL.md', 'CHANGELOG.md', 'AGENTS.md', '.gitignore', 'THIRD_PARTY_NOTICES.md']) {
   if (!files.includes(name)) add(MUST, 'root-file', name, 0, 'missing at the root')
 }
+// A documentation file that lost its body (an editor/script truncation) must not ship.
+for (const name of ['README.md', 'ocean-crew/README.md', 'AGENTS.md', 'CHANGELOG.md']) {
+  try {
+    if (statSync(join(root, name)).size < 500) add(MUST, 'empty-doc', name, 0, 'less than 500 bytes')
+  } catch {
+    // A missing file is reported by its own rule.
+  }
+}
 
 report()
 
