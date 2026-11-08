@@ -1,0 +1,33 @@
+{
+  "name": "ocean-crew-repo",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "cd ocean-crew && npm run build",
+    "test": "cd ocean-crew && npm test",
+    "lint": "biome check ocean-crew/src ocean-crew/test",
+    "harness": "npm install --prefix dev/harness --no-package-lock --no-fund --no-audit",
+    "check:types": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
+    "check:biome": "node node_modules/@biomejs/biome/bin/biome check ocean-crew/src ocean-crew/test",
+    "check:client": "cd ocean-crew && node scripts/build-client.mjs --check",
+    "check:build": "node ocean-crew/dev/check-bundle.mjs",
+    "check": "npm run check:types && npm run check:biome && npm run check:test && npm run build && npm run check:client && npm run check:build && npm run lint",
+    "dev:install": "cd ocean-crew && node dev/install-local.mjs",
+    "check:test": "cd ocean-crew && node --import ./test/harness-resolve.mjs --test --test-timeout=120000 \"test/*.test.ts\""
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.5",
+    "typescript": "5.9.3",
+    "esbuild": "0.28.2",
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "deep-view": "0.1.2",
+    "imapflow": "2.9.1",
+    "mailparser": "3.12.4",
+    "nodemailer": "10.2.1",
+    "playwright-core": "1.65.0",
+    "qrcode-generator": "2.0.4"
+  }
+}

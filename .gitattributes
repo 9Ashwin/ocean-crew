@@ -1,0 +1,7 @@
+# Shell scripts need LF; CRLF breaks them.
+*.sh text eol=lf
+
+# TypeScript sources are formatted with LF; a CRLF checkout fails the Biome check
+# on Windows runners.
+*.ts text eol=lf
+*.mts text eol=lf

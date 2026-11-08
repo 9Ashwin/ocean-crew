@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "resolveJsonModule": true,
+    "typeRoots": ["./node_modules/@types"],
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/dsh-llm": ["./dev/harness/node_modules/@deepseek-ai/dsh-llm/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-scope": ["./dev/harness/node_modules/@deepseek-ai/dsh-scope/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-tools": ["./dev/harness/node_modules/@deepseek-ai/dsh-tools/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-web": ["./dev/harness/node_modules/@deepseek-ai/dsh-web/lib/types/index.d.ts"],
+      "@larksuiteoapi/node-sdk": ["./node_modules/@larksuiteoapi/node-sdk/types/index.d.ts"]
+    }
+  }
+}

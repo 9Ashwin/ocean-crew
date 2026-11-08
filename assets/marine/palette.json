@@ -1,0 +1,94 @@
+[
+  {
+    "id": "deepseek",
+    "label": "深海蓝",
+    "light": "#4D6BFE",
+    "dark": "#6A84FF"
+  },
+  {
+    "id": "black",
+    "label": "炭黑",
+    "light": "#25262B",
+    "dark": "#65728A"
+  },
+  {
+    "id": "brown",
+    "label": "珊瑚棕",
+    "light": "#9A6B44",
+    "dark": "#B78356"
+  },
+  {
+    "id": "red",
+    "label": "珊瑚红",
+    "light": "#FF3E51",
+    "dark": "#FF6474"
+  },
+  {
+    "id": "orange",
+    "label": "橘橙",
+    "light": "#FF6B1A",
+    "dark": "#FF8A47"
+  },
+  {
+    "id": "yellow",
+    "label": "琥珀",
+    "light": "#FFB020",
+    "dark": "#F9B649"
+  },
+  {
+    "id": "green",
+    "label": "海藻绿",
+    "light": "#10B981",
+    "dark": "#34D399"
+  },
+  {
+    "id": "cyan",
+    "label": "青蓝",
+    "light": "#06B6D4",
+    "dark": "#22D3EE"
+  },
+  {
+    "id": "blue",
+    "label": "晴空蓝",
+    "light": "#2563EB",
+    "dark": "#60A5FA"
+  },
+  {
+    "id": "violet",
+    "label": "紫罗兰",
+    "light": "#8B5CF6",
+    "dark": "#A78BFA"
+  },
+  {
+    "id": "magenta",
+    "label": "莓果粉",
+    "light": "#F43F85",
+    "dark": "#F472B6"
+  },
+  {
+    "id": "gray",
+    "label": "岩灰",
+    "light": "#8A8F98",
+    "dark": "#A9AFB9"
+  },
+  {
+    "id": "aurora",
+    "label": "极光",
+    "light": "#00B8D4",
+    "dark": "#2EE6E0",
+    "stops": [
+      [
+        0,
+        "#A4FFB0"
+      ],
+      [
+        0.42,
+        "#00F0E4"
+      ],
+      [
+        1,
+        "#2E9EF7"
+      ]
+    ]
+  }
+]

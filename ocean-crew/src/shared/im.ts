@@ -1,0 +1,93 @@
+// An IM adapter speaks one platform and nothing else: pairing, routing, cards,
+// queues and retries belong to the host. Two private-chat platforms are kept.
+
+import type { ImPlatformId } from "./state.ts";
+
+export interface ImChat {
+	key: string;
+	kind: "direct" | "group";
+	title: string;
+}
+
+export interface ImSender {
+	id: string;
+	name: string;
+}
+
+export interface ImMessage {
+	chat: ImChat;
+	sender: ImSender;
+	text: string;
+	images?: { mediaType: string; data: string }[];
+	files?: { name: string; data: Uint8Array }[];
+	mentioned?: boolean;
+	messageId?: string;
+}
+
+export interface ImAction {
+	chat: ImChat;
+	sender: ImSender;
+	data: string;
+	messageId?: string;
+}
+
+export type ImStatusState = "connecting" | "ready" | "error";
+
+export interface ImStatus {
+	state: ImStatusState;
+	error?: string;
+	account?: { id: string; name: string };
+}
+
+export interface ImHandlers {
+	onMessage(message: ImMessage): void;
+	onAction(action: ImAction): void;
+	onStatus(status: ImStatus): void;
+}
+
+export interface ImButton {
+	label: string;
+	data: string;
+}
+
+export interface ImSendResult {
+	messageId?: string;
+}
+
+export interface ImAdapter {
+	check(fields: Record<string, string>, env: ImEnv): Promise<{ account: { id: string; name: string } }>;
+	connect(fields: Record<string, string>, env: ImEnv, handlers: ImHandlers): ImHandle;
+	send(chat: ImChat, message: { text: string; buttons?: ImButton[] }): Promise<ImSendResult>;
+	edit?(chat: ImChat, messageId: string, message: { text: string; buttons?: ImButton[] }): Promise<void>;
+}
+
+export interface ImHandle {
+	stop(): void;
+}
+
+// The adapter's only outside channels. Shapes stay minimal so the types do not
+// depend on a DOM lib: adapters run in the host's Node process.
+export interface ImFetchResponse {
+	ok: boolean;
+	status: number;
+	text(): Promise<string>;
+}
+
+export interface ImWebSocket {
+	send(data: string): void;
+	close(code?: number, reason?: string): void;
+	addEventListener(event: string, listener: (event: unknown) => void): void;
+}
+
+export interface ImEnv {
+	fetch(
+		input: string,
+		init?: { method?: string; headers?: Record<string, string>; body?: string },
+	): Promise<ImFetchResponse>;
+	WebSocket: new (url: string) => ImWebSocket;
+	config: Record<string, unknown>;
+	log: { warn(message: string, ...args: unknown[]): void };
+	runtime: { get(): unknown; set(patch: unknown): void };
+}
+
+export type PlatformAdapters = Partial<Record<ImPlatformId, ImAdapter>>;

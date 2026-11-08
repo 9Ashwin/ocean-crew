@@ -1,0 +1,83 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Node ${{ matrix.node }} · DSH ${{ matrix.dsh }}
+    runs-on: ${{ matrix.os }}
+    # The suite takes a few minutes; a test that never settles used to hold the job for the
+    # runner's six-hour limit.
+    timeout-minutes: 25
+    defaults:
+      run:
+        # Multi-line steps use bash on every runner, so `$RUNNER_TEMP` and `rm` mean
+        # the same on Windows as elsewhere.
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: 24, dsh: 0.2.2-rc.1 }
+          - { os: windows-latest, node: 24, dsh: 0.2.2-rc.1 }
+          - { os: ubuntu-latest, node: 22, dsh: 0.2.2-rc.1 }
+          - { os: ubuntu-latest, node: 24, dsh: 0.2.0-rc.2 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --no-fund --no-audit
+      - name: Install DSH ${{ matrix.dsh }}
+        # The testkit pins the DSH packages it was built with; at another version it would
+        # bring a second, mismatched set.
+        run: npm run harness -- --no-save "@deepseek-ai/dsh@${{ matrix.dsh }}" "@deepseek-ai/dsh-agent-loop-testkit@${{ matrix.dsh }}"
+      - run: npm run check:types
+      - run: npm run check:biome
+      - run: npm run check:test
+      - name: Build the plugin (dist/ and client.js)
+        run: npm run build
+      - name: Check the shipped build against the sources
+        run: node ocean-crew/dev/check-bundle.mjs
+      - name: Check the package file list
+        # Keep the manifest in the workspace: a `$RUNNER_TEMP` path is not portable
+        # between bash and the Windows command shell.
+        run: |
+          cd ocean-crew
+          npm pack --dry-run --json > pack-files.json
+          node -e "const fs = require('node:fs'); const [pack] = JSON.parse(fs.readFileSync('pack-files.json', 'utf8')); const files = new Set(pack.files.map((file) => file.path)); const want = ['package.json', 'client.js', 'cordis.patch.yml', 'dist/index.js', 'dist/web-search.js', 'THIRD_PARTY_NOTICES.md', 'LICENSE']; for (const file of want) if (!files.has(file)) throw new Error('the package is missing ' + file); console.log('the package ships ' + files.size + ' files');"
+          rm -f pack-files.json
+
+  scan:
+    name: Leak scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Scan exactly the tracked files, as they would be published.
+      - run: mkdir -p "$RUNNER_TEMP/tree" && git archive HEAD | tar -x -C "$RUNNER_TEMP/tree"
+      - run: node scripts/scan.mjs "$RUNNER_TEMP/tree"
+        env:
+          SCAN_EXTRA_PATTERNS: ${{ secrets.SCAN_EXTRA_PATTERNS }}
+
+  # The one check that branch rules require. A job whose needs failed is skipped,
+  # and GitHub counts a skipped required check as passed, so this job always runs
+  # and fails unless the test matrix and the leak scan passed.
+  result:
+    name: Test result
+    needs: [test, scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.test.result }}" = success && test "${{ needs.scan.result }}" = success

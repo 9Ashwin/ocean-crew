@@ -1,0 +1,81 @@
+{
+  "name": "ocean-crew",
+  "version": "0.4.0",
+  "description": "Ocean Crew: a team of long-lived Bots for DeepSeek Harness, with Main Bots, Bot-to-Bot messages and group chats",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "deepseek",
+    "bot",
+    "multi-agent",
+    "agents"
+  ],
+  "homepage": "https://github.com/9Ashwin/ocean-crew#readme",
+  "bugs": {
+    "url": "https://github.com/9Ashwin/ocean-crew/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/9Ashwin/ocean-crew.git",
+    "directory": "ocean-crew"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    },
+    "./web-search": "./dist/web-search.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "client.js",
+    "cordis.patch.yml",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:client": "node scripts/build-client.mjs",
+    "check": "node ../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
+    "check:client": "node scripts/build-client.mjs --check",
+    "test": "node --import ./test/harness-resolve.mjs --test --test-timeout=120000 \"test/*.test.ts\"",
+    "lint": "biome check src test",
+    "prepare": "node scripts/build.mjs --install"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-web": "*"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "deep-view": "0.1.2",
+    "imapflow": "2.9.1",
+    "mailparser": "3.12.4",
+    "nodemailer": "10.2.1",
+    "playwright-core": "1.65.0",
+    "qrcode-generator": "2.0.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.5",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

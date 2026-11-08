@@ -1,0 +1,1610 @@
+// Turns: what each Bot Session is doing now (for its mascot), which turns another Bot
+// triggered, the waiters and inboxes of group rounds, and routing a finished turn's reply.
+// the subagent work tree, group
+
+// as optional runtime hooks here.
+import { randomUUID } from "node:crypto";
+import type { Bot, BotBlocked } from "../../shared/state.ts";
+import {
+	HANDOFF_ACK,
+	MESSAGE_INLINE_MAX,
+	REFERENCE_KIND,
+	REPLY_KIND,
+	SOURCE_KIND,
+	STEER_CUT,
+} from "../core/constants.ts";
+import type { Runtime } from "../core/runtime.ts";
+import { splitRef, textOf } from "../core/text.ts";
+import type { LongMessage } from "./delivery.ts";
+
+// Failures only the user can fix: a key, a sign-in, a balance. They block the Bot until
+// it is fixed (`bot.blocked`, for the repair card).
+export const BLOCKING_CODES: ReadonlySet<string> = new Set([
+	"MISSING_CREDENTIAL",
+	"INVALID_CREDENTIAL",
+	"AUTH",
+	"QUOTA",
+	"ACCOUNT_QUOTA",
+	"ACCOUNT_SIGN_IN_REQUIRED",
+	"ACCOUNT_SIGNED_OUT",
+	"ACCOUNT_TOKEN_INVALID",
+	"LOCAL_AGENT_MISSING",
+	"LOCAL_AGENT_SIGNIN",
+	"LOCAL_AGENT_QUOTA",
+	"LOCAL_AGENT_EXIT",
+]);
+// The ones a key set outside a turn can fix, and the ones a sign-in can (unblockBots).
+// A balance only a turn that completes shows fixed, as Retry runs one.
+const KEY_CODES: ReadonlySet<string> = new Set(["MISSING_CREDENTIAL", "INVALID_CREDENTIAL", "AUTH"]);
+const SIGN_IN_CODES: ReadonlySet<string> = new Set([
+	"ACCOUNT_SIGN_IN_REQUIRED",
+	"ACCOUNT_SIGNED_OUT",
+	"ACCOUNT_TOKEN_INVALID",
+]);
+
+/** A failed turn's `LlmFailure`, kept to what can be shown and logged. */
+export interface TurnFailure {
+	code: string;
+	message: string;
+	status?: number;
+	requestId?: string;
+}
+
+// A failed turn's `LlmFailure`, kept to what can be shown and logged. Like DSH's own
+// error row, an AUTH failure loses its message: providers may echo part of the key.
+export function turnFailure(error: any): TurnFailure {
+	const code = typeof error?.code === "string" && error.code !== "" ? error.code : "UNKNOWN";
+	const message = code === "AUTH" || typeof error?.message !== "string" ? "" : error.message.trim().slice(0, 500);
+	return {
+		code,
+		message,
+		...(typeof error?.status === "number" ? { status: error.status } : {}),
+		...(typeof error?.requestId === "string" ? { requestId: error.requestId } : {}),
+	};
+}
+
+export const failureLine = (failure: TurnFailure): string =>
+	`${failure.code}${failure.status ? ` ${failure.status}` : ""}${failure.message ? `: ${failure.message.slice(0, 200)}` : ""}`;
+
+/** A message's producer source as a turn reads it; every field the modules send is optional. */
+interface Source {
+	kind?: string;
+	role?: string;
+	exchangeId?: string;
+	senderSessionId?: string;
+	senderName?: string;
+	senderRoomId?: string;
+	roomId?: string;
+	work?: string;
+	replyTo?: string;
+	audience?: string;
+	askedBy?: string;
+	deferred?: boolean;
+	resumed?: boolean;
+	retried?: boolean;
+	handoff?: boolean;
+	goal?: unknown;
+	goalId?: unknown;
+	references?: unknown[];
+	member?: boolean;
+	mentions?: unknown;
+	sub?: string;
+	late?: boolean;
+	progress?: boolean;
+	quiet?: boolean;
+	failed?: unknown;
+	again?: boolean;
+	stopped?: boolean;
+	done?: boolean;
+	logged?: unknown;
+	called?: boolean;
+	reportBack?: boolean;
+	[field: string]: unknown;
+}
+
+interface CallEntry {
+	name: string;
+	args?: string;
+}
+
+interface JoinedMessage {
+	info: Source;
+	text: string;
+}
+
+interface Carry {
+	info?: Source;
+	joined: JoinedMessage[];
+	later: JoinedMessage[];
+	texts: string[];
+	shown: number;
+	answers?: boolean;
+	toolCount: number;
+}
+
+/** What one Session is doing now; process-local, rebuilt from live events, never saved. */
+interface LiveEntry {
+	turn?: number;
+	since?: number;
+	pending?: Source;
+	pendingText?: string;
+	info?: Source;
+	texts: string[];
+	shown: number;
+	step?: string;
+	tool?: string;
+	toolCount?: number;
+	calls?: Map<string, CallEntry>;
+	joined?: JoinedMessage[];
+	later?: JoinedMessage[];
+	cut?: { texts: number };
+	carry?: Carry;
+	steeredAt?: number;
+	suppressedSubagent?: boolean;
+	switched?: boolean;
+	answers?: boolean;
+	opened?: boolean;
+	carried?: boolean;
+	lastText?: string;
+	lastCalled?: boolean;
+}
+
+interface RoomWaiter {
+	sessionId: string;
+	resolve(text: string | null): void;
+	fail(failure: TurnFailure): void;
+	touch(): void;
+	approval(): void;
+}
+
+/** What a running call does, in its own words, from the turn's step. */
+interface Doing {
+	tool?: string;
+	said?: string;
+	note?: string;
+	target?: string;
+	since?: number;
+	roomId?: string;
+	switching?: boolean;
+	folder?: boolean;
+	self?: boolean;
+	[key: string]: unknown;
+}
+
+// A reply that only promises to start investigating/checking/running tools now without
+// actually calling a tool or handing off with @Name (#469). A verb followed by 过了,
+// 完了, 完毕 or 好了 reports work that is done; 查看过去… still promises. A miss leaves
+// the work undone, while a wrong match only costs a turn the member can pass, so the
+// rest of the reply is not judged.
+const PROMISED_WORK =
+	/(?:^(?:收到|好的|明白|好|行|没问题|了解)[，,、。.!！：\s]*(?:我(?:现在|这就|先|马上|立刻|去|来)?(?:开始|着手|去|来|准备)?(?:排查|检查|调查|查看|看看|搜索|搜一下|分析|处理|执行|运行|跑一下|修改|修复|实现|编写|整理|验证|测试|读一下|翻一下)(?!过了|过(?:[，,。.!！、；;\s]|$)|完了|完毕|好了)|(?:现在|马上|立刻)?(?:开始|着手)(?:执行|处理|排查|检查|调查|干活|开工)(?!过了|过(?:[，,。.!！、；;\s]|$)|完了|完毕|好了)|开工(?:[。！!，,\s]|$))|^(?:开工(?:[。！!，,\s]|$)|我(?:现在|这就|先|马上|立刻)(?:开始|着手|去)(?:排查|检查|调查|查看|搜索|分析|处理|执行|运行|修改|修复|实现|编写|整理|验证|测试)(?!过了|过(?:[，,。.!！、；;\s]|$)|完了|完毕|好了))|\b(?:(?:i\s+will|i'll|let\s+me|going\s+to)\s+(?:start|begin|check|look\s+into|investigate|search|run|inspect|read|fix|implement|work\s+on)\b|(?:starting|beginning)\s+(?:the\s+)?(?:investigation|check|search|work|execution|analysis)\b|^on\s+it[,.\s!]+(?:i'll|i\s+will|let\s+me|starting|checking)\b))/i;
+export const promisesWork = (text: unknown): boolean =>
+	typeof text === "string" && text.trim().length <= 240 && PROMISED_WORK.test(text.trim());
+
+// A tool call some models write into their text instead of making it (the XML-like
+// form of their own chat template).
+const WRITTEN_CALL = /<tool_call>\s*<function=|<function=[\w.-]+>\s*<parameter=/;
+export const writesToolCall = (text: unknown): boolean => typeof text === "string" && WRITTEN_CALL.test(text);
+export const stripWrittenCalls = (text: string): string =>
+	text
+		.replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, "")
+		.replace(/<function=[\w.-]+>[\s\S]*?(?:<\/function>|$)/g, "")
+		.trim();
+
+// Under DSH's PTC presentation the model calls only this tool; the program's sub-calls
+// are the tools it really runs.
+const PROGRAM_TOOL = "run_code";
+const RETRY_TEXT =
+	"Your last reply wrote a tool call as plain text (<tool_call>…), so it did not run and nothing happened. Call the tool through the tool interface now, then reply as you meant to.";
+const RETRY_PROMISE_TEXT =
+	"Your last reply said you would start working, but you ended the turn without calling any tool, so nothing ran. Call the tools you need and do the work now. If your last reply already was your whole answer, reply [PASS]; it stays posted.";
+const STOPPED_KEPT = 200;
+
+// The IM chat a user message came through, if it came through one: the client shows
+// which connector delivered it.
+const viaOf = (source: Source | undefined): string | undefined =>
+	typeof source?.rpcId === "string" && source.rpcId.startsWith("im:") ? source.rpcId.split(":")[1] : undefined;
+
+// The reply a sender waits for, sent the way a finished turn sends it: the answer goes up
+// to the Bot that asked, and the work it was for closes once it reached that Bot.
+// `id` is the Session the answer comes from; `source` is the trigger the turn answered.
+//
+
+// succeeded. a delivery failure therefore no longer
+// leaves a closed work with an answer nobody received, and the compensation below keeps
+// the result in the work tree, marked failed, so the answer that eventually goes up
+// names it.
+export function answerSender(rt: Runtime, id: string, source: Source, text: string, long?: LongMessage): void {
+	const sender = source.senderSessionId;
+	const back = sender === undefined ? undefined : rt.roomOf(source.senderRoomId)?.sessions?.[sender];
+	const name = rt.botOf(rt.selfOf(id))?.name ?? "The other Bot";
+	// The work the answer goes on with is the parent of the request it answers; read
+	// before delivery so the recipient's source names it (closeWork deletes it).
+	const work = source.exchangeId === undefined ? undefined : rt.state?.works?.[source.exchangeId]?.parent;
+	const exchangeId = randomUUID();
+	const to = source.senderSessionId;
+	const close = (): void => {
+		rt.closeWork?.(source.exchangeId, name, text);
+	};
+	const base = {
+		fromId: rt.selfOf(id),
+		toId: to,
+		...(back ? { sessionId: back } : {}),
+		role: "reply",
+		replyTo: source.exchangeId,
+		...(work ? { work } : {}),
+	};
+	const replyText = long?.text ?? text;
+	rt.deliver({
+		...base,
+		text: replyText,
+		exchangeId,
+		...(long?.length === undefined ? {} : { files: long.files, length: long.length }),
+	})
+		.then(
+			() => close(),
+			(error: unknown) => {
+				rt.warn("ocean-crew: reply delivery failed: %s", error);
+				// The reply never reached the asker: its queued note goes, the result kept with
+				// the work is marked failed, and the failure reaches the asker the way the reply
+				// would have, so the work goes on and its answer names it.
+				rt.forgetDelivery?.(exchangeId);
+				close();
+				rt.answerMissed?.(source.exchangeId);
+				const said = `${name} could not send its reply to you (${failureLine(turnFailure(error))}); what it had answered:\n`;
+				void rt
+					.deliver({
+						...base,
+						text: `${said}${replyText}`,
+						...(long?.length === undefined ? {} : { files: long.files, length: said.length + long.length }),
+					})
+					.catch((again: unknown) => rt.warn("ocean-crew: reply failure notice not delivered: %s", again));
+			},
+		)
+		.catch((error: unknown) => {
+			// Closing the work is the last step; a bookkeeping failure there must not become an
+			// unhandled rejection in the DSH process.
+			rt.warn("ocean-crew: closing the work %s a reply answered failed: %s", source.exchangeId, error);
+		});
+}
+
+// A group's own Session never reaches a model, so the snapshot DSH prepared there rides
+// with the user's queued message to the members who answer it.
+export function attachReference(queued: any[] | undefined, source: Source | undefined, text: string): void {
+	const post = queued?.findLast((item: any) => item.botId === undefined && item.kickoff !== true);
+	if (post === undefined || text === "") return;
+	const labels = (Array.isArray(source?.references) ? source.references : [])
+		.map((reference: any) => reference?.label)
+		.filter((label: unknown): label is string => typeof label === "string" && label !== "");
+	post.references = [...(post.references ?? []), { labels, text }];
+}
+
+export function install(rt: Runtime): void {
+	const { state } = rt;
+	const ctx = rt.ctx;
+
+	// The modules this file calls are installed around it (delivery, groups, handoffs,
+	// folders, roster, diagnostics);
+	// undefined and the behavior degrades to "nothing to call". Each such call names the
+
+	const switchJobs = (): any[] => rt.switchJobs?.() ?? [];
+	const approvalsView = (): any[] => rt.approvalsView?.() ?? [];
+	const waitingView = (): Record<string, string[]> => rt.waitingView?.() ?? {};
+	const agentOf = async (sessionId: string): Promise<any> => {
+		try {
+			return await rt.resolveAgent?.(sessionId);
+		} catch {
+			return undefined;
+		}
+	};
+	// until then the saved-key redaction it wraps is
+	// still applied when the secrets module provides it.
+	const cleanText = (text: string, redact: ((value: string) => string) | undefined): string => {
+		const clean = rt.cleanText;
+		if (typeof clean === "function") return clean(text, { redact });
+		return typeof redact === "function" ? redact(text) : text;
+	};
+
+	// The retry goes where the turn's trigger came from: a group round's waiter or a
+	// Bot's request keeps its exchange; anything else is a nudge in the Bot's own chat.
+	const retryTurn = (id: string, info: Source | undefined, note: string, text: string): Promise<unknown> => {
+		const keeps = info !== undefined && (info.role === "room" || expectsReply(info));
+		return rt.deliver({
+			...(keeps && info?.senderSessionId ? { fromId: info.senderSessionId } : {}),
+			toId: rt.selfOf(id),
+			sessionId: id,
+			role: keeps ? info?.role : "retry",
+			...(keeps && info?.roomId ? { roomId: info.roomId } : {}),
+			...(keeps && info?.exchangeId ? { exchangeId: info.exchangeId } : {}),
+			...(info?.work ? { work: info.work } : {}),
+			...(keeps && info?.audience ? { audience: info.audience } : {}),
+			...(keeps && info?.askedBy ? { askedBy: info.askedBy } : {}),
+			...(keeps && info?.senderRoomId ? { fromRoomId: info.senderRoomId } : {}),
+			note,
+			retried: true,
+			text,
+		});
+	};
+	const retryWrittenCall = (id: string, info: Source | undefined): Promise<unknown> =>
+		retryTurn(id, info, "your tool call did not run", RETRY_TEXT);
+	const retryPromisedWork = (id: string, info: Source | undefined): Promise<unknown> =>
+		retryTurn(id, info, "you stopped before calling any tool", RETRY_PROMISE_TEXT);
+
+	const live = new Map<string, LiveEntry>();
+	const roomWaiters = new Map<string, RoomWaiter>();
+	const roomProgress = new Map<string, any>();
+	const roomInbox = new Map<string, any[]>();
+	const queueRoomMessage = (roomId: string, item: any): void => {
+		roomInbox.set(roomId, [...(roomInbox.get(roomId) ?? []), item]);
+	};
+	// Member turns of a group round the user stopped: what they end with stays out of the group.
+	const stoppedRoomTurns = new Set<string>();
+	// Running DSH subagents spawned by each Bot Session: parentSessionId → Map<childId, entry>.
+	const subagentsByParent = new Map<string, Map<string, { childId: string; label?: string; since: number }>>();
+	// childId → parentSessionId.
+	const subagentParent = new Map<string, string>();
+	// Subagent child IDs and parent Sessions whose subagents were stopped by the user;
+	// late settlement notices from these stopped children must not wake the parent (#701).
+	const stoppedSubagents = new Set<string>();
+	const stoppedSubagentParents = new Set<string>();
+	// Exchanges whose promise-only opening the group already got before the retry: the
+	// retried turn counts it as shown, so a [PASS] there still hands the result back.
+	const promisedOpenings = new Set<string>();
+
+	const rememberStopped = (set: Set<string>, value: string): void => {
+		set.add(value);
+		if (set.size > STOPPED_KEPT) set.delete(set.values().next().value as string);
+	};
+
+	const subagentLabelFromCall = (entry: LiveEntry | undefined): string | undefined => {
+		const call = [...(entry?.calls?.values() ?? [])].findLast((item) => item.name === "subagent");
+		if (call === undefined) return undefined;
+		try {
+			const args = JSON.parse(call.args || "{}");
+			const raw = [args.description, args.label, args.prompt, args.task].find(
+				(value: unknown): value is string => typeof value === "string" && value.trim() !== "",
+			);
+			return raw?.replace(/\s+/g, " ").trim().slice(0, 120);
+		} catch {
+			return undefined;
+		}
+	};
+
+	const noteSubagentStart = (
+		parentId: string | undefined,
+		childId: string | undefined,
+		label: string | undefined,
+		since = Date.now(),
+	): void => {
+		if (typeof parentId !== "string" || parentId === "" || typeof childId !== "string" || childId === "") return;
+		if (stoppedSubagents.has(childId) || (!rt.isBotSession(parentId) && !rt.roomOf(parentId))) return;
+		subagentParent.set(childId, parentId);
+		let map = subagentsByParent.get(parentId);
+		if (map === undefined) {
+			map = new Map();
+			subagentsByParent.set(parentId, map);
+		}
+		const existing = map.get(childId);
+		map.set(childId, {
+			childId,
+			label: label || existing?.label || subagentLabelFromCall(live.get(parentId)),
+			since: existing?.since ?? since,
+		});
+		if (rt.groupOwners.has(parentId)) rt.workRoomTurn?.(parentId, "subagent");
+	};
+
+	const noteSubagentEnd = (childId: string | undefined): void => {
+		if (typeof childId !== "string" || childId === "") return;
+		const parentId = subagentParent.get(childId);
+		if (parentId === undefined) return;
+		const map = subagentsByParent.get(parentId);
+		map?.delete(childId);
+		if (map !== undefined && map.size === 0) subagentsByParent.delete(parentId);
+	};
+
+	const hasSubagents = (id: string): boolean => (subagentsByParent.get(id)?.size ?? 0) > 0;
+
+	const subagentDoingOf = (id: string): Doing | undefined => {
+		const active = [...(subagentsByParent.get(id)?.values() ?? [])].at(-1);
+		if (active === undefined) return undefined;
+		return { since: active.since, tool: "subagent", ...(active.label ? { note: active.label.slice(0, 120) } : {}) };
+	};
+
+	async function stopSubagents(sessionId: string): Promise<boolean> {
+		const map = subagentsByParent.get(sessionId);
+		const childIds = [...(map?.keys() ?? [])];
+		for (const agent of (ctx.get?.("agents") as any)?.list?.() ?? []) {
+			const header = agent?.session?.header;
+			// A fork names its parent too, but it is the user's own Session, not work to stop.
+			if (
+				header?.parentSession === sessionId &&
+				header.origin === "subagent" &&
+				typeof agent.id === "string" &&
+				!childIds.includes(agent.id)
+			) {
+				childIds.push(agent.id);
+			}
+		}
+		if (childIds.length === 0) return false;
+		subagentsByParent.delete(sessionId);
+		stoppedSubagentParents.add(sessionId);
+		for (const childId of childIds) {
+			rememberStopped(stoppedSubagents, childId);
+			// Not in the plugin's inject list, where ctx.subagents throws; interrupt can throw too.
+			try {
+				await (ctx.get?.("subagents") as any)?.interrupt?.(childId, { kind: "user", parentSessionId: sessionId });
+			} catch {
+				// A child that cannot be interrupted is still a child this team stopped.
+			}
+			const childAgent = (ctx.get?.("agents") as any)?.get?.(childId);
+			if (childAgent !== undefined) {
+				try {
+					childAgent.cancel?.({ kind: "user" });
+				} catch {
+					// The child may already be gone.
+				}
+			}
+		}
+		const parent = await agentOf(sessionId);
+		for (const message of [...(parent?.inbox?.nextStep ?? []), ...(parent?.inbox?.nextTurn ?? [])]) {
+			if (message?.source?.kind === "subagent-settled" || stoppedSubagents.has(message?.source?.senderSessionId)) {
+				parent.inbox.remove(message.id);
+			}
+		}
+		return true;
+	}
+
+	// A stopped round stops the member work it started: the turn that answers it, or the
+	// delivery still waiting for the member's Session.
+	// An exchange whose turn already ended stays in the set, so it is bounded.
+	async function stopRoomTurn(sessionId: string, exchangeId: string): Promise<void> {
+		rememberStopped(stoppedRoomTurns, exchangeId);
+		await stopSubagents(sessionId);
+		const agent = await agentOf(sessionId);
+		if (agent === undefined) return;
+		const entry = live.get(sessionId);
+		if (entry?.turn !== undefined && entry.info?.exchangeId === exchangeId) {
+			agent.cancel?.({ kind: "hook", reason: "ocean-crew/stopped" });
+			return;
+		}
+		for (const message of [...(agent.inbox?.nextStep ?? []), ...(agent.inbox?.nextTurn ?? [])]) {
+			if (message.source?.exchangeId === exchangeId && agent.inbox.remove(message.id))
+				stoppedRoomTurns.delete(exchangeId);
+		}
+	}
+
+	// The phone's Stop for a Bot's own-chat turn: the same cancel the group's member stop
+	// uses — end the running turn and any subagents it spawned.
+	async function stopChat(botId: string): Promise<boolean> {
+		await rt.load();
+		const sessionId = rt.chatOf(botId);
+		if (sessionId === undefined) return false;
+		const turnRunning = live.get(sessionId)?.turn !== undefined;
+		const subRunning = hasSubagents(sessionId);
+		if (!turnRunning && !subRunning) return false;
+		await stopSubagents(sessionId);
+		if (turnRunning) {
+			const agent = await agentOf(sessionId);
+			agent?.cancel?.({ kind: "user" });
+		}
+		return true;
+	}
+
+	const liveOf = (id: string): LiveEntry => {
+		let entry = live.get(id);
+		if (entry === undefined) {
+			entry = { texts: [], shown: 0 };
+			live.set(id, entry);
+		}
+		return entry;
+	};
+
+	// What each running Bot is doing right now, for its mascot. Process-local: it is
+	// rebuilt from live events and never saved.
+	let activity: Record<string, string> = {};
+	const activityOf = (tool: string): string => {
+		if (
+			/^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(
+				tool,
+			)
+		)
+			return "sending";
+		if (tool === "group_relay") return "orbit";
+		if (/search|fetch|browse|browser|read|grep|glob|list/i.test(tool)) return "searching";
+		return "working";
+	};
+	const setActivity = (id: string, value: string | undefined): void => {
+		if (activity[id] === value) return;
+		const next = { ...activity };
+		if (value === undefined) delete next[id];
+		else next[id] = value;
+		activity = next;
+	};
+	// The newest call still running, a program's sub-calls included, is what the Session
+	// is doing.
+	const showCall = (id: string, entry: LiveEntry): void => {
+		const name = [...(entry.calls?.values() ?? [])].at(-1)?.name;
+		entry.tool = name;
+		if (name !== undefined)
+			setActivity(id, name === "ask_user" || name === "show_view" ? undefined : activityOf(name));
+		else if (entry.turn !== undefined) setActivity(id, "thinking");
+	};
+	const startCall = (id: string, entry: LiveEntry, callId: string | undefined, name: string, args: string): void => {
+		if (typeof callId === "string") {
+			if (entry.calls === undefined) entry.calls = new Map();
+			entry.calls.set(callId, { name, args });
+		}
+		showCall(id, entry);
+	};
+	const endCall = (id: string, entry: LiveEntry, callId: string | undefined): void => {
+		if (callId !== undefined) entry.calls?.delete(callId);
+		showCall(id, entry);
+	};
+
+	const markExchangeTurn = (sessionId: string, turn: number): void => {
+		if (state.exchangeTurns[sessionId] === undefined) state.exchangeTurns[sessionId] = [];
+		const turns = state.exchangeTurns[sessionId];
+		if (!turns.includes(turn)) {
+			turns.push(turn);
+			if (turns.length > 400) turns.splice(0, turns.length - 400);
+			void rt.save().catch(() => {});
+		}
+	};
+	const unmarkExchangeTurn = (sessionId: string, turn: number): void => {
+		const turns = state.exchangeTurns[sessionId] ?? [];
+		if (!turns.includes(turn)) return;
+		state.exchangeTurns[sessionId] = turns.filter((other) => other !== turn);
+		void rt.save().catch(() => {});
+	};
+
+	// A request whose audience is the user is answered in the recipient's own chat: that
+	// turn stays visible there and its reply is not routed back to the sender.
+	const answersUser = (info: Source | undefined): boolean => info?.role === "request" && info.audience === "user";
+	// Roles whose turn owes the sender a reply: a 'stopped' notice asks the Bot to
+	// acknowledge, exactly like a request.
+	const expectsReply = (info: Source | undefined): boolean => info?.role === "request" || info?.role === "stopped";
+	// A group Session speaks only in its group, so what its turns write goes there, also
+	// for turns that a finished background job or a fresh part starts; a Bot's private
+	// message to it is answered privately.
+	const speaksInGroup = (id: string, info: Source | undefined): boolean =>
+		rt.groupOwners.has(id) && !(info !== undefined && expectsReply(info));
+
+	// The group hears what the member says while it works. A text with a tool call goes on
+	// at once; one without may be the turn's last, so it waits for the next text or the
+	// turn's end, which shows the rest as the turn's reply.
+	const showSteps = (id: string, entry: LiveEntry, upTo: number): void => {
+		const info = entry.info;
+		if (
+			entry.suppressedSubagent ||
+			!speaksInGroup(id, info) ||
+			(info?.role === "room" && info.exchangeId !== undefined && stoppedRoomTurns.has(info.exchangeId))
+		)
+			return;
+		for (; entry.shown < upTo; entry.shown += 1) {
+			const text = stripWrittenCalls(entry.texts[entry.shown]);
+			if (text !== "")
+				void rt
+					.roomStepText?.(id, info, text, entry.shown === 0)
+					?.catch?.((error: unknown) => rt.warn("ocean-crew: step text from %s not posted: %s", id, error));
+		}
+	};
+
+	// The reply a sender waits for, also when it wrote from a group, where it gets the
+	// reply in its Session there while it is still a member. A sender that asked for it
+	// while working on another Bot's request goes on with that work when it reads it.
+	// `long`: the text as attachLong sends it, when it went as a file.
+	const tellSender = (id: string, source: Source, text: string, long?: LongMessage): void =>
+		answerSender(rt, id, source, text, long);
+
+	// Runs before a deleted Bot leaves the team. Its Sessions stop with it, and the
+	// turn/end that follows is no longer the team's, so their activity and turn records go
+	// now. Every Bot still waiting for its reply hears that it was deleted: the turn's
+	// trigger, requests that joined the turn, and requests it has not read yet.
+	async function releaseBot(botId: string, sessionIds: string[]): Promise<void> {
+		const text = `${rt.botOf(botId)?.name ?? "The other Bot"} was deleted before it could answer your message.`;
+		const waiting = new Map<string, [string, Source]>();
+		for (const id of sessionIds) {
+			await stopSubagents(id);
+			const entry = live.get(id);
+			const held: Array<Source | undefined> = [
+				entry?.info,
+				entry?.pending,
+				...(entry?.joined ?? []).map((joined) => joined.info),
+			];
+			if (entry?.turn !== undefined) {
+				const agent = await agentOf(id);
+				held.push(
+					...[...(agent?.inbox?.nextStep ?? []), ...(agent?.inbox?.nextTurn ?? [])].map(
+						(message: any) => message.source,
+					),
+				);
+			}
+			for (const source of held) {
+				if (
+					source?.kind === SOURCE_KIND &&
+					expectsReply(source) &&
+					!answersUser(source) &&
+					source.exchangeId !== undefined
+				)
+					waiting.set(source.exchangeId, [id, source]);
+			}
+			live.delete(id);
+			setActivity(id, undefined);
+		}
+		// Work it was asked for and still waits on, outside any running turn.
+		for (const source of rt.forgetBotWork?.(botId) ?? []) {
+			if (source?.exchangeId !== undefined && !waiting.has(source.exchangeId))
+				waiting.set(source.exchangeId, [rt.chatOf(botId), source]);
+		}
+		for (const [id, source] of waiting.values()) tellSender(id, source, text);
+	}
+
+	// A group Session is hidden as a whole, so its turns need no marking. A handoff
+	// package that only opens a part is acknowledged with a fixed line, also hidden.
+	const claimTrigger = (sessionId: string, entry: LiveEntry, info: Source): void => {
+		entry.info = info;
+		// A turn that was stopped for a part switch brings its joined requests along.
+		if (Array.isArray(info.joined) && info.joined.length > 0) {
+			entry.joined = (info.joined as any[]).filter(
+				(item) => item?.info !== undefined && item.info !== null,
+			) as JoinedMessage[];
+		}
+		if (rt.groupOwners.has(sessionId)) return;
+		if (
+			(expectsReply(info) && !answersUser(info)) ||
+			info.role === "room" ||
+			(info.role === "handoff" && info.resume !== true)
+		) {
+			if (entry.turn !== undefined) markExchangeTurn(sessionId, entry.turn);
+		}
+	};
+
+	// Activity is tracked per Session; a Bot's mascot shows its own chat's, else a group's.
+	const activityView = (): Record<string, string> => {
+		const merged: Record<string, string> = {};
+		for (const [id, value] of Object.entries(activity)) {
+			if (!rt.groupOwners.has(id)) merged[rt.chatOwners.get(id) ?? id] = value;
+		}
+		for (const [id, value] of Object.entries(activity)) {
+			const owner = rt.groupOwners.get(id);
+			if (owner !== undefined) merged[owner.botId] ??= value;
+		}
+		for (const [id, map] of subagentsByParent) {
+			if (map.size === 0) continue;
+			const owner = rt.groupOwners.get(id);
+			const botId = owner?.botId ?? rt.chatOwners.get(id);
+			if (botId !== undefined) merged[botId] ??= "working";
+		}
+		// A Bot writing its handoff note is thinking; a group's own Session that moves
+		// shows on the group's key.
+		for (const job of switchJobs()) {
+			if (job.roomId === undefined) merged[job.botId] = "thinking";
+			else merged[job.botId ?? job.roomId] ??= "thinking";
+		}
+		for (const approval of approvalsView()) merged[approval.botId] = "alert";
+		// Waiting for work it handed on shows only while no turn of the Bot runs.
+		for (const botId of Object.keys(waitingView())) merged[botId] ??= "waiting";
+		return merged;
+	};
+
+	// What the newest running call does, in its own words: what the Bot said in the step
+	// that made it, the call's description, or the file, search or site it works on.
+	const doingOf = (entry: LiveEntry): Doing => {
+		const call = [...(entry.calls?.values() ?? [])].at(-1);
+		if (call === undefined) return {};
+		const said = entry.step?.replace(/\s+/g, " ").trim().slice(0, 160);
+		let args: Record<string, any> = {};
+		try {
+			args = JSON.parse(call.args || "{}");
+		} catch {
+			args = {};
+		}
+		const first = (keys: string[]): string | undefined =>
+			keys
+				.map((key) => args?.[key])
+				.find((value): value is string => typeof value === "string" && value.trim() !== "")
+				?.replace(/\s+/g, " ")
+				.trim();
+		const note = first(["description", "justification"]);
+		const path = first(["file_path", "path"]);
+		const url = first(["url"]);
+		let site: string | undefined;
+		try {
+			site = url && new URL(url).host;
+		} catch {
+			site = undefined;
+		}
+		const target = path?.split(/[\\/]/).filter(Boolean).at(-1) ?? first(["query", "pattern"]) ?? site;
+		return {
+			tool: call.name,
+			...(said ? { said } : {}),
+			...(note ? { note: note.slice(0, 120) } : {}),
+			...(target ? { target: target.slice(0, 80) } : {}),
+		};
+	};
+
+	// Per Bot, the turn it is running and what it is doing; its own chat wins over a
+	// group. A Bot writing its handoff note shows that.
+	const workView = (): Record<string, Doing> => {
+		const bots: Record<string, Doing> = {};
+		for (const [id, entry] of live) {
+			if (entry.turn === undefined) continue;
+			const owner = rt.groupOwners.get(id);
+			const botId = owner?.botId ?? rt.chatOwners.get(id);
+			if (botId === undefined || (owner !== undefined && bots[botId] !== undefined)) continue;
+			bots[botId] = { since: entry.since, ...doingOf(entry), ...(owner ? { roomId: owner.roomId } : {}) };
+		}
+		for (const [id] of subagentsByParent) {
+			const sub = subagentDoingOf(id);
+			if (sub === undefined) continue;
+			const owner = rt.groupOwners.get(id);
+			const botId = owner?.botId ?? rt.chatOwners.get(id);
+			if (botId === undefined || bots[botId] !== undefined) continue;
+			bots[botId] = { ...sub, ...(owner ? { roomId: owner.roomId } : {}) };
+		}
+		for (const job of switchJobs()) {
+			// `folder` marks the switch the chat must name: the working folder changed. A
+			// group's own Session belongs to no Bot; the group's row shows it instead.
+			if (job.botId === undefined) continue;
+			const work = {
+				since: job.since,
+				switching: true,
+				...(job.folder === true ? { folder: true } : {}),
+				...(job.roomId ? { roomId: job.roomId } : {}),
+			};
+			if (job.roomId === undefined) bots[job.botId] = work;
+			else bots[job.botId] ??= work;
+		}
+		return bots;
+	};
+
+	// Per Session, when its running turn began.
+	const turnsView = (): Record<string, number> =>
+		Object.fromEntries(
+			[...live]
+				.filter(([, entry]) => entry.turn !== undefined && entry.since !== undefined)
+				.map(([id, entry]) => [id, entry.since as number]),
+		);
+
+	// Per Session, when the user last steered its running turn: the input the activity
+	// row's phrase and clock restart from.
+	const steeredView = (): Record<string, number> =>
+		Object.fromEntries(
+			[...live]
+				.filter(([, entry]) => entry.turn !== undefined && entry.steeredAt !== undefined)
+				.map(([id, entry]) => [id, entry.steeredAt as number]),
+		);
+
+	// Per group, the members whose turn there is running or who move on to a fresh part;
+	// the members answering in a round are marked, since the round shows them.
+	const roomWorkView = (): Record<string, any[]> => {
+		const speaking = new Set<string>(
+			[...roomProgress.values()].flatMap((round: any) =>
+				(round.slots ?? [])
+					.filter((slot: any) => slot.status === "speaking")
+					.map((slot: any) => `${round.roomId}:${slot.id}`),
+			),
+		);
+		const rooms: Record<string, any[]> = {};
+		const add = (roomId: string, botId: string | undefined, work: Record<string, unknown>): void => {
+			if (rooms[roomId]?.some((item: any) => item.botId === botId)) return;
+			rooms[roomId] = [
+				...(rooms[roomId] ?? []),
+				{ botId, ...work, ...(speaking.has(`${roomId}:${botId}`) ? { speaking: true } : {}) },
+			];
+		};
+		for (const [id, entry] of live) {
+			const owner = rt.groupOwners.get(id);
+			if (entry.turn !== undefined && owner !== undefined)
+				add(owner.roomId, owner.botId, { since: entry.since, ...doingOf(entry) });
+		}
+		for (const [id] of subagentsByParent) {
+			const owner = rt.groupOwners.get(id);
+			if (owner === undefined) continue;
+			const sub = subagentDoingOf(id);
+			if (sub !== undefined) add(owner.roomId, owner.botId, sub);
+		}
+		for (const job of switchJobs()) {
+			// `self`: the group's own Session moves; the group's activity row names it.
+			if (job.roomId !== undefined)
+				add(job.roomId, job.botId, {
+					since: job.since,
+					switching: true,
+					...(job.folder === true ? { folder: true } : {}),
+					...(job.botId === undefined ? { self: true } : {}),
+				});
+		}
+		return rooms;
+	};
+
+	// What a running tool call is about, for an approval card: its own description and
+	// the command, path or address it acts on.
+	const callDetail = (sessionId: string, callId: string): { text?: string; code?: string } => {
+		let args: Record<string, any> = {};
+		try {
+			args = JSON.parse(live.get(sessionId)?.calls?.get(callId)?.args ?? "{}");
+		} catch {
+			args = {};
+		}
+		const first = (keys: string[]): string | undefined =>
+			keys
+				.map((key) => args?.[key])
+				.find((value): value is string => typeof value === "string" && value.trim() !== "");
+		const text = first(["description", "justification"]);
+		const code = first(["command", "cmd", "file_path", "path", "url", "query"]);
+		return {
+			...(text ? { text: text.trim().slice(0, 300) } : {}),
+			...(code ? { code: code.trim().slice(0, 400) } : {}),
+		};
+	};
+
+	// Where a Session speaks, for the diagnostics log.
+	const placeOf = (id: string): string => {
+		const room = rt.roomOf(rt.groupOwners.get(id)?.roomId) ?? rt.roomOf(id);
+		return room ? `group "${room.name}"` : "own chat";
+	};
+	const noteTurnFailure = (id: string, failure: TurnFailure): void => {
+		rt.noteFailure?.({
+			source: "turn",
+			text: failure.message || "the model call failed",
+			code: failure.code,
+			status: failure.status,
+			requestId: failure.requestId,
+			bot: rt.botOf(rt.selfOf(id))?.name ?? (rt.roomOf(id) ? undefined : "unknown Bot"),
+			where: placeOf(id),
+			sessionId: id,
+		});
+	};
+
+	// The facts of a blocking failure stay on its Bot, from any of its Sessions, until a
+	// turn of it completes, a change that can fix it (unblockBots), or its model changes.
+	// Never the message: a provider may echo part of the key. The provider is the failing
+	// route's, which is the Session's last request, else the model the Bot runs on.
+	const blockBot = (id: string, session: any, failure: TurnFailure): boolean => {
+		const bot = rt.botOf(rt.selfOf(id));
+		if (bot === undefined || !BLOCKING_CODES.has(failure.code)) return false;
+		const provider = session?.requestHeader?.()?.config?.provider ?? splitRef(bot.appliedModel)?.provider;
+		// The saved shape is the repair card's: code and facts, no message (state.ts asks
+		// the card never reads it).
+		bot.blocked = {
+			code: failure.code,
+			...(failure.status === undefined ? {} : { status: failure.status }),
+			...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+			...(provider ? { provider } : {}),
+			at: Date.now(),
+		} as unknown as BotBlocked;
+		void rt.save().catch(() => {});
+		return true;
+	};
+	const unblockBot = (botId: string): void => {
+		const bot = rt.botOf(botId);
+		if (bot?.blocked === undefined) return;
+		delete bot.blocked;
+		void rt.save().catch(() => {});
+	};
+
+	// A key set (`ref`) or a sign-in may be the user's fix (models.js): the blocks it can
+	// fix lift, and a greeting held for one goes out again. A key lifts the key failures
+	// of the providers that read it; one whose provider names no key, or that failed on a
+	// provider not known, lifts on any key. A host that only reads the team leaves it to
+	// the one that holds it.
+	function unblockBots({
+		ref,
+		signedIn = false,
+		keyed,
+	}: {
+		ref?: string;
+		signedIn?: boolean;
+		keyed?: Set<string>;
+	} = {}): void {
+		if (rt.readOnly?.() !== undefined) return;
+		let refs: Map<string, string> | undefined;
+		try {
+			refs = ref === undefined ? undefined : rt.keyRefs?.();
+		} catch {
+			refs = undefined;
+		}
+		const fixes = (bot: Bot): boolean => {
+			const { code, provider } = (bot.blocked ?? {}) as { code?: string; provider?: string };
+			return (
+				(signedIn && code !== undefined && SIGN_IN_CODES.has(code)) ||
+				(ref !== undefined &&
+					code !== undefined &&
+					KEY_CODES.has(code) &&
+					(refs?.get(provider ?? "") ?? ref) === ref) ||
+				(code === "MISSING_CREDENTIAL" && provider !== undefined && keyed?.has(provider) === true)
+			);
+		};
+		const lifted = Object.values(state.bots ?? {}).filter((bot) => bot.blocked !== undefined && fixes(bot));
+		if (lifted.length === 0) return;
+		for (const bot of lifted) delete bot.blocked;
+		void rt.save().catch(() => {});
+		for (const bot of lifted)
+			void rt
+				.releaseKickoff?.(bot)
+				?.catch((error: unknown) => rt.warn("ocean-crew: greeting of %s not sent again: %s", bot.name, error));
+	}
+
+	// The repair card's Retry. A greeting that failed goes out again; otherwise the Bot
+	// answers the user's last message, which is not sent again. A greeting on its way, or
+	// a turn under way in the Bot's chat, answers already: a turn on top answers twice.
+	async function resumeBot(bot: Bot): Promise<void> {
+		if (await rt.releaseKickoff?.(bot)) return;
+		if (rt.greetingOut?.(bot.id) || live.get(rt.chatOf(bot.id))?.turn !== undefined) return;
+		const code = bot.blocked?.code;
+		await rt.deliver({
+			toId: bot.id,
+			role: "continue",
+			text: `Your last turn failed${code ? ` (${code})` : ""} and the user has fixed it. Answer the user's last unanswered message.`,
+		});
+	}
+
+	ctx.on?.("subagent/start", (info: any) => {
+		const childId = info?.id;
+		if (typeof childId !== "string" || childId === "" || stoppedSubagents.has(childId)) return;
+		const parentId =
+			subagentParent.get(childId) ??
+			(ctx.get?.("agents") as any)?.get?.(childId)?.session?.header?.parentSession ??
+			[...live.entries()].find(([, entry]) =>
+				[...(entry.calls?.values() ?? [])].some((call) => call.name === "subagent"),
+			)?.[0];
+		if (parentId !== undefined) noteSubagentStart(parentId, childId, undefined);
+	});
+	ctx.on?.("subagent/end", (info: any) => {
+		noteSubagentEnd(info?.id);
+		if (rt.groupOwners.has(info?.id))
+			void rt
+				.goalSettled?.(rt.roomOf(rt.groupOwners.get(info.id)?.roomId))
+				?.catch((error: unknown) => rt.warn("ocean-crew: goal settle failed: %s", error));
+	});
+
+	ctx.on("session/event", (session: any, event: any) => {
+		const id: string | undefined = session?.id;
+		if (id === undefined) return;
+		if (!rt.isBotSession(id) && !rt.roomOf(id)) {
+			// A deleted Bot's Session can still be ending its turn; nothing of it stays.
+			if (live.delete(id)) setActivity(id, undefined);
+			return;
+		}
+		const entry = liveOf(id);
+		if (rt.groupOwners.has(id)) rt.touchRoomTurn?.(id);
+		switch (event.type) {
+			case "subagent/catalog": {
+				const childId = event.data?.childId;
+				const label = typeof event.data?.label === "string" ? event.data.label.trim() : undefined;
+				noteSubagentStart(id, childId, label, event.time ?? Date.now());
+				break;
+			}
+			case "tool/call": {
+				const name = String(event.data?.name ?? "");
+				startCall(id, entry, event.data?.callId, name, String(event.data?.arguments ?? ""));
+				// A program is as quick as the tools it runs, so its sub-calls decide.
+				if (name !== PROGRAM_TOOL) {
+					entry.toolCount = (entry.toolCount ?? 0) + 1;
+					if (rt.groupOwners.has(id)) rt.workRoomTurn?.(id, name);
+				}
+				break;
+			}
+			case "tool/ptc-dispatch-start": {
+				const name = String(event.data?.name ?? "");
+				startCall(id, entry, event.data?.subCallId, name, JSON.stringify(event.data?.arguments ?? {}));
+				entry.toolCount = (entry.toolCount ?? 0) + 1;
+				if (rt.groupOwners.has(id)) rt.workRoomTurn?.(id, name);
+				break;
+			}
+			case "tool/ptc-dispatch":
+				endCall(id, entry, event.data?.subCallId);
+				break;
+			case "tool/result":
+				endCall(id, entry, event.data?.callId);
+				break;
+			case "turn/start": {
+				setActivity(id, "thinking");
+				entry.turn = event.data.turn;
+				entry.since = event.time ?? Date.now();
+				entry.texts = [];
+				entry.shown = 0;
+				entry.step = undefined;
+				entry.info = undefined;
+				entry.toolCount = 0;
+				entry.suppressedSubagent = false;
+				// A turn turned away before its first step may end without a turn/end.
+				entry.switched = false;
+				entry.answers = false;
+				entry.opened = false;
+				entry.joined = [];
+				entry.later = [];
+				entry.steeredAt = undefined;
+				entry.carried = false;
+				let claimedPending: Source | undefined;
+				let claimedPendingText: string | undefined;
+				if (entry.pending !== undefined) {
+					claimedPending = entry.pending;
+					claimedPendingText = entry.pendingText;
+					claimTrigger(id, entry, claimedPending);
+					entry.pending = undefined;
+					entry.pendingText = undefined;
+				}
+				if (entry.carry !== undefined) {
+					const carry = entry.carry;
+					entry.carry = undefined;
+					entry.texts = carry.texts;
+					entry.shown = carry.shown;
+					entry.answers = carry.answers;
+					entry.joined = carry.joined;
+					entry.later = carry.later;
+					entry.toolCount = carry.toolCount ?? 0;
+					entry.opened = true;
+					entry.carried = true;
+					if (carry.info !== undefined) claimTrigger(id, entry, carry.info);
+					entry.joined = carry.joined;
+					// A request the carry displaced as this turn's trigger keeps its deferred
+					// place, the same as a request that joins a running turn.
+					if (
+						carry.info !== undefined &&
+						claimedPending !== undefined &&
+						claimedPending.exchangeId !== carry.info.exchangeId &&
+						(expectsReply(claimedPending) || claimedPending.role === "room") &&
+						!answersUser(claimedPending)
+					) {
+						entry.joined = [...carry.joined, { info: claimedPending, text: claimedPendingText ?? "" }];
+					}
+				}
+				break;
+			}
+			case "user/message": {
+				const source: Source | undefined = event.data?.source;
+				if (source?.kind === "subagent-settled" || source?.kind === "agent-message") {
+					if (typeof source.senderSessionId === "string") {
+						noteSubagentEnd(source.senderSessionId);
+						if (rt.groupOwners.has(id))
+							void rt
+								.goalSettled?.(rt.roomOf(rt.groupOwners.get(id)?.roomId))
+								?.catch((error: unknown) => rt.warn("ocean-crew: goal settle failed: %s", error));
+					}
+					if (
+						stoppedSubagentParents.has(id) ||
+						(typeof source.senderSessionId === "string" && stoppedSubagents.has(source.senderSessionId))
+					) {
+						entry.suppressedSubagent = true;
+						void agentOf(id).then((agent) => agent?.cancel({ kind: "hook", reason: "ocean-crew/stopped" }));
+						break;
+					}
+				} else if (source?.kind === "user" || source?.kind === SOURCE_KIND) {
+					stoppedSubagentParents.delete(id);
+				}
+				// A result that came back counts as taken once a turn reads it.
+				if (source?.kind === SOURCE_KIND && source.work !== undefined && source.replyTo !== undefined)
+					rt.takenWork?.(source.work, source.replyTo);
+				// A message that shares a step with a bare handoff package is what the turn
+				// answers, so the turn is not a hidden acknowledgement.
+				const bare = (info: Source | undefined): boolean =>
+					info !== undefined && info.handoff === true && info.resume !== true;
+
+				// Bot relay that lands inside it may claim: the first message of a turn
+				// still claims it, a later one only joins it.
+				const opened = entry.opened === true;
+				if (
+					entry.turn !== undefined &&
+					!bare(source) &&
+					(source?.kind === "user" ||
+						source?.kind === REPLY_KIND ||
+						source?.kind === "schedule" ||
+						source?.kind === SOURCE_KIND)
+				) {
+					entry.opened = true;
+				}
+				if (
+					entry.turn !== undefined &&
+					(source?.kind === "user" || source?.kind === REPLY_KIND || source?.kind === SOURCE_KIND)
+				) {
+					if (bare(source)) {
+						if (entry.answers) break;
+					} else {
+						entry.answers = true;
+						if (bare(entry.info)) {
+							if (entry.turn !== undefined) unmarkExchangeTurn(id, entry.turn);
+							entry.info = undefined;
+						}
+					}
+				}
+				if (source?.kind === SOURCE_KIND && source.role === "post" && rt.roomOf(id)) {
+					// A long post comes as a file (attachLong), which stays with its line.
+					const files = (Array.isArray(event.data.content) ? event.data.content : [])
+						.filter((block: any) => block?.type === "file" && block.attachment !== undefined)
+						.map((block: any) => block.attachment);
+					queueRoomMessage(rt.roomOf(id)?.id as string, {
+						text: textOf(event.data.content).replace(/^\[Group post from (?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, ""),
+						...(files.length > 0 ? { files } : {}),
+						botId: source.senderSessionId,
+						name: source.senderName,
+						reportBack: source.reportBack === true,
+						...(source.member ? { member: true } : {}),
+						// Who the whole post called. `text` may be only its opening (attachLong).
+						...(source.mentions ? { mentions: source.mentions } : {}),
+						...(source.sub ? { sub: source.sub } : {}),
+						...(source.late ? { late: true } : {}),
+						...(source.progress ? { progress: true } : {}),
+						...(source.quiet ? { quiet: true } : {}),
+						...(source.failed ? { failed: source.failed } : {}),
+						...(source.resumed ? { resumed: true } : {}),
+						...(source.again ? { again: true } : {}),
+						...(source.stopped ? { stopped: true } : {}),
+						...(source.done ? { done: true } : {}),
+						...(source.askedBy ? { askedBy: source.askedBy } : {}),
+						...(source.fromRoomId ? { fromRoomId: source.fromRoomId } : {}),
+						// A post written into a running round already carries its log seq, or true
+						// when its event needed none; the relay must not write it again.
+						...(source.logged !== undefined ? { logged: source.logged } : {}),
+						...(source.called ? { called: true } : {}),
+					});
+				} else if (source?.kind === SOURCE_KIND && source.role === "kickoff" && rt.roomOf(id)) {
+					queueRoomMessage(rt.roomOf(id)?.id as string, { text: "", kickoff: true });
+				} else if (source?.kind === SOURCE_KIND && source.role === "goal" && rt.roomOf(id)) {
+					// A goal message — the user's draft ask, an idle goal check, a resume —
+					// opens a round of its own; the draft ask is the user's line.
+					queueRoomMessage(rt.roomOf(id)?.id as string, {
+						text: textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, ""),
+						...(source.goal !== undefined ? { goal: source.goal } : {}),
+						...(source.goalId !== undefined ? { goalId: source.goalId } : {}),
+					});
+				} else if (source?.kind === SOURCE_KIND) {
+					if (entry.turn === undefined) {
+						entry.pending = source;
+						entry.pendingText = textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, "");
+					} else if (!opened) claimTrigger(id, entry, source);
+					else if (source.work !== undefined && source.work !== rt.workOf?.(entry.info) && !expectsReply(source)) {
+						// A result for other work than this turn's informs it, and comes back in a
+						// turn of its own once this one ends, which goes on with that work.
+						entry.later = [
+							...(entry.later ?? []),
+							{
+								info: source,
+								text: textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, ""),
+							},
+						];
+					} else if (
+						(expectsReply(source) || source.role === "room") &&
+						!answersUser(source) &&
+						source.exchangeId !== entry.info?.exchangeId &&
+						!(entry.joined ?? []).some((joined) => joined.info.exchangeId === source.exchangeId)
+					) {
+						// A request that lands inside a running turn steers that work but is
+						// answered in a hidden turn of its own once the work is done. A failed-switch
+						// resume message re-sends the trigger's own source; the same exchangeId must
+						// not join twice.
+						const text = textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, "");
+						entry.joined = [...(entry.joined ?? []), { info: source, text }];
+					}
+					// A mid-turn relay that owes no reply only informs the turn: it neither
+					// claims the running turn nor queues as the next one's trigger.
+				} else if (source?.kind === "schedule" && rt.roomOf(id)) {
+					// A group's scheduled task reaches the group as the user's message.
+					const reminderText = rt.reminderText;
+					queueRoomMessage(rt.roomOf(id)?.id as string, {
+						text:
+							typeof reminderText === "function"
+								? reminderText(textOf(event.data.content))
+								: textOf(event.data.content),
+					});
+				} else if (source?.kind === REFERENCE_KIND && rt.roomOf(id)) {
+					attachReference(roomInbox.get(rt.roomOf(id)?.id as string), source, textOf(event.data.content));
+				} else if (source?.kind === "subagent-settled") {
+					// A settled sub-run's notice: the work it hung under goes on once a turn
+					// reads it, like a reply that came back. The notice names only the child;
+					// its run is the earliest of the child's not read yet. One read while a
+					// turn does other work comes back in a turn of its own.
+					const run = rt.subWorkRun?.(source.senderSessionId);
+					if (run !== undefined) {
+						rt.takenWork?.(run.parent, run.id);
+						const info: Source = {
+							kind: SOURCE_KIND,
+							role: "reply",
+							work: run.parent,
+							replyTo: run.id,
+							exchangeId: run.id,
+							senderSessionId: source.senderSessionId,
+						};
+						if (entry.turn === undefined) entry.pending = info;
+						else if (entry.info === undefined && !opened) {
+							// DSH opens the turn before it records the message that filled its
+							// inbox: a notice that opened the turn claims it.
+							entry.opened = true;
+							entry.answers = true;
+							claimTrigger(id, entry, info);
+						} else if (rt.workOf?.(entry.info) !== run.parent)
+							entry.later = [...(entry.later ?? []), { info, text: textOf(event.data.content) }];
+					}
+				} else if (source?.kind === "user" || source?.kind === REPLY_KIND) {
+					if (rt.roomOf(id) && source.kind === "user") {
+						const content = Array.isArray(event.data.content) ? event.data.content : [];
+						const images = content
+							.filter((block: any) => block?.type === "image" && !block.offloaded)
+							.map((block: any) => block.attachment);
+						const files = content
+							.filter((block: any) => block?.type === "file" && block.attachment !== undefined)
+							.map((block: any) => block.attachment);
+						const via = viaOf(source);
+						queueRoomMessage(rt.roomOf(id)?.id as string, {
+							text: textOf(event.data.content),
+							...(images.length > 0 ? { images } : {}),
+							...(files.length > 0 ? { files } : {}),
+							...(via ? { via } : {}),
+						});
+					}
+					const own = rt.chatOwners.get(id);
+					if (own !== undefined) rt.userWrote?.(own);
+					// Any user message answers or supersedes the open question card and view card.
+					let dropped = false;
+					if (state.questions[id] !== undefined) {
+						rt.closeCard(id, state.questions[id] as { callId?: string }, "replied");
+						delete state.questions[id];
+						dropped = true;
+					}
+					if (state.views?.[id] !== undefined) {
+						rt.closeCard(id, state.views[id] as { callId?: string }, "replied");
+						delete state.views[id];
+						dropped = true;
+					}
+					if (dropped) void rt.save().catch(() => {});
+				}
+				break;
+			}
+			case "agent/inbox/spliced": {
+				// A message the user sends to a group while its round runs joins that round.
+				if (rt.roomOf(id)) rt.nudgeRoom?.(rt.roomOf(id)?.id as string);
+				if (stoppedSubagentParents.has(id)) {
+					for (const inserted of event.data?.inserted ?? []) {
+						if (
+							inserted?.source?.kind === "subagent-settled" ||
+							stoppedSubagents.has(inserted?.source?.senderSessionId)
+						) {
+							void agentOf(id).then((agent) => agent?.inbox?.remove(inserted.id));
+						}
+					}
+				}
+				// A message the user steered into the running turn is fresh input, like a send
+				// that never queued.
+				if (
+					event.data?.target === "next-step" &&
+					entry.turn !== undefined &&
+					(event.data.inserted ?? []).some((message: any) => message?.source?.kind === "user")
+				) {
+					entry.steeredAt = event.time ?? Date.now();
+				}
+				break;
+			}
+			case "assistant/message": {
+				const content = event.data?.message?.content;
+				const text = textOf(content);
+				const called = Array.isArray(content) && content.some((block: any) => block?.type === "tool-call");
+				if (text !== "" && text !== HANDOFF_ACK) {
+					// What a turn says goes on to the group or the sender, read from other folders.
+					const linked =
+						typeof rt.absoluteLinks === "function" ? rt.absoluteLinks(text, rt.sessionFolder?.(session)) : text;
+					entry.texts.push(linked);
+					if (entry.turn !== undefined) showSteps(id, entry, called ? entry.texts.length : entry.texts.length - 1);
+				}
+				entry.lastText = text;
+				entry.lastCalled = called;
+				entry.step = called && text !== HANDOFF_ACK ? stripWrittenCalls(text) || undefined : undefined;
+				break;
+			}
+			case "turn/end": {
+				setActivity(id, undefined);
+				// A steer cut leaves the turn's routing state for the fresh turn that claims
+				// the steer: nothing is answered or delivered for the cut one.
+				const cut = entry.cut;
+				entry.cut = undefined;
+				const steerCut =
+					cut !== undefined &&
+					event.data?.reason?.kind === "aborted" &&
+					event.data.reason.reason?.kind === "hook" &&
+					event.data.reason.reason.reason === STEER_CUT;
+				if (steerCut && cut !== undefined) {
+					entry.carry = {
+						info: entry.info,
+						joined: entry.joined ?? [],
+						later: entry.later ?? [],
+						texts: entry.texts.slice(0, cut.texts),
+						shown: entry.shown,
+						answers: entry.answers,
+						toolCount: entry.toolCount ?? 0,
+					};
+				}
+				const info = entry.info;
+				const joined = entry.joined ?? [];
+				// What the group already saw of the turn is not posted again.
+				const texts = entry.texts.slice(entry.shown);
+				const shown = entry.shown > 0 || (info?.retried === true && promisedOpenings.delete(info.exchangeId ?? ""));
+				const lastText = entry.lastText;
+				const lastCalled = entry.lastCalled;
+				const toolCount = entry.toolCount ?? 0;
+				const suppressedSubagent = entry.suppressedSubagent === true;
+				// A turn stopped for a switch goes on in the next part, which answers instead.
+				const switched = entry.switched === true;
+				entry.turn = undefined;
+				entry.info = undefined;
+				entry.texts = [];
+				entry.shown = 0;
+				entry.step = undefined;
+				entry.toolCount = 0;
+				entry.suppressedSubagent = false;
+				entry.switched = false;
+				entry.joined = [];
+				entry.since = undefined;
+				entry.steeredAt = undefined;
+				entry.tool = undefined;
+				entry.calls = undefined;
+				entry.lastText = undefined;
+				entry.lastCalled = undefined;
+				const later = entry.later ?? [];
+				entry.later = [];
+				if (steerCut || suppressedSubagent) break;
+				for (const result of later) {
+					void rt
+						.deliver({
+							fromId: result.info.senderSessionId,
+							toId: rt.selfOf(id),
+							text: result.text,
+							role: result.info.role,
+							exchangeId: result.info.exchangeId,
+							replyTo: result.info.replyTo,
+							work: result.info.work,
+							...(result.info.roomId ? { roomId: result.info.roomId } : {}),
+							deferred: true,
+						})
+						.catch((error: unknown) => rt.warn("ocean-crew: handing back a result failed: %s", error));
+				}
+				const reason = event.data?.reason;
+				const failure = reason?.kind === "error" && !switched ? turnFailure(reason.error) : undefined;
+				if (failure !== undefined) noteTurnFailure(id, failure);
+				// A route that is not a model endpoint refuses every generation; the failed
+				// Session's own request names it, so it is refused everywhere from now on.
+				if (failure?.code === "HOSTED_ENGINE_ROUTE") {
+					const config = session.requestHeader?.()?.config;
+					const ref = config?.provider && config?.model ? `${config.provider}/${config.model}` : undefined;
+					if (ref !== undefined)
+						void rt
+							.routeRefused?.(ref, rt.botOf(rt.selfOf(id)))
+							?.catch((error: unknown) => rt.warn("ocean-crew: %s still failing: %s", ref, error));
+				}
+				const held: string = rt.groupOwners.has(id) ? (rt.takeRoomSteps?.(id) ?? "") : "";
+				if (switched) break;
+				const owner = rt.chatOwners.get(id);
+				if (failure !== undefined) {
+					if (blockBot(id, session, failure) && owner !== undefined && info?.role === "kickoff")
+						rt.holdKickoffAgain?.(owner);
+				} else if (reason?.kind === "completed") {
+					unblockBot(rt.selfOf(id) as string);
+					// A turn the user opened, or the Retry that answers the user.
+					if (owner !== undefined && (info === undefined || info.role === "continue")) rt.userAnswered?.(owner);
+				}
+				// A model that writes its tool call as text ends the turn as if it were done,
+				// though nothing ran. It gets one more turn on the same trigger, so a waiting
+				// round or sender gets the real answer; a second time, the text goes on without
+				// the call.
+				const wroteCall =
+					failure === undefined && reason?.kind === "completed" && lastCalled !== true && writesToolCall(lastText);
+				const promisedOnly =
+					!wroteCall &&
+					failure === undefined &&
+					reason?.kind === "completed" &&
+					toolCount === 0 &&
+					lastCalled !== true &&
+					info?.role === "room" &&
+					promisesWork(lastText) &&
+					!rt.callsRoomMember?.(id, info, lastText);
+				const retry =
+					(wroteCall || promisedOnly) &&
+					info?.retried !== true &&
+					!(info?.role === "room" && stoppedRoomTurns.has(info.exchangeId ?? ""));
+				if (retry) {
+					if (promisedOnly) {
+						const opening = stripWrittenCalls(lastText ?? "");
+						if (opening !== "") {
+							rememberStopped(promisedOpenings, info?.exchangeId ?? "");
+							void rt.roomStepText?.(id, info, opening, !shown)?.catch?.(() => undefined);
+						}
+						roomWaiters.get(info?.exchangeId ?? "")?.touch();
+						void retryPromisedWork(id, info).catch((error: unknown) =>
+							rt.warn("ocean-crew: asking %s to run its promised work failed: %s", id, error),
+						);
+					} else {
+						void retryWrittenCall(id, info).catch((error: unknown) =>
+							rt.warn("ocean-crew: asking %s to run its written tool call failed: %s", id, error),
+						);
+					}
+				}
+				const replyText = (): string => {
+					const reply = (wroteCall ? texts.map(stripWrittenCalls) : texts).join("\n\n").trim();
+					return wroteCall && reply === ""
+						? "Tried to run a tool but wrote the call as text, so it did not run."
+						: reply;
+				};
+				const groupReply = (): string => rt.withRoomSteps?.(held, replyText()) ?? replyText();
+				// Whoever the turn answers gets the same three-way rule: a failure notice, the
+				// turn's text (or a stopped-before-answer line), or nothing.
+				const name = rt.botOf(rt.selfOf(id))?.name ?? "The other Bot";
+				const answer = (source: Source | undefined, reply: string): void => {
+					if (!expectsReply(source) || answersUser(source) || source === undefined) return;
+					if (failure !== undefined) {
+						// The sender was told a reply comes later; without this it would wait forever.
+						tellSender(
+							id,
+							source,
+							`${name} could not answer your message: its model call failed (${failureLine(failure)}). Tell the user if it matters; do not retry right away.`,
+						);
+					} else if (reply !== "" || reason?.kind === "aborted") {
+						// A turn stopped before it could answer still owes the sender a line, or it
+						// would wait forever for a reply that never comes.
+						tellSender(
+							id,
+							source,
+							reply !== "" ? reply : `${name} was stopped before it could answer your message.`,
+						);
+					}
+				};
+				// Work a Bot asked for, also when what came back for it opens the turn: while
+				// anything handed on for it is still out, the answer waits; then it goes up with
+				// what came back. A failed or stopped turn answers at once.
+				const finish = (source: Source, reply: string): void => {
+					const work = rt.workOf?.(source);
+					if (!rt.ownsWork?.(rt.selfOf(id), work)) {
+						answer(source, reply);
+						return;
+					}
+					const asker = rt.workAsker?.(work);
+					if (failure !== undefined || reason?.kind === "aborted") {
+						answer(asker, reply);
+						return;
+					}
+					if (rt.waitsWork?.(work)) {
+						rt.holdWork?.(work, reply);
+						return;
+					}
+					// With what came back, the answer may pass what one message carries.
+					const text = rt.answerText?.(work, reply, name) ?? reply;
+					if (text.length <= MESSAGE_INLINE_MAX) {
+						tellSender(id, asker as Source, text);
+						return;
+					}
+					void rt
+						.attachLong?.(text, `Answer from ${name}.txt`)
+						.then((long: LongMessage | undefined) => tellSender(id, asker as Source, text, long))
+						.catch((error: unknown) => rt.warn("ocean-crew: answer from %s not sent: %s", name, error));
+				};
+				// A retried turn answers the same waiter or sender, so this one passes nothing on.
+				if (!retry && info?.role === "room") {
+					const waiter = roomWaiters.get(info.exchangeId ?? "");
+					roomWaiters.delete(info.exchangeId ?? "");
+					const stopped = stoppedRoomTurns.delete(info.exchangeId ?? "");
+					if (waiter !== undefined) {
+						if (failure !== undefined) waiter.fail(failure);
+						else waiter.resolve(reason?.kind === "aborted" ? null : groupReply());
+					} else if (!stopped && reason?.kind !== "aborted") {
+						// The round moved on without this member; how its turn ends still reaches the group.
+						if (failure !== undefined) void rt.lateRoomFailure?.(id, info, failure);
+						else void rt.lateRoomReply?.(id, info, groupReply(), { shown });
+					}
+				} else if (!retry && speaksInGroup(id, info)) {
+					// A turn that failed before it took any input (DSH can turn it down before its
+					// first step) never names its call, so the call waiting on this Session fails.
+					const inRound = failure !== undefined && info === undefined && rt.failRoomTurn?.(id, failure) === true;
+					if (failure !== undefined) {
+						if (!inRound) void rt.lateRoomFailure?.(id, info ?? {}, failure);
+					} else if (reason?.kind !== "aborted") void rt.lateRoomReply?.(id, info ?? {}, groupReply(), { shown });
+				} else if (!retry && info !== undefined) {
+					finish(info, replyText());
+				}
+				for (const request of joined) {
+					if (request.info.role === "room" && stoppedRoomTurns.delete(request.info.exchangeId ?? "")) continue;
+					// A failed or stopped turn closes the request like any other; a finished one
+					// hands it back to the Bot to answer next.
+					if (failure !== undefined || reason?.kind === "aborted") {
+						if (request.info.role === "room") {
+							if (failure !== undefined) void rt.lateRoomFailure?.(id, request.info, failure);
+						} else answer(request.info, "");
+						continue;
+					}
+					void rt
+						.deliver({
+							fromId: request.info.senderSessionId,
+							toId: rt.selfOf(id),
+							sessionId: id,
+							text: request.text,
+							role: request.info.role,
+							exchangeId: request.info.exchangeId,
+							...(request.info.role === "room"
+								? {
+										roomId: request.info.roomId,
+										askedBy: request.info.askedBy,
+										note: "you read this call during your last task; answer it now",
+									}
+								: {}),
+							...(request.info.senderRoomId ? { fromRoomId: request.info.senderRoomId } : {}),
+							deferred: true,
+						})
+						.catch((error: unknown) => rt.warn("ocean-crew: deferred request delivery failed: %s", error));
+				}
+				if (rt.groupOwners.has(id))
+					void rt
+						.goalSettled?.(rt.roomOf(rt.groupOwners.get(id)?.roomId))
+						?.catch((error: unknown) => rt.warn("ocean-crew: goal settle in %s failed: %s", id, error));
+				break;
+			}
+		}
+	});
+
+	const markSteerCut = (id: string): void => {
+		const entry = live.get(id);
+		if (entry?.turn !== undefined) entry.cut = { texts: entry.texts.length };
+	};
+
+	// DSH's prompt admission wraps any unexpected failure as 'session/agent-busy' and
+	// keeps the real cause in details.reason, which the window never shows and the log
+	// never saw (#424). For a Session this team owns, the reason is written to the
+	// diagnostics and put into the error the user reads.
+	const controller: any = ctx.sessionController;
+	const prompt = controller?.prompt;
+	if (typeof prompt === "function") {
+		const admitted = async function (this: unknown, request: any, ...rest: any[]): Promise<unknown> {
+			try {
+				return await prompt.call(this, request, ...rest);
+			} catch (error: any) {
+				const id = request?.sessionId;
+				if (id === undefined || (rt.roomOf(id) === undefined && !rt.isBotSession(id))) throw error;
+				// The reason can name local paths or carry tokens, so the same cleaning the
+				// diagnostics get applies before it reaches the client.
+				const reason =
+					typeof error?.details?.reason === "string" && error.details.reason !== ""
+						? cleanText(error.details.reason, rt.redactSecrets)
+						: undefined;
+				rt.noteFailure?.({
+					source: "prompt",
+					text: `prompt rejected for ${placeOf(id)}${reason === undefined ? "" : `: ${reason}`}`,
+					code: error?.code,
+					where: placeOf(id),
+					sessionId: id,
+				});
+				// The gateway passes a RemoteError's code and details on as they are, but wraps a
+				// fresh plain Error as 'gateway/internal': the reason is written on the rejection
+				// itself, keeping its identity.
+				if (reason !== undefined) {
+					error.message = `${error?.message ?? "prompt rejected"} — ${reason}`;
+					error.details = { ...error.details, reason };
+				}
+				throw error;
+			}
+		};
+		ctx.effect(() => {
+			controller.prompt = admitted;
+			return () => {
+				if (controller.prompt === admitted) controller.prompt = prompt;
+			};
+		}, "ocean-crew: prompt rejection reasons");
+	}
+
+	Object.assign(rt, {
+		live,
+		liveOf,
+		roomWaiters,
+		roomProgress,
+		roomInbox,
+		activityView,
+		workView,
+		roomWorkView,
+		turnsView,
+		steeredView,
+		callDetail,
+		doingOf,
+		stopRoomTurn,
+		stopChat,
+		releaseBot,
+		unblockBots,
+		resumeBot,
+		markSteerCut,
+		hasSubagents,
+		stopSubagents,
+	});
+}

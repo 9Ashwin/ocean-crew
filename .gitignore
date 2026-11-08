@@ -1,0 +1,29 @@
+node_modules/
+*.tgz
+# A DeepSeek Harness checkout for the tests and the test bench.
+/deepseek-harness/
+
+# Build products: install from a checkout after building, never from a bare clone.
+# `cd ocean-crew && npm run build` writes both from src/host, src/shared and
+# src/client; `ocean-crew/dev/install-local.mjs` copies them into the profile.
+/ocean-crew/dist/
+/ocean-crew/client.js
+
+# Test bench, local DSH data and the screenshots of dev/check.sh.
+.dsh-test*/
+.dsh-home/
+/shots/
+.playwright-mcp/
+
+# Extra patterns for scripts/scan.mjs that must not be named in the repository.
+.scan-extra
+
+# A local .env, never committed.
+/.env
+
+# Python bytecode from the development Python scripts.
+__pycache__/
+
+.idea
+# Local task records: working notes, never committed.
+/tasks/

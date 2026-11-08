@@ -1,0 +1,398 @@
+// The connector gateway: one local HTTP server inside the plugin process. Every remote
+// connector's mcp-client mounts `http://127.0.0.1:<port>/c/<id>` with a random
+// per-process nonce, so no real credential ever reaches the mcp-client config. The
+// gateway adds the credential here and streams the answer back. When a connector's
+// read-only switch is on, tools/list answers are filtered to readOnlyHint tools and
+// write tools/call is refused locally.
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import {
+	type ClientRequest,
+	createServer,
+	request as httpRequest,
+	type IncomingHttpHeaders,
+	type IncomingMessage,
+	type Server,
+	type ServerResponse,
+} from "node:http";
+import { request as httpsRequest } from "node:https";
+
+const FORWARD_HEADERS = ["mcp-session-id", "mcp-protocol-version", "last-event-id", "accept", "content-type"];
+const RETURN_HEADERS = ["content-type", "mcp-session-id", "mcp-protocol-version"];
+const RETRYABLE: ReadonlySet<string> = new Set(["GET", "POST", "DELETE"]);
+
+/** What the gateway sends upstream for one connector. */
+export interface GatewayUpstream {
+	url: string;
+	headers: Record<string, string>;
+}
+
+export interface GatewayOptions {
+	credential(id: string): GatewayUpstream | undefined;
+	readOnly(id: string): boolean;
+	onUnauthorized(id: string): Promise<boolean>;
+	log?: (...args: unknown[]) => void;
+}
+
+/** One local gateway server; `urlFor` is what an mcp-client mount points at. */
+export interface ConnectorGateway {
+	readonly port: number;
+	readonly nonce: string;
+	urlFor(id: string): string;
+	headers(): Record<string, string>;
+	forget(id: string): void;
+	listen(): Promise<void>;
+	close(): Promise<void>;
+}
+
+type Headers = Record<string, string | string[] | number | undefined>;
+type JsonRpc = { id?: unknown; method?: string; params?: { name?: string } };
+
+const nonceMatches = (header: unknown, nonce: string): boolean => {
+	const given = /^Bearer\s+(.+)$/i.exec(String(header ?? ""))?.[1] ?? "";
+	const a = Buffer.from(given);
+	const b = Buffer.from(nonce);
+	return a.length === b.length && timingSafeEqual(a, b);
+};
+
+const sseMessage = (body: string): string | null => {
+	// Pull the JSON-RPC payload out of an SSE body (one or more event frames).
+	const frames: string[] = [];
+	for (const block of body.split(/\r?\n\r?\n/)) {
+		const data = block
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trimStart())
+			.join("\n");
+		if (data !== "") frames.push(data);
+	}
+	return frames.length === 1 ? frames[0] : null;
+};
+
+// Upstreams are https; loopback HTTP is allowed for local custom servers.
+const loopbackHttp = (url: string): boolean => /^http:\/\/(127\.|localhost|::1)/i.test(String(url));
+const upstreamRequest = (
+	target: URL,
+	init: { method: string; headers: Headers },
+	onResponse: (response: IncomingMessage) => void,
+): ClientRequest =>
+	(target.protocol === "http:" && loopbackHttp(target.href) ? httpRequest : httpsRequest)(target, init, onResponse);
+
+const readAll = (stream: IncomingMessage): Promise<Buffer> =>
+	new Promise((resolve, reject) => {
+		if (stream.errored) {
+			reject(stream.errored);
+			return;
+		}
+		const chunks: Buffer[] = [];
+		stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+		stream.on("end", () => resolve(Buffer.concat(chunks)));
+		stream.on("error", reject);
+	});
+
+export function createGateway({
+	credential,
+	readOnly,
+	onUnauthorized,
+	log = () => {},
+}: GatewayOptions): ConnectorGateway {
+	const nonce = randomBytes(24).toString("base64url");
+	let server: Server | null = null;
+	let port = 0;
+	// Tool annotations seen in tools/list answers, per connector, for read-only checks.
+	const annotations = new Map<string, Map<string, boolean>>();
+
+	const toolReadOnly = (id: string, name: string | undefined): boolean =>
+		name !== undefined && annotations.get(id)?.get(name) === true;
+
+	// Marks annotations from a tools/list result, and filters it when read-only.
+	const processList = (id: string, result: any, filtered: boolean): any => {
+		const tools: any[] | null = Array.isArray(result?.result?.tools) ? result.result.tools : null;
+		if (tools === null) return result;
+		let flags = annotations.get(id);
+		if (flags === undefined) {
+			flags = new Map();
+			annotations.set(id, flags);
+		}
+		for (const tool of tools) flags.set(tool.name, tool.annotations?.readOnlyHint === true);
+		if (!filtered) return result;
+		return {
+			...result,
+			result: { ...result.result, tools: tools.filter((tool) => tool.annotations?.readOnlyHint === true) },
+		};
+	};
+
+	const refuseCall = (id: string, rpc: JsonRpc): unknown => ({
+		jsonrpc: "2.0",
+		id: rpc?.id ?? null,
+		error: {
+			code: -32600,
+			message: `The ${id} connector is read-only: this tool can change things, so it is off. Turn off the read-only switch in Settings → Connectors to use it.`,
+		},
+	});
+
+	// A 401 that survives the refresh: answer the JSON-RPC request with a reason the Bot
+	// can act on, instead of an empty HTTP error.
+	const signInAgain = (
+		id: string,
+		body: Buffer | undefined,
+		upstream: IncomingMessage,
+		res: ServerResponse,
+	): boolean => {
+		let rpc: any;
+		try {
+			rpc = JSON.parse(body?.toString("utf8") ?? "");
+		} catch {
+			return false;
+		}
+		if (rpc === null || typeof rpc !== "object" || Array.isArray(rpc) || rpc.id === undefined) return false;
+		upstream.resume();
+		res.writeHead(200, { "content-type": "application/json" });
+		res.end(
+			JSON.stringify({
+				jsonrpc: "2.0",
+				id: rpc.id,
+				error: {
+					code: -32001,
+					message: `The ${id} connector needs sign-in again. Call request_connector with id ${id} so the user can sign in, or ask them to sign in under Settings → Connectors.`,
+				},
+			}),
+		);
+		return true;
+	};
+
+	async function sendUpstream(
+		id: string,
+		entry: GatewayUpstream,
+		method: string,
+		path: string,
+		headers: IncomingHttpHeaders,
+		body: Buffer | undefined,
+	): Promise<IncomingMessage> {
+		return new Promise((resolve, reject) => {
+			const target = new URL(entry.url);
+			const suffix = new URL(path, "http://x");
+			if (suffix.pathname !== "/") {
+				target.pathname = `${target.pathname.replace(/\/$/, "")}/${suffix.pathname.replace(/^\//, "")}`;
+			}
+			for (const [key, value] of suffix.searchParams) target.searchParams.append(key, value);
+			const outgoing: Headers = { ...entry.headers };
+			for (const name of FORWARD_HEADERS) if (headers[name] !== undefined) outgoing[name] = headers[name];
+			if (body !== undefined) outgoing["content-length"] = body.length;
+			const req = upstreamRequest(target, { method, headers: outgoing }, (upstream) => {
+				// This listener must exist before refresh awaits: the response can fail
+				// before the handler starts consuming it.
+				upstream.on("error", reject);
+				// GET 405 is the normal answer from servers without a standalone stream.
+				if ((upstream.statusCode ?? 0) >= 400 && !(method === "GET" && upstream.statusCode === 405))
+					log(
+						"ocean-crew: connector %s upstream %s HTTP %s (session: %s)",
+						id,
+						method,
+						upstream.statusCode,
+						headers["mcp-session-id"] !== undefined,
+					);
+				resolve(upstream);
+			});
+			req.on("error", reject);
+			if (body !== undefined) req.write(body);
+			req.end();
+		});
+	}
+
+	const returnHeaders = (upstream: IncomingMessage): Headers => {
+		const heads: Headers = {};
+		for (const name of RETURN_HEADERS) if (upstream.headers[name] !== undefined) heads[name] = upstream.headers[name];
+		return heads;
+	};
+
+	async function handle(id: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+		const entry = credential(id);
+		if (entry === undefined) {
+			res.writeHead(404, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: "connector not connected" }));
+			return;
+		}
+		if (!/^https:\/\//i.test(entry.url) && !loopbackHttp(entry.url)) {
+			res.writeHead(502, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: "connector address must be https" }));
+			return;
+		}
+		const method = req.method ?? "GET";
+		const suffix = (req.url ?? "").slice(`/c/${id}`.length);
+		const path = suffix === "" ? "/" : suffix;
+		const limited = readOnly(id) === true;
+		const body = method === "GET" || method === "HEAD" ? undefined : await readAll(req);
+		// Read-only: a write tools/call never reaches the server.
+		if (limited && method === "POST" && body !== undefined) {
+			let rpc: any;
+			try {
+				rpc = JSON.parse(body.toString("utf8"));
+			} catch {
+				rpc = null;
+			}
+			if (Array.isArray(rpc)) {
+				// A batch could hide a write call, so read-only refuses them outright.
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(
+					JSON.stringify({
+						jsonrpc: "2.0",
+						id: null,
+						error: { code: -32600, message: `The ${id} connector is read-only: batched calls are refused.` },
+					}),
+				);
+				return;
+			}
+			if (rpc?.method === "tools/call" && !toolReadOnly(id, rpc.params?.name)) {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify(refuseCall(id, rpc)));
+				return;
+			}
+			if (rpc?.method === "tools/list") {
+				let upstream = await sendUpstream(id, entry, method, path, req.headers, body);
+				if (upstream.statusCode === 401) {
+					const retried = await onUnauthorized(id);
+					if (retried === true) {
+						upstream.resume();
+						upstream = await sendUpstream(id, credential(id) ?? entry, method, path, req.headers, body);
+					}
+				}
+				if (upstream.statusCode === 401 && signInAgain(id, body, upstream, res)) return;
+				const raw = await readAll(upstream);
+				const isSse = String(upstream.headers["content-type"] ?? "").includes("text/event-stream");
+				const payload = isSse ? sseMessage(raw.toString("utf8")) : raw.toString("utf8");
+				let out = raw;
+				try {
+					const parsed = payload === null ? null : JSON.parse(payload);
+					if (parsed !== null) {
+						const filtered = JSON.stringify(processList(id, parsed, true));
+						out = isSse ? Buffer.from(`event: message\ndata: ${filtered}\n\n`) : Buffer.from(filtered);
+					}
+				} catch {
+					// Pass the answer through unchanged.
+				}
+				const heads = returnHeaders(upstream);
+				if (!isSse) heads["content-length"] = out.length;
+				else delete heads["content-length"];
+				res.writeHead(upstream.statusCode ?? 502, heads);
+				res.end(out);
+				return;
+			}
+		}
+		if (!RETRYABLE.has(method)) {
+			res.writeHead(405, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: "method not allowed" }));
+			return;
+		}
+		let upstream: IncomingMessage;
+		try {
+			upstream = await sendUpstream(id, entry, method, path, req.headers, body);
+			// One refresh + retry when the answer is still unsent.
+			if (upstream.statusCode === 401) {
+				const retried = await onUnauthorized(id);
+				if (retried === true) {
+					upstream.resume();
+					upstream = await sendUpstream(id, credential(id) ?? entry, method, path, req.headers, body);
+				}
+			}
+			if (upstream.errored) throw upstream.errored;
+		} catch (error) {
+			log("ocean-crew: connector gateway %s: %s", id, error instanceof Error ? error.message : error);
+			res.writeHead(502, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: "connector upstream failed" }));
+			return;
+		}
+		if (upstream.statusCode === 401 && method === "POST" && signInAgain(id, body, upstream, res)) return;
+		// tools/list without the read-only filter still feeds the annotation cache.
+		const isList =
+			method === "POST" &&
+			body !== undefined &&
+			(() => {
+				try {
+					return JSON.parse(body.toString("utf8"))?.method === "tools/list";
+				} catch {
+					return false;
+				}
+			})();
+		const heads = returnHeaders(upstream);
+		if (!isList || limited) {
+			const close = (): void => {
+				upstream.destroy();
+			};
+			res.on("close", close);
+			upstream.on("end", () => res.off("close", close));
+			upstream.on("error", () => {
+				log("ocean-crew: connector %s upstream %s stream failed", id, method);
+				res.destroy();
+			});
+			res.writeHead(upstream.statusCode ?? 502, heads);
+			upstream.pipe(res);
+			return;
+		}
+		// Unfiltered tools/list: buffer to learn annotations, then send as-is.
+		const raw = await readAll(upstream);
+		try {
+			const isSse = String(upstream.headers["content-type"] ?? "").includes("text/event-stream");
+			const payload = isSse ? sseMessage(raw.toString("utf8")) : raw.toString("utf8");
+			if (payload !== null) processList(id, JSON.parse(payload), false);
+		} catch {
+			// Annotations stay as they were.
+		}
+		res.writeHead(upstream.statusCode ?? 502, heads);
+		res.end(raw);
+	}
+
+	return {
+		get port() {
+			return port;
+		},
+		get nonce() {
+			return nonce;
+		},
+		urlFor(id: string) {
+			return `http://127.0.0.1:${port}/c/${id}`;
+		},
+		headers() {
+			return { Authorization: `Bearer ${nonce}` };
+		},
+		forget(id: string) {
+			annotations.delete(id);
+		},
+		async listen() {
+			if (server !== null) return;
+			const created = createServer((req, res) => {
+				req.on("error", () => res.destroy());
+				res.on("error", () => req.destroy());
+				const found = /^\/c\/([A-Za-z0-9_-]{1,32})/.exec(req.url ?? "");
+				if (found === null || !nonceMatches(req.headers.authorization, nonce)) {
+					res.writeHead(404);
+					res.end();
+					return;
+				}
+				handle(found[1], req, res).catch((error: unknown) => {
+					log("ocean-crew: connector gateway: %s", error instanceof Error ? error.message : error);
+					if (res.headersSent) res.destroy();
+					else {
+						res.writeHead(502);
+						res.end();
+					}
+				});
+			});
+			created.on("error", (error) =>
+				log("ocean-crew: connector gateway server failed: %s", (error as NodeJS.ErrnoException).code ?? "error"),
+			);
+			await new Promise<void>((resolve, reject) => {
+				created.once("error", reject);
+				created.listen(0, "127.0.0.1", resolve);
+			});
+			server = created;
+			const address = created.address();
+			port = typeof address === "object" && address !== null ? address.port : 0;
+		},
+		async close() {
+			const closing = server;
+			server = null;
+			if (closing !== null) await new Promise<void>((resolve) => closing.close(() => resolve()));
+			annotations.clear();
+		},
+	};
+}

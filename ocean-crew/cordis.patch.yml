@@ -1,0 +1,20 @@
+# Mounts the Bot team host plugin; the browser half is discovered through the
+# package's dsh.client manifest and ./client export. The second entry is the
+# search provider registered by src/web-search.ts (built to dist/web-search.js).
+- insert:
+    - id: bot
+      name: ocean-crew
+    # Web search with the current conversation route's own key, else a keyless
+    # results-page fallback (see README "网页搜索").
+    - id: web-search-auto
+      name: ocean-crew/web-search
+
+# A config override replaces the whole entry config, so fetchProvider is
+# restated. A profile patch that names another searchProvider (exa, perplexity,
+# deepseek-official) wins over this one. Turning off web-search-auto alone
+# leaves this row on "auto", and every web_search then fails; the profile must
+# name another searchProvider too (see README "网页搜索").
+- id: web
+  config:
+    searchProvider: auto
+    fetchProvider: http
