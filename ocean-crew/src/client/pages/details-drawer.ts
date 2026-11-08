@@ -1,5 +1,4 @@
 import { Fragment, createElement as h, useEffect, useRef, useState } from "react";
-import { ComputerView } from "../chat/computer.ts";
 import { BotConnectors } from "../chat/connectors.ts";
 import {
 	MemberApprovals,
@@ -43,7 +42,7 @@ function transcriptOf(list: any, id: string, name: string, hiddenTurns: any[] = 
 	return lines.join("\n\n");
 }
 
-const TAB_LABELS: Record<string, string> = { details: "Details", browser: "Browser", computer: "Computer" };
+const TAB_LABELS: Record<string, string> = { details: "Details", browser: "Browser" };
 
 const hostOf = (url: string): string => {
 	try {
@@ -437,7 +436,6 @@ export function DetailsDrawer({
 	useWork,
 	useBrowserTabs,
 	useBrowserPages,
-	useComputer,
 }: any) {
 	const owner = roster.byId[sessionId];
 	const part = owner ? currentPart(owner) : sessionId;
@@ -601,11 +599,7 @@ export function DetailsDrawer({
 	};
 	const subtitle = bot ? bot.role : roomSubtitle(room, roster);
 	// Tab sets: a 1:1 Bot has Details and Browser; a group has only Details, so no tab row.
-	const tabs = bot
-		? roster.computer?.enabled === true
-			? ["details", "browser", "computer"]
-			: ["details", "browser"]
-		: ["details"];
+	const tabs = bot ? ["details", "browser"] : ["details"];
 	return [
 		h(Fragment, { key: "top" }, top),
 		h(
@@ -683,7 +677,6 @@ export function DetailsDrawer({
 			room && tab === "details"
 				? h(GroupOverview, { room, roster, actions, usage, useWork, openSettings: () => setView("settings") })
 				: null,
-			bot && tab === "computer" ? h(ComputerView, { bot, actions, hooks: { useComputer } }) : null,
 			bot && tab === "details"
 				? [
 						h(RunStats, { key: "stats", bot, part, running, actions }),

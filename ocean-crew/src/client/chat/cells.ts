@@ -43,7 +43,6 @@ import { heldCardKey } from "../shell/sources.ts";
 import { BtwCardView } from "./btw.ts";
 import { partIndexOf, withBtwRows } from "./btw-model.ts";
 import { CellEmpty } from "./cell-empty.ts";
-import { AppAccessCall, ComputerCallRow, ComputerHandoffCall } from "./computer.ts";
 import { ConnectorToolCell, MailToolCell } from "./connectors.ts";
 import { FOLD_AT, FOLD_HUGE, stripLongNote, useFold } from "./fold.ts";
 import { HandoffCall } from "./handoff-card.ts";
@@ -1531,7 +1530,6 @@ export const PHRASES = {
 	working: ["On it", "Busy with it", "Moving ahead", "Taking care of it", "Making headway"],
 };
 const TOOL_PHRASES = [
-	[/^cua(_driver_native__|$)|^computer_/, "Using the computer"],
 	[/web_?search|search_?web/i, "Searching online"],
 	[/fetch|browse|browser|web/i, "Reading a page"],
 	[/shell|bash|pwsh|powershell|exec|command|terminal/i, "Running shell commands"],
@@ -1848,7 +1846,6 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
 
 // The calls ToolCell draws. A PTC program (`run_code`) dispatches the real tools as
 // its sub-calls, so a call draws by its own name wherever it sits in the tree.
-const isComputerCall = (name: any) => name === "cua" || name?.startsWith("cua_driver_native__") === true;
 const DRAWN = new Set([
 	"message_bot",
 	"stop_bot",
@@ -1871,15 +1868,7 @@ const DRAWN = new Set([
 	"forget",
 ]);
 // Calls whose card a dock above the composer carries when the call is not drawn.
-const CARDS = new Set([
-	"ask_user",
-	"request_secret",
-	"request_connector",
-	"mail_send",
-	"show_view",
-	"browser_handoff",
-	"computer_handoff",
-]);
+const CARDS = new Set(["ask_user", "request_secret", "request_connector", "mail_send", "show_view", "browser_handoff"]);
 
 // The root and its sub-calls in dispatch order, each call once.
 export function callTree(root: any) {
@@ -2056,8 +2045,6 @@ function renderCall(call: any, { sessionId, roster, actions, useUi, useWork, fin
 			});
 		case "browser_handoff":
 			return h(HandoffCall, { sessionId, callId: call.callId, roster, actions, heldCards, hooks });
-		case "computer_handoff":
-			return h(ComputerHandoffCall, { sessionId, callId: call.callId, roster, actions, heldCards, hooks });
 		case "ask_user_question": {
 			if (!done) return h(CellEmpty);
 			let parsed = null;
@@ -2092,14 +2079,6 @@ function renderCall(call: any, { sessionId, roster, actions, useUi, useWork, fin
 					})
 				: h(CellEmpty);
 		default:
-			if (isComputerCall(tool)) {
-				return h(
-					Fragment,
-					null,
-					h(ComputerCallRow, { sessionId, call, roster, actions, hooks }),
-					h(AppAccessCall, { sessionId, callId: call.callId, roster, actions, heldCards, hooks }),
-				);
-			}
 			return h(CellEmpty);
 	}
 }
@@ -2114,7 +2093,6 @@ export function ToolCell({
 	useBrowserHolds,
 	useBrowserTabs,
 	useBrowserPages,
-	useComputer,
 	actions,
 }: any) {
 	const roster = useRoster((value: any) => value);
@@ -2126,7 +2104,7 @@ export function ToolCell({
 		roster.byId[nameOrId] ??
 		roster.bots.find((bot: any) => bot.name.toLowerCase() === String(nameOrId ?? "").toLowerCase());
 	const calls = hidden ? [] : callTree(root);
-	const drawn = calls.filter((call) => DRAWN.has(toolName(call) as any) || isComputerCall(toolName(call) as any));
+	const drawn = calls.filter((call) => DRAWN.has(toolName(call) as any));
 	// The newest call still running names the work, so a program reads as the tool it is in.
 	const running = root.kind === "tool-result" ? undefined : calls.findLast((call) => call.kind !== "tool-result");
 	const note = running
@@ -2137,9 +2115,7 @@ export function ToolCell({
 	useShownCards(
 		actions,
 		sessionId,
-		drawn
-			.filter((call) => (CARDS.has(toolName(call) as any) || isComputerCall(toolName(call) as any)) && call.callId)
-			.map((call) => call.callId),
+		drawn.filter((call) => CARDS.has(toolName(call) as any) && call.callId).map((call) => call.callId),
 	);
 	if (drawn.length === 0) return h(CellEmpty);
 	const env = {
@@ -2150,7 +2126,7 @@ export function ToolCell({
 		useWork,
 		findBot,
 		heldCards,
-		hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages, useComputer },
+		hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages },
 	};
 	return h(
 		Fragment,

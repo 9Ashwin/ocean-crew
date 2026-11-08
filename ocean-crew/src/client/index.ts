@@ -14,7 +14,6 @@ import {
 	TurnProcessCell,
 	TurnTailCell,
 } from "./chat/cells.ts";
-import { AppAccessDock, COMPUTER_CSS, ComputerHandoffDock, ComputerIndicator } from "./chat/computer.ts";
 import { CONNECTOR_CSS, ConnectorDock, MailDock } from "./chat/connectors.ts";
 import { HANDOFF_CSS, HandoffDock } from "./chat/handoff-card.ts";
 import { LEARNING_CSS, LearningDock, LearningTurnTail } from "./chat/learning-card.ts";
@@ -232,9 +231,6 @@ export function apply(ctx: ClientContext): void {
 	let liveKey: string | undefined;
 	// Per Session, what its transcript has in flight (running tools, a streaming reply).
 	const live = createSource({});
-	// Computer use: leases, per-Bot control, pending app cards and holds.
-	const computer = createSource({});
-	let computerKey = "{}";
 	// Per Session, the ask_user and request_secret calls its transcript draws; the docks
 	// carry the cards of the other calls.
 	const cards = createSource({});
@@ -295,13 +291,6 @@ export function apply(ctx: ClientContext): void {
 			if (nextWork !== workKey) {
 				workKey = nextWork;
 				work.set(value.work);
-			}
-		}
-		if (value.computerLive !== undefined) {
-			const nextComputer = JSON.stringify(value.computerLive);
-			if (nextComputer !== computerKey) {
-				computerKey = nextComputer;
-				computer.set(value.computerLive);
 			}
 		}
 		if (value.memoryNews !== undefined) noteMemoryNews(value.memoryNews);
@@ -1062,108 +1051,6 @@ export function apply(ctx: ClientContext): void {
 	const browserTabs = browsers?.tabs ?? createSource({});
 	const browserHolds = browsers?.holds ?? createSource({});
 
-	// The desktop app carries the floating indicator and the tray entries, and reads the OS
-	// idle time for the foreground gate; the entries and the pushes ride its bridge.
-	const appComputer = (globalThis as any).dsBotApp;
-	if (typeof appComputer?.computer === "function") {
-		ctx.effect(() => {
-			const nameOf = (id: string) => roster.getSnapshot().byId[id]?.name ?? "a Bot";
-			const sync = () => {
-				const liveValue = computer.getSnapshot();
-				const name = (id: string) => nameOf(id);
-				const look = (id: string) => lookOf(roster.getSnapshot().byId[id]);
-				const rows = ((liveValue as any).leases ?? []).map((entry: any) => ({
-					botId: entry.botId,
-					name: name(entry.botId),
-					app: entry.kind === "foreground" ? t("In the foreground") : entry.appName,
-					label:
-						entry.kind === "foreground"
-							? t("{name} · foreground", { name: name(entry.botId) })
-							: `${name(entry.botId)} · ${entry.appName}`,
-					color: look(entry.botId).color,
-					avatar: look(entry.botId).image,
-				}));
-				for (const [botId, entry] of Object.entries((liveValue as any).bots ?? {}) as [string, any][]) {
-					if (entry.waitingFor === "user-idle") {
-						rows.push({
-							botId,
-							waiting: true,
-							name: name(botId),
-							app: t("waits for the computer"),
-							label: t("{name} waits for the computer", { name: name(botId) }),
-							color: look(botId).color,
-							avatar: look(botId).image,
-						});
-					}
-				}
-				appComputer.computer({
-					rows,
-					labels: { stop: t("Stop"), stopAll: t("Stop all"), letGo: t("Let it continue") },
-				});
-			};
-			sync();
-			return computer.subscribe(sync);
-		}, "ocean-crew: computer indicator");
-	}
-	if (typeof appComputer?.computerCursor === "function") {
-		ctx.effect(() => {
-			// Cursor events get their own long-poll: the shared state poll drops to 10 s while
-			// the window is hidden, far too slow for an on-screen cursor.
-			let dead = false;
-			const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-			const run = async () => {
-				let after = 0;
-				while (!dead) {
-					if ((roster.getSnapshot() as any).computer?.enabled !== true) {
-						await pause(2000);
-						continue;
-					}
-					try {
-						const reply = await call("computer-cursor-wait", { after });
-						for (const event of reply?.events ?? []) {
-							if (Number.isFinite(event.seq) && event.seq > after) after = event.seq;
-							if (Number.isFinite(event.t) && Number.isFinite(reply?.now) && reply.now - event.t > 3000)
-								continue;
-							appComputer.computerCursor({
-								...event,
-								color: lookOf(roster.getSnapshot().byId[event.botId]).color,
-								avatar: lookOf(roster.getSnapshot().byId[event.botId]).image,
-							});
-						}
-					} catch {
-						await pause(2000);
-					}
-				}
-			};
-			void run();
-			return () => {
-				dead = true;
-			};
-		}, "ocean-crew: computer cursor");
-	}
-	if (typeof appComputer?.idleSeconds === "function") {
-		ctx.effect(() => {
-			const push = () => {
-				if ((roster.getSnapshot() as any).computer?.enabled !== true) return;
-				void Promise.resolve(appComputer.idleSeconds())
-					.then((idle: unknown) => {
-						if (Number.isFinite(idle)) call("computer-user-active", { idleSeconds: idle }).catch(() => {});
-					})
-					.catch(() => {});
-			};
-			const timer = setInterval(push, 2000);
-			return () => {
-				clearInterval(timer);
-			};
-		}, "ocean-crew: computer user active");
-	}
-	if (typeof appComputer?.onComputerAction === "function") {
-		appComputer.onComputerAction(({ kind, botId }: any) => {
-			if (kind === "stop") void actions.computerStop(botId);
-			else if (kind === "stopall") void actions.computerStop(null, true);
-			else if (kind === "letgo") void actions.computerAllowForeground(botId);
-		});
-	}
 	const face = () => ({
 		actions,
 		hooks: {
@@ -1175,7 +1062,6 @@ export function apply(ctx: ClientContext): void {
 			registry,
 			turnClock,
 			live,
-			computer,
 			cards,
 			heldCards,
 			browserPages,
@@ -1460,7 +1346,6 @@ export function apply(ctx: ClientContext): void {
 		// "··· More"), which comes back in Agent mode.
 		() => shadow("settings.launcher", { priority: BOT_PRIORITY, inject: face }, AccountLauncher),
 		() => shadow("settings.onboarding", { id: MODELS_STEP, order: MODELS_STEP_ORDER }, OpenModelsStep),
-		() => shadow("shell.overlay", { id: "bot-computer", order: 40, inject: face }, ComputerIndicator),
 		() => shadow("shell.overlay", { id: "bot", order: 50, inject: face }, Overlays),
 		() => shadow("shell.overlay", { id: "bot-signin", order: 55, inject: face }, DeepSeekSignIn),
 		() => shadow("shell.overlay", { id: "bot-toast", order: 60, inject: face }, ErrorToast),
@@ -1574,13 +1459,6 @@ export function apply(ctx: ClientContext): void {
 		() =>
 			shadow(
 				"conversation.input.dock",
-				{ id: "bot-computer-handoff", order: -84, inject: face },
-				ComputerHandoffDock,
-			),
-		() => shadow("conversation.input.dock", { id: "bot-computer-app", order: -83, inject: face }, AppAccessDock),
-		() =>
-			shadow(
-				"conversation.input.dock",
 				{ id: "bot-learning", order: 850, priority: BOT_PRIORITY, inject: face },
 				LearningDock,
 			),
@@ -1596,7 +1474,6 @@ export function apply(ctx: ClientContext): void {
 	];
 	// The return button belongs to neither group: it renders only in Agent mode.
 	ctx.effect(() => installCompiledStyles(RETURN_CSS, "return"), "ocean-crew: return styles");
-	ctx.effect(() => installCompiledStyles(COMPUTER_CSS, "computer"), "ocean-crew: computer styles");
 	shadow("sidebar.footer.action", { id: "bot-return", order: -300, inject: face }, BotReturn);
 
 	// The main view decides `plain`: a DSH Agent Session keeps the Bot shell but withdraws

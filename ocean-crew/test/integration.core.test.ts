@@ -483,7 +483,6 @@ test("the state answer carries the M3 views once their modules are installed", a
 		btwView: () => ({ chief: [{ id: "c1", text: "aside" }] }),
 		sideView: () => ({ chief: [{ id: "s1", title: "why" }] }),
 		imView: () => ({ connections: [{ id: "im-1" }], platforms: ["feishu"] }),
-		computerView: () => ({ enabled: true }),
 	});
 	const after = await rig.call("state", {});
 	assert.deepEqual(after.value.secrets, [{ name: "DEEPSEEK_API_KEY", holders: [] }]);
@@ -492,6 +491,5 @@ test("the state answer carries the M3 views once their modules are installed", a
 	assert.deepEqual(after.value.btwCards, { chief: [{ id: "c1", text: "aside" }] });
 	assert.deepEqual(after.value.sideChats, { chief: [{ id: "s1", title: "why" }] });
 	assert.deepEqual(after.value.im, { connections: [{ id: "im-1" }], platforms: ["feishu"] });
-	assert.deepEqual(after.value.computer, { enabled: true });
 	assert.ok(lastCall(rig.calls, "loadSecrets") !== undefined, "state reloads the secrets view");
 });

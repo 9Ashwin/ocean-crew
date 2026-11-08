@@ -17,7 +17,7 @@
 
 - **请求：** `{ endpoint, payload }`。解析不了的请求体按 `endpoint: ''` 处理，也就是未知端点。
 - **响应：** 总是 HTTP 200，JSON 主体，要么 `{ ok: true, value }`，要么 `{ ok: false, error: { code, message, details } }`。客户端读 `value`，在 `ok: false` 时抛错；`message` 是给用户看的文本，`code` 是机器字段。
-- **端点是封闭集合。** `handle()` 对 `endpoint` 做分支：已知名字走它自己的分支，`computer-*` 名字交给 computer 模块，其余一律回答 `bot/not-found`。增加、重命名或删除端点都是客户端可见的改动。
+- **端点是封闭集合。** `handle()` 对 `endpoint` 做分支：已知名字走它自己的分支，其余一律回答 `bot/not-found`。增加、重命名或删除端点都是客户端可见的改动。
 - **没有团队锁的 host 只回答 `READS`。** `READS`（在 `channel.ts` 里）列出第二个 dsh 仍可提供的端点——`state`、各个读取端点、诊断，以及更新和审批回答。其他端点都以 `bot/read-only` 失败，拒绝消息里会点名另一个 host。若被破坏：两个 host 都写团队文件，互相撤销对方的改动。
 - **错误码保留 `bot/` 前缀。** 抛出的错误若 `code` 以 `bot/` 开头就保留；`TypeError`、`ReferenceError`、`RangeError`、`SyntaxError` 或 `E*` 系统错误码变成 `bot/internal`（连同调用栈记入日志）；其余变成 `bot/refused`。在用的错误码包括 `bot/invalid`、`bot/not-found`、`bot/stale`、`bot/read-only`、`bot/forbidden`、`bot/unavailable`、`bot/busy`、`bot/missing`、`bot/browser-off`、`bot/internal`、`bot/refused` 和 `bot/error`。必须保持：已有错误码的含义不变。若被破坏：客户端会把用户的拒绝记成崩溃，或者把崩溃显示成拒绝。
 - **`state` 是名册回答。** 它带有 `revision`、团队视图和 live 字段；配合上一次的 `revision`、`modelsKey` 和 `liveKey`，它可以回答 `{ revision, unchanged: true, liveKey }`，而 live 字段按各自的序列化缓存，所以没变化的回答就是一个小对象。必须保持：这三个键。若被破坏：打开着的窗口会停止更新，直到重新加载。

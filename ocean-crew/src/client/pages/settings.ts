@@ -1,5 +1,4 @@
 import { Component, createElement as h, useCallback, useEffect, useRef, useState } from "react";
-import { ComputerPage } from "../chat/computer.ts";
 import { KeyIcon, SecretsPage } from "../chat/secret-card.ts";
 import { t } from "../core/i18n.ts";
 import {
@@ -56,7 +55,6 @@ const SETTINGS_PAGES: ReadonlyArray<readonly [string, string]> = [
 	["im", "IM"],
 	["capabilities", "Capabilities"],
 	["browser", "Browser"],
-	["computer", "Computer use"],
 	["schedules", "Scheduled tasks"],
 	["usage", "Usage"],
 	["secrets", "Secrets"],
@@ -70,7 +68,6 @@ const PAGE_ICONS: Record<string, any> = {
 	im: ChatsIcon,
 	capabilities: PlugIcon,
 	browser: GlobeIcon,
-	computer: MonitorIcon,
 	schedules: ClockIcon,
 	secrets: KeyIcon,
 	feedback: FeedbackIcon,
@@ -861,9 +858,6 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
 							h(
 								PageBoundary,
 								null,
-								shown === "computer"
-									? h(ComputerPage, { roster, actions, run, Section: SetSection, Row: SetRow, Switch })
-									: null,
 								shown === "general" ? h(GeneralPage, { roster, actions, run }) : null,
 								shown === "models" ? h(ProvidersPage, { actions, run, Section: SetSection }) : null,
 								bot

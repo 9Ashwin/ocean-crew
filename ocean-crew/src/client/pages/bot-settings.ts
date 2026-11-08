@@ -1,5 +1,4 @@
 import { Fragment, createElement as h, useCallback, useEffect, useRef, useState } from "react";
-import { BotComputerCard } from "../chat/computer.ts";
 import { t } from "../core/i18n.ts";
 import {
 	bodyOf,
@@ -575,7 +574,6 @@ export function BotSettingsForm({ bot, roster, actions, run }: any) {
 			),
 		),
 		h(BotCapabilitiesCard, { bot, roster, actions, run, Card, SwitchRow }),
-		h(BotComputerCard, { bot, roster, actions, run, Card, Row }),
 		roster.memory === false ? null : h(MemoryCard, { bot, actions }),
 		h(BotSchedules, { bot, roster, actions }),
 		h(

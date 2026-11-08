@@ -42,13 +42,6 @@ export interface BotBlocked {
 	[key: string]: unknown;
 }
 
-// The computer-use switch held per Bot: its level and the apps the user granted.
-export interface BotComputer {
-	level?: string;
-	apps?: Record<string, { name?: string; grantedAt?: number }>;
-	[key: string]: unknown;
-}
-
 export interface Bot {
 	id: BotId;
 	name: string;
@@ -73,7 +66,6 @@ export interface Bot {
 	createdAt?: number;
 	kickoff?: BotKickoff;
 	blocked?: BotBlocked;
-	computer?: BotComputer;
 	browserGrants?: unknown[];
 	permission?: string;
 	archivePath?: string;
@@ -240,12 +232,6 @@ export interface CapabilitiesState {
 	items: Record<string, Capability>;
 }
 
-export interface ComputerState {
-	enabled?: boolean;
-	bots?: Record<BotId, BotComputer>;
-	[key: string]: unknown;
-}
-
 export interface Prefs {
 	defaultBotModel?: string;
 	enterToSend?: boolean;
@@ -296,7 +282,6 @@ export interface TeamState {
 	prefs: Prefs;
 	switching: Record<string, unknown>;
 	revision: number;
-	computer?: ComputerState;
 	whaleStored?: boolean;
 	im?: ImState;
 	secrets?: Record<string, unknown>;

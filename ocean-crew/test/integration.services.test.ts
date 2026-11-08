@@ -1,4 +1,4 @@
-// Integration: browser, IM and computer endpoints against a runtime whose side-effect
+// Integration: browser and IM endpoints against a runtime whose side-effect
 // modules are attached one at a time. Each endpoint refuses `bot/unavailable` before its
 // module publishes the member and answers once it does; the browser's two absences stay
 // distinct: no module is `bot/unavailable`, a module without a
@@ -195,7 +195,6 @@ function moduleMembers(rig: Rig): Record<string, unknown> {
 			},
 		},
 		imEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),
-		computerEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),
 	};
 }
 
@@ -207,8 +206,8 @@ const PROBES: Record<string, unknown> = {
 	"browser-stop": { botId: "chief" },
 };
 
-test("the M5 surface is disjoint from M2 and M3, and no static placeholder remains", () => {
-	assert.equal(SERVICE_ENDPOINTS.length, 29);
+test("the service surface is disjoint from the channel and module endpoints, and no static placeholder remains", () => {
+	assert.equal(SERVICE_ENDPOINTS.length, 14);
 	assert.equal(UNAVAILABLE_ENDPOINTS.size, 0, "every known endpoint is wired dynamically");
 	for (const endpoint of SERVICE_ENDPOINTS) {
 		assert.ok(!CHANNEL_ENDPOINTS.includes(endpoint), `${endpoint} is not M2`);
@@ -218,8 +217,7 @@ test("the M5 surface is disjoint from M2 and M3, and no static placeholder remai
 		const known =
 			CHANNEL_ENDPOINTS.includes(endpoint) ||
 			MODULE_ENDPOINTS.includes(endpoint) ||
-			SERVICE_ENDPOINTS.includes(endpoint) ||
-			endpoint.startsWith("computer-");
+			SERVICE_ENDPOINTS.includes(endpoint);
 		assert.ok(known, `${endpoint} is a known read endpoint`);
 	}
 });
@@ -237,7 +235,7 @@ test("every service endpoint refuses before its module loads, naming the missing
 	}
 });
 
-test("IM and computer endpoints pass the earlier endpoint name and body through", async (t) => {
+test("IM endpoints pass the endpoint name and body through", async (t) => {
 	const rig = makeRig();
 	t.after(async () => {
 		await rig.dispose();
@@ -249,15 +247,6 @@ test("IM and computer endpoints pass the earlier endpoint name and body through"
 		assert.equal(answer.ok, true, endpoint);
 		assert.deepEqual(answer.value, { endpoint, body }, endpoint);
 	}
-	for (const endpoint of SERVICE_ENDPOINTS.filter((name) => name.startsWith("computer-"))) {
-		const body = { probe: endpoint };
-		const answer = await rig.call(endpoint, body);
-		assert.equal(answer.ok, true, endpoint);
-		assert.deepEqual(answer.value, { endpoint: endpoint.slice("computer-".length), body }, endpoint);
-	}
-	// A suffix the list does not name still reaches the module through the prefix branch.
-	const future = await rig.call("computer-future-action", { x: 1 });
-	assert.deepEqual(future.value, { endpoint: "future-action", body: { x: 1 } });
 });
 
 test("browser-wait and browser-result answer from the channel and keep browser-off distinct", async (t) => {
@@ -366,7 +355,7 @@ test("browser-stop cancels the turn, stops group work and records the hold", asy
 	assert.equal((await rig.call("browser-stop", { botId: "nobody" })).error.code, "bot/not-found");
 });
 
-test("the state and live answers carry the M5 views once the modules are installed", async (t) => {
+test("the state and live answers carry the service views once the modules are installed", async (t) => {
 	const rig = makeRig();
 	t.after(async () => {
 		await rig.dispose();
@@ -374,20 +363,15 @@ test("the state and live answers carry the M5 views once the modules are install
 	const before = await rig.call("state", {});
 	assert.equal(before.value.browser, false);
 	assert.deepEqual(before.value.im, { connections: [], platforms: [] });
-	assert.deepEqual(before.value.computer, { enabled: false });
 	rig.attachAll({
 		browserEnabled: true,
 		imView: () => ({ connections: [{ id: "im-1" }], platforms: ["feishu"] }),
 		imStatusView: () => ({ "im-1": { state: "on" } }),
 		imViaView: () => ({ chief: "feishu" }),
-		computerView: () => ({ enabled: true, leases: [] }),
-		computerLive: () => ({ leases: [{ botId: "chief", kind: "foreground" }] }),
 	});
 	const after = await rig.call("state", {});
 	assert.equal(after.value.browser, true);
 	assert.deepEqual(after.value.im, { connections: [{ id: "im-1" }], platforms: ["feishu"] });
-	assert.deepEqual(after.value.computer, { enabled: true, leases: [] });
 	assert.deepEqual(after.value.imStatus, { "im-1": { state: "on" } });
 	assert.deepEqual(after.value.imVia, { chief: "feishu" });
-	assert.deepEqual(after.value.computerLive, { leases: [{ botId: "chief", kind: "foreground" }] });
 });

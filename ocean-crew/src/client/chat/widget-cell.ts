@@ -160,9 +160,7 @@ export function AnsweredReply({ node }: any) {
 		if (parsed?.kind === "answer_to_pending_view") return h(AnsweredView, { node });
 		if (parsed?.kind === "answer_to_pending_handoff" && typeof parsed.reason === "string") {
 			const reply = { reason: parsed.reason, note: parsed.note ?? "", outcome: parsed.outcome };
-			return parsed.tool === "computer_handoff"
-				? h(SettledComputerHandoff, { handoff: reply })
-				: h(SettledHandoff, { handoff: reply });
+			return h(SettledHandoff, { handoff: reply });
 		}
 	}
 	return h(AnsweredCell, { node });
@@ -204,6 +202,5 @@ body[data-bt-layout=flat] .bt-q-inline .dv-view{max-width:calc(var(--bt-flat-w,1
 .dv-seg.dv-view-seg button{flex:0 1 auto;height:auto;min-height:30px;min-width:0;padding-block:5px;white-space:normal;overflow-wrap:anywhere}
 `;
 
-// The names the view renderer needs from the handoff and computer cards.
-import { SettledComputerHandoff } from "./computer.ts";
+// The name the view renderer needs from the handoff card.
 import { SettledHandoff } from "./handoff-card.ts";

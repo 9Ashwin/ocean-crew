@@ -22,7 +22,7 @@
 // - `browser-*`: a host without the browser module refuses `bot/unavailable`; a host whose
 
 //   default branch did; an unknown suffix is still the module's call.
-// - `archivesView`, `capabilityLibraryView`, `secretsView`, `imView`, `computerView`, the
+// - `archivesView`, `capabilityLibraryView`, `secretsView`, `imView`, the
 //   live views and the activity/work views are optional runtime callers: when their module
 //   is absent the field keeps its honest empty value, and only an endpoint that needs the
 //   module refuses with `bot/unavailable`.
@@ -68,8 +68,6 @@ export const READS: ReadonlySet<string> = new Set([
 	"approval-answer",
 	"thinking",
 	"avatar-library",
-	"computer-system-status",
-	"computer-shot",
 ]);
 
 /** The endpoints the channel itself answers. Every other known name is deferred or unknown. */
@@ -263,27 +261,8 @@ export const IM_ENDPOINTS: readonly string[] = [
 	"im-login-wait",
 ];
 
-/** Computer endpoints; the suffix after "computer-" goes to `computerEndpoint`. */
-export const COMPUTER_ENDPOINTS: readonly string[] = [
-	"computer-set-enabled",
-	"computer-cursor-wait",
-	"computer-set-level",
-	"computer-revoke-app",
-	"computer-provider-retry",
-	"computer-system-status",
-	"computer-permission",
-	"computer-stop",
-	"computer-takeover",
-	"computer-handback",
-	"computer-allow-foreground",
-	"computer-user-active",
-	"computer-shot",
-	"computer-app-answer",
-	"computer-hold-answer",
-];
-
-/** Every browser, IM and computer endpoint; each refuses by missing member until its module loads. */
-export const SERVICE_ENDPOINTS: readonly string[] = [...BROWSER_ENDPOINTS, ...IM_ENDPOINTS, ...COMPUTER_ENDPOINTS];
+/** Every browser and IM endpoint; each refuses by missing member until its module loads. */
+export const SERVICE_ENDPOINTS: readonly string[] = [...BROWSER_ENDPOINTS, ...IM_ENDPOINTS];
 
 /**
  * Endpoints still only placeholders. Every known endpoint is wired in `endpoints` and
@@ -1267,13 +1246,6 @@ export function install(rt: Runtime): void {
 			return ok(await member(endpoint, "imEndpoint")(endpoint, body));
 		};
 	}
-	for (const endpoint of COMPUTER_ENDPOINTS) {
-		const suffix = endpoint.slice("computer-".length);
-		endpoints[endpoint] = async (body) => {
-			await load();
-			return ok(await member(endpoint, "computerEndpoint")(suffix, body));
-		};
-	}
 
 	const handle = async (endpoint: string, payload: unknown, signal?: AbortSignal): Promise<ApiResponse<unknown>> => {
 		try {
@@ -1284,11 +1256,6 @@ export function install(rt: Runtime): void {
 			if (readOnly !== undefined && !READS.has(endpoint)) return fail(readOnly, "bot/read-only");
 			const handler = endpoints[endpoint];
 			if (handler !== undefined) return await handler(body, signal);
-			// An unknown computer-* suffix is still the computer module's call.
-			if (endpoint.startsWith("computer-")) {
-				await load();
-				return ok(await member(endpoint, "computerEndpoint")(endpoint.slice("computer-".length), body));
-			}
 			const module = UNAVAILABLE_ENDPOINTS.get(endpoint);
 			if (module !== undefined) {
 				return fail(`${endpoint}: the ${module} module is not installed in this build.`, "bot/unavailable");

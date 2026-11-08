@@ -15,7 +15,6 @@ import { install as installResume } from "./host/chat/resume.ts";
 import { install as installSide } from "./host/chat/side.ts";
 import { install as installSteer } from "./host/chat/steer.ts";
 import { install as installTurns } from "./host/chat/turns.ts";
-import { install as installComputer } from "./host/computer/index.ts";
 import { install as installConnectors } from "./host/connectors/index.ts";
 import { createWarn, install as installDiagnostics } from "./host/core/diagnostics.ts";
 import { install as installDshUpdate } from "./host/core/dsh-update.ts";
@@ -106,7 +105,6 @@ const MODULES: HostModule[] = [
 	installSchedules,
 	installBrowser,
 	installBrowserPlugins,
-	installComputer,
 	installUsage,
 	installUpdate,
 	installDshUpdate,

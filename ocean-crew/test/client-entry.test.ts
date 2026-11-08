@@ -118,7 +118,6 @@ function stateFixture() {
 		liveKey: "live:1",
 		activity: {},
 		work: { bots: {}, approvals: [] },
-		computerLive: {},
 		memoryNews: {},
 		connectors: [],
 		imStatus: {},
@@ -431,7 +430,7 @@ test("apply installs the locale, polls the roster, paints the surface and closes
 	const shellOverlays = rig.registrations
 		.filter((registration) => registration.entry.name === "shell.overlay")
 		.map((registration) => registration.entry.id);
-	assert.deepEqual(shellOverlays, ["bot-computer", "bot", "bot-signin", "bot-toast"]);
+	assert.deepEqual(shellOverlays, ["bot", "bot-signin", "bot-toast"]);
 	const docks = rig.registrations
 		.filter((registration) => registration.entry.name === "conversation.input.dock")
 		.map((registration) => registration.entry.id);
@@ -444,8 +443,6 @@ test("apply installs the locale, polls the roster, paints the surface and closes
 		"bot-connector",
 		"bot-mail",
 		"bot-handoff",
-		"bot-computer-handoff",
-		"bot-computer-app",
 		"bot-learning",
 		"queue",
 	]);

@@ -464,17 +464,12 @@ test("every channel endpoint is served and every deferred endpoint answers bot/u
 		assert.equal(answer.error.code, "bot/unavailable", endpoint);
 		assert.match(answer.error.message, new RegExp(module.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	}
-	const computer = await rig.calls("computer-shot", {});
-	assert.equal(computer.error.code, "bot/unavailable");
-	assert.match(computer.error.message, /not installed in this build/);
-
 	for (const endpoint of READS) {
 		const known =
 			CHANNEL_ENDPOINTS.includes(endpoint) ||
 			MODULE_ENDPOINTS.includes(endpoint) ||
 			SERVICE_ENDPOINTS.includes(endpoint) ||
-			UNAVAILABLE_ENDPOINTS.has(endpoint) ||
-			endpoint.startsWith("computer-");
+			UNAVAILABLE_ENDPOINTS.has(endpoint);
 		assert.ok(known, `${endpoint} is a known read endpoint`);
 	}
 });
@@ -513,12 +508,12 @@ test("module endpoints are wired dynamically: unavailable without the module, se
 	assert.equal(read.error.code, "bot/unavailable");
 });
 
-test("browser, IM and computer endpoints are wired dynamically: unavailable until their modules load", async (t) => {
+test("browser and IM endpoints are wired dynamically: unavailable until their modules load", async (t) => {
 	const rig = makeRig();
 	t.after(async () => {
 		await rig.dispose();
 	});
-	assert.equal(SERVICE_ENDPOINTS.length, 29, "5 browser, 9 IM and 15 computer endpoints");
+	assert.equal(SERVICE_ENDPOINTS.length, 14, "5 browser and 9 IM endpoints");
 	for (const endpoint of SERVICE_ENDPOINTS) {
 		assert.ok(!CHANNEL_ENDPOINTS.includes(endpoint), `${endpoint} is not a channel endpoint`);
 		assert.ok(!MODULE_ENDPOINTS.includes(endpoint), `${endpoint} is not a module endpoint`);
@@ -527,11 +522,6 @@ test("browser, IM and computer endpoints are wired dynamically: unavailable unti
 		assert.equal(answer.error.code, "bot/unavailable", endpoint);
 		assert.match(answer.error.message, /not installed in this build/, `${endpoint} names the missing member`);
 	}
-	// The computer family's prefix is dynamic too: a suffix the list does not name still
-	// reaches the module, and refuses while it is missing.
-	const unknownSuffix = await rig.calls("computer-future-action", {});
-	assert.equal(unknownSuffix.error.code, "bot/unavailable");
-	assert.match(unknownSuffix.error.message, /computerEndpoint/);
 	// A read-only host keeps the browser long poll readable and refuses the write endpoints.
 	rig.setReadOnly("The Bot team is open in another dsh (pid 42).");
 	const read = await rig.calls("browser-wait", {});
@@ -618,7 +608,6 @@ test("state answers the roster view and keeps the unchanged shortcut small", asy
 	assert.equal(value.browser, false);
 	assert.equal(value.readOnly, null);
 	assert.deepEqual(value.im, { connections: [], platforms: [] });
-	assert.deepEqual(value.computer, { enabled: false });
 	assert.deepEqual(value.privateArchives, []);
 	assert.deepEqual(value.agents, []);
 	assert.deepEqual(value.btwCards, {});

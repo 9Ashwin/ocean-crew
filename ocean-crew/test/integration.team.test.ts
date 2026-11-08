@@ -138,7 +138,6 @@ test("every M2–M5 module installs, and the routes and M5 members are present",
 	);
 	assert.ok(calls.includes("effect ocean-crew: browser channel") || rt.browserChannel === undefined, "browser module");
 	assert.ok(calls.includes("effect ocean-crew: im"), "im module");
-	assert.ok(calls.includes("effect ocean-crew: computer use"), "computer module");
 	assert.ok(calls.includes("effect ocean-crew: api route"), "channel module");
 	// The two routes the browser and the feed clients depend on.
 	assert.equal(routes.filter((route) => route.path === "/api/bot" && route.methods.includes("POST")).length, 1);
@@ -151,20 +150,7 @@ test("every M2–M5 module installs, and the routes and M5 members are present",
 	assert.match(String(stream.headers.get("content-type")), /text\/event-stream/);
 	await stream.body?.cancel();
 
-	for (const member of [
-		"imView",
-		"imStatusView",
-		"imViaView",
-		"imEndpoint",
-		"browserEnabled",
-		"browserOpen",
-		"computerEndpoint",
-		"computerView",
-		"computerStatus",
-		"computerLive",
-		"computerLevelOf",
-		"computerEnabled",
-	]) {
+	for (const member of ["imView", "imStatusView", "imViaView", "imEndpoint", "browserEnabled", "browserOpen"]) {
 		assert.notEqual(rt[member], undefined, member);
 	}
 	// No Desktop profile in the fake context: browsers stay off, with the member set the
@@ -194,19 +180,10 @@ test("the state answer carries the M5 fields with the earlier view shapes", asyn
 
 	assert.equal(value.browser, false);
 	assert.deepEqual(value.im, { connections: [], platforms: ["weixin", "feishu"] });
-	assert.deepEqual(value.computer, {
-		enabled: false,
-		provider: { state: "off" },
-		macos: process.platform === "darwin",
-		bots: { chief: { level: "background", apps: {} }, writer: { level: "background", apps: {} } },
-	});
 	// The same shapes are what the runtime members publish for the live/status channels.
 	assert.deepEqual(rt.imView(), value.im);
 	assert.deepEqual(rt.imStatusView(), {});
 	assert.deepEqual(rt.imViaView(), {});
-	assert.deepEqual(rt.computerView(), value.computer);
-	assert.deepEqual(rt.computerStatus(), { state: "off" });
-	assert.deepEqual(rt.computerLive(), { bots: {}, leases: [], cursors: [], asks: {}, holds: {} });
 });
 
 test("M5 endpoints answer through their modules, and say what is missing", async (t) => {
@@ -216,11 +193,6 @@ test("M5 endpoints answer through their modules, and say what is missing", async
 	const wait = await call("browser-wait", { clientId: "w1" });
 	assert.equal(wait.ok, false);
 	assert.equal(wait.error.code, "bot/browser-off");
-	// The computer module is installed without a computer-use provider (cuaAccess absent):
-	// the system-status probe answers null rather than failing the window.
-	const status = await call("computer-system-status", {});
-	assert.equal(status.ok, true);
-	assert.equal(status.value, null);
 	// An invalid im-add reaches the IM module: it is a refusal with the module's message,
 
 	const add = await call("im-add", {});
@@ -228,9 +200,6 @@ test("M5 endpoints answer through their modules, and say what is missing", async
 	assert.notEqual(add.error.code, "bot/not-found");
 	assert.equal(add.error.code, "bot/refused");
 	assert.match(add.error.message, /platform is not available|Choose a Bot/);
-
-	const level = await call("computer-set-level", { botId: "nope", level: "background" });
-	assert.notEqual(level.error?.code, "bot/not-found");
 });
 
 test("dispose settles every module's cleanup, releases the routes and the state lock", async (t) => {

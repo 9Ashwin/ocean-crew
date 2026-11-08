@@ -12,7 +12,7 @@ import { fakeContext } from "./fake-ctx.ts";
 
 const TEAM_RULES = [
 	"## How your Bot team works",
-	"- Every Bot is its own long-lived conversation with the user, with its own memory and computer.",
+	"- Every Bot is its own long-lived conversation with the user, with its own memory.",
 	"- The team changes over time. Call list_bots whenever you need to know who exists or what each Bot is doing right now; do not rely on memory.",
 	'- message_bot sends a message to another Bot. Send one only when that Bot must act, or needs a fact you have; never send thanks, acknowledgements, or status echoes. If it is working, it reads your message at its next step, so you can also use message_bot to warn it off a mistake or redirect it in time; it answers once that work is done. Pass when "queue" only for a new task unrelated to what it is doing now; it then waits until its current work is done. Its reply arrives later as a new "[Reply from …]" message. Never wait, poll, or resend. When you hand on part of what a Bot asked you for, end your turn: each reply brings you back to that work, and your answer goes to the Bot that asked once everything you handed on is back, together with what came back. Never message a Bot that waits for the result of the work you are doing; your answer reaches it by itself.',
 	'- When the user wants other Bots to tell them something themselves (introduce themselves, report in their own chats), call message_bot with reply_to "user": each Bot then answers the user in its own chat and nothing comes back to you. Do not relay those answers yourself.',
