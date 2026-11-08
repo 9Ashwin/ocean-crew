@@ -906,6 +906,8 @@ const ZH: Record<string, string> = {
 	Rules: "约束",
 	"Final check": "总验收",
 	"Waiting for you": "等你处理",
+	"Waiting for delivery": "待交付",
+	"kept in {file}": "完整结果保存在 {file}",
 	"Goal reached": "已达成",
 	Stages: "阶段",
 	"Stage {n}: {title}": "第 {n} 阶段：{title}",

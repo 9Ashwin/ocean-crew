@@ -3,6 +3,7 @@
 // This is a read-only view over state the group module already keeps — it decides
 // nothing and sends nothing.
 
+import type { PublishDutyRecord } from "../chat/handoffs.ts";
 import type { Runtime } from "../core/runtime.ts";
 import type { CallBatchState, CallGoal, CallResult, CallSummary, GroupRoom, SavedRelayCall } from "./types.ts";
 
@@ -10,6 +11,7 @@ import type { CallBatchState, CallGoal, CallResult, CallSummary, GroupRoom, Save
 export type TaskStatus =
 	| "running"
 	| "waiting_summary"
+	| "waiting_delivery"
 	| "waiting_user"
 	| "completed"
 	| "partial"
@@ -27,9 +29,18 @@ export interface TaskResultView {
 	at: number;
 }
 
+export interface TaskArtifactView {
+	/** The name the result is shown under. */
+	name: string;
+	/** Where the whole result is kept, under the plugin home. */
+	file: string;
+	/** The original length, when the saved copy was cut. */
+	length?: number;
+}
+
 export interface TaskCardView {
 	id: string;
-	kind: "call" | "relay" | "pending";
+	kind: "call" | "relay" | "pending" | "result";
 	roomId: string;
 	roomName?: string;
 	/** The Bot that opened the call. */
@@ -45,6 +56,8 @@ export interface TaskCardView {
 	completedAt?: number;
 	result?: string;
 	results: TaskResultView[];
+	/** Files that hold care whole results of this task. */
+	artifacts?: TaskArtifactView[];
 	summary?: string;
 	delivery: TaskDelivery;
 	/** Why the task failed or its delivery was abandoned. */
@@ -192,6 +205,50 @@ const pendingOfRoom = (rt: Runtime, room: GroupRoom): TaskCardView | undefined =
 	};
 };
 
+// A result handed up in this group carries its publishing duty: an answer the user has not
+// been told yet, one a Bot took but never delivered, or one that was abandoned with a
+// reason. The whole result lives in a file when it was too long for state.json.
+const resultCards = (rt: Runtime, room: GroupRoom): TaskCardView[] => {
+	const duties = ((rt as unknown as { publishDuties?: () => PublishDutyRecord[] }).publishDuties?.() ??
+		[]) as PublishDutyRecord[];
+	const workOf = (rt as unknown as { workOf?: (id: string) => any }).workOf;
+	const cards: TaskCardView[] = [];
+	for (const duty of duties) {
+		if (duty.room !== room.id) continue;
+		if (duty.state === "delivered") continue;
+		const parent = duty.parent === undefined ? undefined : workOf?.(duty.parent);
+		const result = Array.isArray(parent?.results)
+			? parent.results.find((entry: any) => entry?.id === duty.id)
+			: undefined;
+		const kept = typeof result?.file === "string" && result.file !== "" ? result.file : undefined;
+		cards.push({
+			id: `result:${duty.id}`,
+			kind: "result",
+			roomId: room.id,
+			...(typeof room.name === "string" && room.name !== "" ? { roomName: room.name } : {}),
+			members: [],
+			status: duty.state === "abandoned" ? "failed" : "waiting_delivery",
+			statusAt: Number(duty.at ?? 0),
+			results: [],
+			delivery: duty.state === "abandoned" ? "abandoned" : "pending",
+			...(typeof duty.text === "string" && duty.text !== "" ? { result: duty.text } : {}),
+			...(kept === undefined
+				? {}
+				: {
+						artifacts: [
+							{
+								name: String(result?.name ?? duty.name ?? duty.id),
+								file: kept,
+								...(typeof result?.length === "number" ? { length: result.length } : {}),
+							},
+						],
+					}),
+			...(typeof duty.reason === "string" && duty.reason !== "" ? { reason: duty.reason } : {}),
+		});
+	}
+	return cards;
+};
+
 /** Every group task the user may want to check, newest first. */
 export const tasksViewOf = (rt: Runtime): TaskCardView[] => {
 	const state = rt.state as Record<string, any>;
@@ -200,6 +257,7 @@ export const tasksViewOf = (rt: Runtime): TaskCardView[] => {
 	for (const room of Object.values(rooms)) {
 		if (room === null || typeof room !== "object") continue;
 		cards.push(...cardsOfRoom(room));
+		cards.push(...resultCards(rt, room));
 		const pending = pendingOfRoom(rt, room);
 		if (pending !== undefined) cards.push(pending);
 	}

@@ -160,3 +160,32 @@ test("a group with nothing waiting has no waiting card", () => {
 		false,
 	);
 });
+
+// A result handed up in the group shows its publishing duty and its kept file.
+test("a handed-up result shows whether it reached the user, and where it is kept", () => {
+	const fake = {
+		state: { rooms: { r1: room() }, questions: {} },
+		sessionOfRoom: () => "g-room",
+		chatOf: () => undefined,
+		groupOwners: new Map(),
+		approvalsView: () => [],
+		publishDuties: () => [
+			{ id: "res1", parent: "w1", room: "r1", state: "taken", at: 30, text: "The plan is ready", name: "Plan" },
+			{ id: "res2", parent: "w1", room: "r1", state: "abandoned", at: 31, reason: "the answer was dropped" },
+			{ id: "res3", parent: "w1", room: "r1", state: "delivered", at: 32 },
+		],
+		workOf: () => ({ results: [{ id: "res1", name: "Plan", file: "res1.txt", length: 4000 }] }),
+	} as any;
+	const cards = (tasksViewOf as any)(fake);
+	const results = cards.filter((card: any) => card.kind === "result");
+	assert.equal(results.length, 2, "a delivered result is not listed again");
+	const taken = results.find((card: any) => card.id === "result:res1");
+	assert.equal(taken.status, "waiting_delivery");
+	assert.equal(taken.delivery, "pending", "taken is not delivered");
+	assert.equal(taken.artifacts[0].file, "res1.txt");
+	assert.equal(taken.artifacts[0].length, 4000);
+	const gone = results.find((card: any) => card.id === "result:res2");
+	assert.equal(gone.status, "failed");
+	assert.equal(gone.delivery, "abandoned");
+	assert.equal(gone.reason, "the answer was dropped");
+});

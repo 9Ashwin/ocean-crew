@@ -121,6 +121,7 @@ export function goalView(goal: any, { roster = {}, roomWork = [], roomTasks = []
 const TASK_STATUS: Record<string, string> = {
 	running: "Working",
 	waiting_summary: "Waiting for a summary",
+	waiting_delivery: "Waiting for delivery",
 	waiting_user: "Waiting for you",
 	completed: "Done",
 	partial: "Partly done",
@@ -161,6 +162,15 @@ export function workRows(tasks: any[], roster: any = {}): any[] {
 			...(typeof task.summary === "string" && task.summary !== "" ? { summary: task.summary } : {}),
 			...(typeof task.error === "string" && task.error !== "" ? { error: task.error } : {}),
 			...(typeof task.reason === "string" && task.reason !== "" ? { reason: task.reason } : {}),
+			// The whole result is kept in a file when it was too long for the team state.
+			...(Array.isArray(task.artifacts) && task.artifacts.length > 0
+				? {
+						artifact: t("kept in {file}", { file: String(task.artifacts[0].file) }),
+						...(typeof task.artifacts[0].length === "number"
+							? { artifactLength: Number(task.artifacts[0].length) }
+							: {}),
+					}
+				: {}),
 		};
 	});
 }
@@ -310,6 +320,7 @@ function WorkRow({ row }: any) {
 			row.result !== undefined ? h("span", { className: "bt-goal-tnote" }, ` — ${row.result}`) : null,
 			row.error !== undefined ? h("span", { className: "bt-goal-tnote" }, ` — ${row.error}`) : null,
 			row.reason !== undefined ? h("span", { className: "bt-goal-tnote" }, ` — ${row.reason}`) : null,
+			row.artifact !== undefined ? h("span", { className: "bt-goal-tnote" }, ` — ${row.artifact}`) : null,
 		),
 	);
 }
