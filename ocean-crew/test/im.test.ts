@@ -3,7 +3,7 @@
 // The full runtime is built by
 // `createRuntime` with a fake DSH around it, and the IM module is installed on it.
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
@@ -104,10 +104,27 @@ interface Host {
 
 async function start(
 	t: TestContext,
-	{ platform = "fake", adapter, seed, config }: { platform?: string; adapter?: any; seed?: any; config?: any } = {},
+	{
+		platform = "fake",
+		adapter,
+		seed,
+		config,
+		home: reuse,
+		keep = false,
+	}: {
+		platform?: string;
+		adapter?: any;
+		seed?: any;
+		config?: any;
+		/** An existing home, so a test can restart the runtime over the same data. */
+		home?: string;
+		/** Leave the home on disk for the next start. */
+		keep?: boolean;
+	} = {},
 ): Promise<Host> {
-	const home = mkdtempSync(join(tmpdir(), "ocean-crew-im-"));
-	writeFileSync(join(home, "state.json"), JSON.stringify(seed ?? TEAM()));
+	const home = reuse ?? mkdtempSync(join(tmpdir(), "ocean-crew-im-"));
+	// A restarted runtime reads the state the first one saved, not a fresh seed.
+	if (reuse === undefined) writeFileSync(join(home, "state.json"), JSON.stringify(seed ?? TEAM()));
 	const ctx = fakeContext();
 	const prompts: any[] = [];
 	const agents = new Map<string, any>();
@@ -181,7 +198,7 @@ async function start(
 		(adapters as Record<string, any>)[platform] = real;
 		if (addedPlatform) IM_PLATFORMS.splice(IM_PLATFORMS.indexOf(addedPlatform as any), 1);
 		await ctx.dispose?.();
-		rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+		if (!keep) rmSync(home, { recursive: true, force: true, maxRetries: 5 });
 	};
 	t.after(stop);
 	return { ctx, rt, home, platform, fake, prompts, agents, emitEvent, flush, until, stop };
@@ -582,4 +599,112 @@ test("imReactions: false turns the marks off", async (t) => {
 	await dm(s, "u1", "hi", { messageId: "om_1" });
 	await s.flush();
 	assert.equal(s.fake.reactionAdds.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// The persistent outbox: a text that was never confirmed survives a restart.
+
+const outboxFile = (home: string): string => {
+	const dir = join(home, "im");
+	const name = existsSync(dir) ? readdirSync(dir).find((entry) => entry.endsWith(".outbox.json")) : undefined;
+	return name === undefined ? "" : join(dir, name);
+};
+const readOutbox = (home: string): any => {
+	const file = outboxFile(home);
+	return file === "" ? { chats: {} } : JSON.parse(readFileSync(file, "utf8"));
+};
+// The outbox write is debounced, so a test waits for the file rather than sleeping.
+const untilOutbox = async (home: string, check: (data: any) => boolean, ms = 3_000): Promise<boolean> => {
+	for (let at = 0; at < ms; at += 20) {
+		try {
+			if (check(readOutbox(home))) return true;
+		} catch {
+			// still being written
+		}
+		await delay(20);
+	}
+	return false;
+};
+
+test("a refused text waits in the outbox and leaves it once delivered", async (t) => {
+	const s = await start(t);
+	await add(s);
+	// The first send is refused without being accepted, so it stays queued and is retried.
+	s.fake.fails.push(Object.assign(new Error("busy"), { retryAfter: 1 }));
+	await dm(s, "u1", "hello");
+	assert.ok(
+		await untilOutbox(s.home, (data) => JSON.stringify(data).includes("connection request")),
+		"the refused text is on disk while it waits",
+	);
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => /connection request/i.test(String(entry.text)))));
+	assert.ok(
+		await untilOutbox(s.home, (data) => Object.keys(data.chats).length === 0),
+		"delivered texts leave no record",
+	);
+});
+
+test("a queued record left by a previous process is sent on the next start", async (t) => {
+	// The home stays on disk across the two starts: that is the restart.
+	const s = await start(t, { seed: TEAM(), keep: true });
+	const conn = await add(s);
+	const home = s.home;
+	await s.stop();
+	// The record a process that died before sending would leave behind.
+	mkdirSync(join(home, "im"), { recursive: true });
+	writeFileSync(
+		join(home, "im", `${conn.id}.outbox.json`),
+		JSON.stringify({
+			chats: {
+				"dm-u1": [
+					{
+						id: "rec-1",
+						chat: { key: "dm-u1", kind: "direct", title: "u1" },
+						state: "queued",
+						attempts: 0,
+						body: "resumed after the restart",
+					},
+				],
+			},
+		}),
+	);
+	const again = await start(t, { home, keep: true });
+	assert.ok(
+		await again.until(() => again.fake.sent.some((entry: any) => entry.text === "resumed after the restart")),
+		"the queued text reached the platform after the restart",
+	);
+	assert.ok(await untilOutbox(home, (data) => data.chats["dm-u1"] === undefined), "the delivered record is removed");
+});
+
+test("a record interrupted mid-send is reported unknown and never resent", async (t) => {
+	const s = await start(t, { seed: TEAM(), keep: true });
+	const conn = await add(s);
+	const home = s.home;
+	await s.stop();
+	mkdirSync(join(home, "im"), { recursive: true });
+	writeFileSync(
+		join(home, "im", `${conn.id}.outbox.json`),
+		JSON.stringify({
+			chats: {
+				"dm-u1": [
+					{
+						id: "rec-2",
+						chat: { key: "dm-u1", kind: "direct", title: "u1" },
+						state: "sending",
+						attempts: 1,
+						body: "may already have arrived",
+					},
+				],
+			},
+		}),
+	);
+	const again = await start(t, { home, keep: true });
+	assert.ok(
+		await untilOutbox(home, (data) => data.chats["dm-u1"][0]?.state === "unknown"),
+		"an interrupted send becomes unknown",
+	);
+	assert.equal(
+		again.fake.sent.some((entry: any) => entry.text === "may already have arrived"),
+		false,
+		"an interrupted send is never repeated",
+	);
 });

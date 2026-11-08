@@ -1523,3 +1523,47 @@ test("a conversation waiting for repair does not stop another conversation's rev
 	await setup.reviewedDone();
 	assert.equal(requests.length, 4);
 });
+
+// ---------------------------------------------------------------------------
+// Forgetting a range leaves tombstones: the fact stays gone.
+
+test("a range forget removes every matching entry and none of the others", async (t) => {
+	const { tool, rt, stop } = await start();
+	t.after(() => stop());
+	await tool("remember", { text: "The user lives in Shanghai" }, "m1");
+	await tool("remember", { text: "The user prefers metric units" }, "m1");
+	await tool("forget", { entry: "shanghai", range: true }, "m1");
+	const recalled = (await rt.memorySearch({ botId: "m1" }, { query: "" })) as Array<Record<string, any>>;
+	assert.deepEqual(
+		recalled.map((hit) => hit.text),
+		["The user prefers metric units"],
+	);
+});
+
+test("a forgotten fact cannot be saved again, recalled, or restored from the change log", async (t) => {
+	const { tool, rt, call, stop } = await start();
+	t.after(() => stop());
+	await tool("remember", { text: "The user's card ends in 4242" }, "m1");
+	await tool("forget", { entry: "card ends in 4242", range: true }, "m1");
+	assert.deepEqual(await rt.memorySearch({ botId: "m1" }, { query: "card" }), []);
+	await assert.rejects(
+		async () => await tool("remember", { text: "The user's card ends in 4242" }, "m1"),
+		/forget this/i,
+	);
+	// The change log still holds the add, but restoring it is refused.
+	const history = await call("memory-history", { botId: "m1" });
+	const add = history.rows.find((row: any) => row.op === "add");
+	assert.ok(add !== undefined, "the add row is still in the change log");
+	await assert.rejects(async () => await call("memory-restore", { botId: "m1", id: add.id }), /forget this/i);
+});
+
+test("a tombstone holds no text, only a hash", async (t) => {
+	const { tool, home, stop } = await start();
+	t.after(() => stop());
+	await tool("remember", { text: "The user's passport number is X1234" }, "m1");
+	await tool("forget", { entry: "passport number", range: true }, "m1");
+	const saved = readFileSync(join(home, "memory", "bots", "m1", "tombstones.json"), "utf8");
+	assert.ok(!saved.includes("passport"), "the tombstone keeps no text");
+	assert.ok(!saved.includes("X1234"), "the tombstone keeps no value");
+	assert.equal(JSON.parse(saved).hashes.length, 1);
+});

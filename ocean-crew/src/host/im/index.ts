@@ -14,6 +14,10 @@ import { failClass, nextAction } from "./supervisor.ts";
 
 const RECONCILE_MS = 15_000;
 const RUNTIME_SAVE_MS = 400;
+// How many undelivered texts one chat keeps, and how long a send may stay unconfirmed
+// before it is reported as unknown rather than retried forever.
+const OUTBOX_LIMIT = 50;
+const OUTBOX_SAVE_MS = 200;
 const RETRY_MS = 5_000;
 const SEND_TIMEOUT_MS = 60_000;
 const QUEUE_LIMIT = 100;
@@ -77,6 +81,108 @@ export function install(rt: any) {
 		)[key];
 		return line ?? key;
 	};
+
+	// ---------------------------------------------------------------- outbox
+	// Undelivered texts, per connection and chat, persisted beside the runtime file so a
+	// restart or a crash does not lose a reply the user is waiting for. Card sends keep
+	// their own persisted record (`cards`); this holds the plain texts and their state.
+	//
+	// A record is `{ id, chatKey, chat, state, attempts, body, buttons? }`. `body` and
+	// `buttons` are what the adapter needs; `state` is one of:
+	//   queued    - never attempted, or the platform refused without accepting it
+	//   sending   - an attempt was made and its outcome is not known yet (crash during send)
+	//   unknown   - the platform may have accepted it; never resent automatically
+	// A record is removed once the adapter resolves the send.
+	const outboxes = new Map(); // conn id → { data: { chats: { [chatKey]: records[] } }, timer }
+	const outboxPath = (id: any) => join(imDir, `${id}.outbox.json`);
+	const outboxOf = async (id: any) => {
+		let held = outboxes.get(id);
+		if (held !== undefined) return held;
+		let data: any;
+		try {
+			data = JSON.parse(await readFile(outboxPath(id), "utf8"));
+		} catch {
+			data = undefined;
+		}
+		held = {
+			data: {
+				chats:
+					data?.chats !== null && typeof data?.chats === "object" && !Array.isArray(data.chats) ? data.chats : {},
+			},
+			timer: undefined,
+		};
+		outboxes.set(id, held);
+		return held;
+	};
+	const writeOutbox = async (id: any) => {
+		const held = outboxes.get(id);
+		if (held === undefined || rt.readOnly() !== undefined) return;
+		await mkdir(imDir, { recursive: true });
+		const temp = join(imDir, `${id}.outbox.${process.pid}.tmp`);
+		try {
+			await writeFile(temp, JSON.stringify(held.data), { encoding: "utf8", mode: 0o600 });
+			await chmod(temp, 0o600);
+			await replaceFile(temp, outboxPath(id));
+		} catch (error: any) {
+			await rm(temp, { force: true }).catch(() => {});
+			throw error;
+		}
+	};
+	const scheduleOutboxWrite = (id: any) => {
+		const held = outboxes.get(id);
+		if (held === undefined || held.timer !== undefined) return;
+		held.timer = setTimeout(() => {
+			held.timer = undefined;
+			void writeOutbox(id).catch((error) => rt.warn("ocean-crew: im outbox %s not saved: %s", id, error));
+		}, OUTBOX_SAVE_MS);
+		held.timer.unref?.();
+	};
+	// Records for one chat, in send order; a chat with none is absent.
+	const outboxRecords = async (id: any, chatKey: any): Promise<any[]> => {
+		const held = await outboxOf(id);
+		const list = held.data.chats[chatKey];
+		return Array.isArray(list) ? list : [];
+	};
+	const outboxAdd = async (id: any, chatKey: any, record: any) => {
+		const held = await outboxOf(id);
+		const list = Array.isArray(held.data.chats[chatKey]) ? held.data.chats[chatKey] : [];
+		list.push(record);
+		// The oldest queued texts go first when the chat is over its bound: a newer reply
+		// is more useful than a stale one, and an unknown record is never resent anyway.
+		while (list.length > OUTBOX_LIMIT) {
+			const at = list.findIndex((entry: any) => entry.state !== "sending");
+			if (at === -1) break;
+			list.splice(at, 1);
+		}
+		held.data.chats[chatKey] = list;
+		scheduleOutboxWrite(id);
+	};
+	const outboxUpdate = async (id: any, chatKey: any, recordId: any, patch: any) => {
+		const held = await outboxOf(id);
+		const list = held.data.chats[chatKey];
+		if (!Array.isArray(list)) return;
+		const record = list.find((entry: any) => entry.id === recordId);
+		if (record === undefined) return;
+		Object.assign(record, patch);
+		scheduleOutboxWrite(id);
+	};
+	const outboxRemove = async (id: any, chatKey: any, recordId: any) => {
+		const held = await outboxOf(id);
+		const list = held.data.chats[chatKey];
+		if (!Array.isArray(list)) return;
+		const at = list.findIndex((entry: any) => entry.id === recordId);
+		if (at === -1) return;
+		list.splice(at, 1);
+		if (list.length === 0) delete held.data.chats[chatKey];
+		scheduleOutboxWrite(id);
+	};
+	ctx.effect(
+		() => () => {
+			for (const held of outboxes.values()) clearTimeout(held.timer);
+			outboxes.clear();
+		},
+		"ocean-crew: im outbox",
+	);
 
 	// ---------------------------------------------------------------- runtime file
 	const runtimes = new Map(); // id → { data: {runtime, cards, open}, timer }
@@ -219,9 +325,21 @@ export function install(rt: any) {
 			return false;
 		});
 
+	// A job waits in the in-memory queue and, written first, in the outbox: a crash
+	// between the two leaves a record that the next start resends, never a silent loss.
 	const enqueue = (conn: any, chatKey: any, job: any) => {
 		const runner = runners.get(conn.id);
 		if (runner === undefined) return;
+		const record = {
+			id: randomUUID(),
+			...(job.outboxId === undefined ? {} : { id: job.outboxId }),
+			chat: job.chat,
+			state: "queued",
+			attempts: 0,
+			body: job.text,
+			...(job.buttons === undefined ? {} : { buttons: job.buttons }),
+		};
+		job.outboxId = record.id;
 		let queue = runner.queues.get(chatKey);
 		if (queue === undefined) {
 			queue = { jobs: [] };
@@ -229,10 +347,17 @@ export function install(rt: any) {
 		}
 		if (queue.jobs.length >= QUEUE_LIMIT) {
 			// Never drop the in-flight head: the successful send shifts its own job.
-			queue.jobs.splice(queue.sending === queue.jobs[0] ? 1 : 0, 1);
+			const at = queue.sending === queue.jobs[0] ? 1 : 0;
+			const [dropped] = queue.jobs.splice(at, 1);
+			if (dropped?.outboxId !== undefined) void outboxRemove(conn.id, chatKey, dropped.outboxId);
 			rt.warn("ocean-crew: im send queue for %s/%s is full; dropped the oldest message", conn.id, chatKey);
 		}
 		queue.jobs.push(job);
+		if (record.state === "queued" && job.restored !== true) {
+			void outboxAdd(conn.id, chatKey, record).catch((error) =>
+				rt.warn("ocean-crew: im outbox for %s not written: %s", conn.id, error),
+			);
+		}
 		if (queue.jobs.length === 1) void drain(conn, chatKey);
 	};
 	// A platform send that never settles must not block this chat forever: the
@@ -279,16 +404,25 @@ export function install(rt: any) {
 		while (queue.jobs.length > 0) {
 			const job = queue.jobs[0];
 			queue.sending = job;
+			if (job.outboxId !== undefined) {
+				// Written before the attempt: a crash here leaves a record the next start
+				// reports as unknown rather than resending blindly.
+				void outboxUpdate(conn.id, chatKey, job.outboxId, { state: "sending" }).catch(() => {});
+			}
 			try {
 				const sent = await withSendTimeout(runner.handle.send(job.chat, job));
 				job.after?.(sent);
 				queue.jobs.shift();
+				if (job.outboxId !== undefined) void outboxRemove(conn.id, chatKey, job.outboxId).catch(() => {});
 				if (statuses.get(conn.id)?.messageError === true) {
 					setStatus(conn.id, { state: "ready", error: undefined, referenceId: undefined, messageError: false });
 				}
 			} catch (error: any) {
 				const how: any = failClass(error);
 				if (how === "retry") {
+					// The platform refused without accepting it: the record stays queued.
+					if (job.outboxId !== undefined)
+						void outboxUpdate(conn.id, chatKey, job.outboxId, { state: "queued" }).catch(() => {});
 					const wait = Number(error?.retryAfter) > 0 ? error.retryAfter * 1000 : RETRY_MS;
 					queue.retry = setTimeout(() => {
 						void drain(conn, chatKey);
@@ -297,6 +431,13 @@ export function install(rt: any) {
 					return;
 				}
 				queue.jobs.shift();
+				// Nothing is resent automatically here: a permanent refusal and an unknown
+				// outcome both leave a record the user can see instead.
+				if (job.outboxId !== undefined)
+					void outboxUpdate(conn.id, chatKey, job.outboxId, {
+						state: how === "permanent" ? "failed" : "unknown",
+						error: rt.redactSecrets(String(error?.message ?? error)).slice(0, 300),
+					}).catch(() => {});
 				dropSend(conn, how, error);
 			} finally {
 				queue.sending = undefined;
@@ -763,6 +904,51 @@ export function install(rt: any) {
 		return false;
 	};
 
+	// Records a previous process left behind. A `queued` one never reached the platform and
+	// is sent again; a `sending` one may have been accepted, so it is reported as unknown
+	// and never resent; `failed` and `unknown` already settled and stay for the user to see
+	// until the connection's next successful send clears them.
+	const restoreOutbox = async (conn: any, runner: any): Promise<void> => {
+		let held: any;
+		try {
+			held = await outboxOf(conn.id);
+		} catch (error) {
+			rt.warn("ocean-crew: im outbox %s unreadable: %s", conn.id, error);
+			return;
+		}
+		let restored = 0;
+		for (const [chatKey, list] of Object.entries((held.data.chats ?? {}) as Record<string, any[]>)) {
+			if (!Array.isArray(list)) continue;
+			// The record carries the chat it was meant for, so a restart before any new
+			// message still knows where to send; `conn.chats` is only filled by inbound
+			// traffic and is empty on a fresh start.
+			for (const record of list) {
+				if (record.state === "sending") {
+					await outboxUpdate(conn.id, chatKey, record.id, {
+						state: "unknown",
+						error: "The send was interrupted before the platform answered",
+					}).catch(() => {});
+					continue;
+				}
+				if (record.state !== "queued") continue;
+				let queue = runner.queues.get(chatKey);
+				if (queue === undefined) {
+					queue = { jobs: [] };
+					runner.queues.set(chatKey, queue);
+				}
+				queue.jobs.push({
+					chat: record.chat ?? { key: chatKey, kind: "direct", title: chatKey },
+					text: record.body,
+					...(record.buttons === undefined ? {} : { buttons: record.buttons }),
+					outboxId: record.id,
+					restored: true,
+				});
+				restored += 1;
+			}
+		}
+		if (restored > 0) rt.warn("ocean-crew: im outbox for %s resumed %d unsent message(s)", conn.id, restored);
+	};
+
 	const start = async (conn: any) => {
 		const adapter = adapters[conn.platform];
 		if (adapter === undefined || runners.has(conn.id)) return;
@@ -800,6 +986,7 @@ export function install(rt: any) {
 				return;
 			}
 			runner.handle = handle;
+			await restoreOutbox(conn, runner);
 			for (const chatKey of runner.queues.keys()) void drain(conn, chatKey);
 			if (typeof runner.handle?.typing === "function") {
 				runner.typing = setInterval(() => {

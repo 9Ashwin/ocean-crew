@@ -111,6 +111,8 @@ export const REVIEW_EXTRACTOR_VERSION = 1;
 const REVIEW_STATE_VERSION = 1;
 // A change whose entry is gone; any other failure keeps the review's place.
 const NO_MATCH = "memory/no-match";
+// A write of a fact this scope was told to forget.
+const FORGOTTEN = "memory/forgotten";
 const GONE = "memory/bot-gone";
 const DENIED = "memory/denied";
 // A change the memory has no room for: a file at its size, or the last topic.
@@ -887,6 +889,54 @@ export function install(rt: Runtime): void {
 	const TEAM: MemoryScope = { kind: "team" };
 	const ownScope = (botId: string): MemoryScope => ({ kind: "bot", botId });
 	const groupScope = (roomId: string): MemoryScope => ({ kind: "group", roomId });
+	// ---------------------------------------------------------------- tombstones
+	// A forgotten range leaves a tombstone: the scope, the time, and a one-way hash of
+	// each forgotten line, never the line itself. Retrieval, the review and the write path
+	// all consult it, so a fact the user asked to forget does not come back through a
+	// replayed batch, an old summary, or the same fact written again.
+	const TOMBSTONES = "tombstones.json";
+	const hashOf = (text: string): string =>
+		createHash("sha256")
+			.update(squash(cleanEntry(text)))
+			.digest("hex")
+			.slice(0, 32);
+
+	/** What one scope's tombstones hold: hashes only, so the file keeps no text. */
+	interface Tombstones {
+		hashes: string[];
+		at?: number;
+		reason?: string;
+	}
+	const tombstonesPath = (scope: MemoryScope): string => join(dirOf(scope), TOMBSTONES);
+	const readTombstones = (scope: MemoryScope): Tombstones => {
+		let raw: string;
+		try {
+			raw = readFileSync(tombstonesPath(scope), "utf8");
+		} catch (error) {
+			if ((error as { code?: string })?.code === "ENOENT") return { hashes: [] };
+			throw unreadable(tombstonesPath(scope), error);
+		}
+		try {
+			const value = JSON.parse(raw) as { hashes?: unknown };
+			const hashes = Array.isArray(value?.hashes) ? value.hashes.filter((item) => typeof item === "string") : [];
+			return { hashes: hashes as string[] };
+		} catch {
+			return { hashes: [] };
+		}
+	};
+	const forgotten = (scope: MemoryScope, text: string): boolean => readTombstones(scope).hashes.includes(hashOf(text));
+	// A forgotten fact may not be written again: the same text is the same fact, and the
+	// user asked for it to stay gone. A genuinely new fact hashes differently.
+	function refuseIfForgotten(scope: MemoryScope, text: string, label: string): void {
+		if (!forgotten(scope, text)) return;
+		throw Object.assign(
+			new Error(
+				`The user asked ${label} to forget this. Do not save it again; ask the user first if it now matters.`,
+			),
+			{ code: FORGOTTEN },
+		);
+	}
+
 	const dirOf = (scope: MemoryScope): string =>
 		scope.kind === "team"
 			? join(root, "team")
@@ -1316,6 +1366,7 @@ export function install(rt: Runtime): void {
 			writable(scope, actor);
 			if (opId !== undefined && journalledOperation(scope, opId))
 				return { changed: false, message: "Already saved by this review batch." };
+			refuseIfForgotten(scope, text, label);
 			const files = loadScope(scope);
 			const same = matchEntries(allEntries(files), text).filter((entry) => squash(entry.text) === squash(text))[0];
 			if (same !== undefined)
@@ -1431,6 +1482,7 @@ export function install(rt: Runtime): void {
 			if (opId !== undefined && journalledOperation(scope, opId))
 				return { changed: false, message: "Already saved by this review batch." };
 			const old = findOne(loadScope(scope), topic, match, label);
+			refuseIfForgotten(scope, text, label);
 			const line = formatEntry(text, meta);
 			const lines = [...old.file.lines];
 			const before = lines[old.line];
@@ -2038,12 +2090,18 @@ export function install(rt: Runtime): void {
 		defineTool({
 			name: "forget",
 			description:
-				"Remove one whole entry from memory (in a group chat, from the group memory unless you name another scope) when it is wrong or no longer true. When only part of an entry is no longer true, use remember with replace instead, to keep the rest. The change log keeps a copy.",
+				"Remove memory that is wrong or no longer true. One entry by default; with range true, every entry matching what you name, or the whole memory of the scope when everything is true. When only part of one entry is no longer true, use remember with replace instead, to keep the rest. A forgotten fact stays forgotten: it cannot be saved again and the change log cannot bring it back, so use this for what the user asks to forget for good.",
 			parameters: {
 				entry: {
 					type: "string",
-					required: true,
-					description: "The entry to remove: its text, or a part only it contains",
+					description:
+						"The entry to remove; with range true, the words every matching entry must contain (its text, or a part only it contains)",
+				},
+				range: { type: "boolean", description: "Remove every entry that matches, not just one" },
+				everything: {
+					type: "boolean",
+					description:
+						"Remove all of this scope's memory, or all of one topic when topic is given; only for a clear request to forget everything there",
 				},
 				topic: TOPIC_WHERE,
 				scope: SCOPE_WRITE,
@@ -2054,8 +2112,20 @@ export function install(rt: Runtime): void {
 				if ("error" in context) throw refused(context.error);
 				const { topic, error } = topicArg(args.topic);
 				if (error !== undefined) throw refused(error);
+				const match = String(args.entry ?? "");
 				try {
-					return (await removeEntry({ ...context, topic, match: args.entry })).message;
+					if (args.range !== true && args.everything !== true)
+						return (await removeEntry({ ...context, topic, match: args.entry })).message;
+					if (match.trim() === "" && args.everything !== true)
+						throw refused("Name what to forget, or ask for everything in this memory.");
+					const result = await forgetRange({ ...context, topic, match, everything: args.everything === true });
+					return [
+						result.message,
+						result.kept.length > 0 ? `Could not forget ${result.kept.length}: ${result.kept.join("; ")}` : "",
+						"The change log and every Session's memory drop it on their next render.",
+					]
+						.filter(Boolean)
+						.join(" ");
 				} catch (failure) {
 					throw writeFailure(failure);
 				}
@@ -2510,11 +2580,88 @@ export function install(rt: Runtime): void {
 	}
 
 	// One entry the user removes from the list.
+	// Forgetting a range: the entries of one scope, or one topic, that match every word
+	// given (or, with no words, all of them). Each is removed the way one entry is, and
+	// each leaves a tombstone holding only its hash, so the same fact cannot be written,
+	// replayed or summarised back in.
+	async function forgetRange({
+		scope,
+		topic,
+		match,
+		everything = false,
+		actor,
+		label,
+	}: ChangeContext & {
+		match: string;
+		/** Forget the whole scope or topic even when no words were given. */
+		everything?: boolean;
+	}): Promise<{ removed: number; kept: string[]; message: string }> {
+		const terms = squash(match).split(" ").filter(Boolean);
+		if (terms.length === 0 && everything !== true) {
+			throw Object.assign(new Error("Name what to forget, or ask for the whole memory of this scope."), {
+				code: NO_MATCH,
+			});
+		}
+		const files = loadScope(scope);
+		const pool = topic === undefined ? files : files.filter((file) => file.topic === topic);
+		if (topic !== undefined && pool.length === 0)
+			throw Object.assign(new Error(`${capital(label)} has no topic [[${topic}]].`), { code: NO_MATCH });
+		const targets = allEntries(pool).filter((entry) => {
+			const text = squash(entry.text);
+			return terms.every((term) => text.includes(term));
+		});
+		if (targets.length === 0) {
+			throw Object.assign(
+				new Error(`No entry in ${label}${topic ? ` (topic [[${topic}]])` : ""} matches "${match.slice(0, 80)}".`),
+				{ code: NO_MATCH },
+			);
+		}
+		const hashes: string[] = [];
+		const kept: string[] = [];
+		let removed = 0;
+		for (const entry of targets) {
+			try {
+				await removeEntry({ scope, topic: entry.file.topic, match: entry.text, actor, label });
+				hashes.push(hashOf(entry.text));
+				removed += 1;
+			} catch (failure) {
+				// One entry that cannot go must not hide the rest; the caller sees both lists.
+				kept.push(`${entry.text.slice(0, 60)}: ${(failure as Error).message ?? failure}`);
+			}
+		}
+		if (hashes.length > 0) {
+			const existing = readTombstones(scope);
+			const merged = [...new Set([...existing.hashes, ...hashes])];
+			const temp = join(dirOf(scope), `${TOMBSTONES}.${process.pid}.tmp`);
+			await mkdir(dirOf(scope), { recursive: true });
+			await writeText(temp, `${JSON.stringify({ hashes: merged, at: Date.now() }, null, 1)}\n`);
+			await replaceFile(temp, tombstonesPath(scope));
+			// Every Session that reads this scope re-reads its memory on its next render.
+			renewScopeMemory(scopeKey(scope));
+		}
+		return { removed, kept, message: `${removed} ${removed === 1 ? "entry" : "entries"} forgotten.` };
+	}
+
 	async function memoryForget(body: Record<string, any>): Promise<Record<string, unknown>> {
 		const panel = panelOf(body);
 		const scope = panel.scopes[body.scope] ?? panel.scopes[panel.group ? "group" : "own"]!;
 		const topic = body.topic === null || body.topic === undefined ? undefined : cleanTopic(body.topic);
-		await removeEntry({ scope, topic, match: String(body.text ?? ""), actor: USER, label: panelLabel(panel, scope) });
+		const label = panelLabel(panel, scope);
+		// `everything` forgets the whole scope, or the whole topic when one is named; a
+		// plain call forgets the one entry its text names.
+		if (body.everything === true || body.range === true) {
+			const result = await forgetRange({
+				scope,
+				topic,
+				match: String(body.text ?? ""),
+				everything: body.everything === true,
+				actor: USER,
+				label,
+			});
+			const view = await memoryView(panelBody(panel));
+			return { ...view, forgotten: { removed: result.removed, kept: result.kept, message: result.message } };
+		}
+		await removeEntry({ scope, topic, match: String(body.text ?? ""), actor: USER, label });
 		return await memoryView(panelBody(panel));
 	}
 
@@ -2649,6 +2796,10 @@ export function install(rt: Runtime): void {
 			}
 			writable(scope, USER);
 			const label = labelOf(scope);
+			// A restore is a way back in: a fact the user asked to forget is not restored,
+			// whatever the change log still holds.
+			const comingBack = typeof row.after === "string" ? splitMeta(row.after).text : "";
+			if (comingBack !== "") refuseIfForgotten(scope, comingBack, label);
 			const files = loadScope(scope);
 			const target = files.find((file) => file.file === row.file);
 			const base = { scope: scopeKey(scope), file: row.file, ...actorOf(USER), restored: row.id };
@@ -3546,11 +3697,19 @@ export function install(rt: Runtime): void {
 			scopes.push({ tag: "own", scope: ownScope(owner.botId) });
 			scopes.push({ tag: "team", scope: TEAM });
 		} else return [];
-		const loaded = await settled(() => scopes.map(({ tag, scope }) => ({ tag, files: loadScope(scope) })));
+		const loaded = await settled(() =>
+			scopes.map(({ tag, scope }) => ({
+				tag,
+				files: loadScope(scope),
+				gone: new Set(readTombstones(scope).hashes),
+			})),
+		);
 		const terms = recallTerms(query);
 		const hits: MemoryHit[] = [];
-		for (const { tag, files } of loaded) {
+		for (const { tag, files, gone } of loaded) {
 			for (const entry of allEntries(files)) {
+				// A forgotten fact is not recalled back, even if a file still carries it.
+				if (gone.has(hashOf(entry.text))) continue;
 				if (topic !== undefined && entry.file.topic !== topic) continue;
 				if (terms.length > 0) {
 					const hay = squash(`${entry.text} ${entry.file.topic ?? ""}`);

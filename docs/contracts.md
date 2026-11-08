@@ -53,9 +53,26 @@
 - 必须保持：`client.js` 用 DSH 的加载器注册一个模块——`window.__ModuleLoader__.load({ id: 'ocean-crew', factory })`——它的 factory 只 require `react`、`react-dom` 和 `@deepseek-ai/dsh-client-ui-primitives`，导出恰好是 `apply` 和 `inject`，其中 `inject` 列出 `sessions`、`uiWorkspace`、`uiConversation`、`slots`、`theme` 和 `layout`。若被破坏：DSH 加载不了 client，或者加载时用到 shell 没有准备好的槽位或服务。
 - 必须保持：`client.js` 是 `ocean-crew/src/client/` 的构建结果，`dist/` 是 `ocean-crew/src/` 的构建结果。若被破坏：装进 DSH 的代码与源码不一致，检查门禁也会失败。
 
+## IM 投递与 outbox
+
+普通文本发送前先写 `im/<连接 id>.outbox.json`，发送结果确定后删除该记录。记录状态是
+`queued`（未送达，重启后重发）、`sending`（尝试中，重启后改判为 `unknown`，绝不重发）、
+`unknown`、`failed`。`sending` 转 `unknown` 是一条明确契约：平台可能已经收下这条消息，
+所以宁可让用户看到「结果不确定」，也不冒重复发送的风险。卡片有自己持久化的 `cards` 记录，
+与 outbox 分开，互不误判。
+
+## 记忆的忘记与墓碑
+
+`memory-forget` 支持范围形式：`range: true` 删除所有匹配词条的条目，`everything: true` 删除该作用域
+（或指定 topic）的全部记忆。每条被忘记的条目会在该作用域的 `tombstones.json` 里留下一个
+SHA-256 前缀哈希，**不保存正文**。墓碑生效于四个入口：`recall` 不返回、`remember`/`replace` 拒绝
+重新写入、`memory-restore` 拒绝从变更日志恢复、受影响 Session 的记忆快照立即失效。因此「忘记」
+在插件自己的范围内是终局的；原始聊天、DSH Session 日志与磁盘备份不在其中，报告文本必须区分
+「已不再使用」与「已物理删除」。
+
 ## 重新初始化
 
-`reset-team` 是破坏性端点：它把 `bot/` 下的 `state.json`、`memory/`、`learning/`、`im/`、`chat-index.sqlite`、`inflight.json`、`scheduler-state.json` 复制到 `backups/reset-<ISO 时间戳>/`，然后用空团队覆盖 `state.json` 并重建第一个 Main Bot。保留 `secrets.json`、团队工作区设置、`logs/` 和 DSH 自己的会话。执行中若有 turn 在跑返回 `bot/busy`，只读 host 返回 `bot/read-only`；如果没有可运行的工作，重置也会完成。若被破坏：用户的团队数据在没有备份的情况下被删除，或者重置后没有主 Bot 可用。
+`reset-team` 是破坏性端点：它把 `bot/` 下的 `state.json`、`memory/`、`learning/`、`im/`（含 outbox 记录）、`chat-index.sqlite`、`inflight.json`、`scheduler-state.json` 复制到 `backups/reset-<ISO 时间戳>/`，然后用空团队覆盖 `state.json` 并重建第一个 Main Bot。保留 `secrets.json`、团队工作区设置、`logs/` 和 DSH 自己的会话。执行中若有 turn 在跑返回 `bot/busy`，只读 host 返回 `bot/read-only`；如果没有可运行的工作，重置也会完成。若被破坏：用户的团队数据在没有备份的情况下被删除，或者重置后没有主 Bot 可用。
 
 ## 团队数据
 
@@ -68,7 +85,7 @@ host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件
 | `secrets.json` | 保存的密钥名和值，权限 600 | 只归 host。不要打印、复制进日志或提交；Bot 以 `$DSH_SECRET_*` 收到值。 |
 | `im/<connection id>.json` | 适配器运行时和已发送的卡片，权限 600 | IM host 写，适配器读。丢了可能重发卡片或重答消息。 |
 | `update.json` | 更新安装留给下次启动的说明 | 由 `update.ts` 写和消费；不是用户数据。 |
-| `chat-index.sqlite`、`logs/diagnostics.jsonl` | 索引和日志 | 可重建，或可安全删除。 |
+| `chat-index.sqlite`、`im/<id>.outbox.json`、`logs/diagnostics.jsonl` | 索引、待发记录与日志 | 索引和日志可重建；outbox 记录是尚未确认送达的文本，不要把 `im/` 单独删掉，否则未发出的回复会丢。 |
 
 聊天本身是 DSH 自己存储里的 DSH 会话，位于 `home` 之外；插件从不直接写它们。
 
