@@ -153,7 +153,16 @@ function Summary({ owner, view, regenerate }: any) {
 				)
 			: null;
 	const review = reviewNote(view.reviews);
-	const reviewLine = review === undefined ? null : h("div", { className: "bt-mem-review" }, review);
+	const forgot = forgetLine(view.lastForget);
+	const reviewLine =
+		review === undefined && forgot === undefined
+			? null
+			: h(
+					Fragment,
+					null,
+					forgot === undefined ? null : h("div", { className: "bt-mem-review" }, forgot),
+					review === undefined ? null : h("div", { className: "bt-mem-review" }, review),
+				);
 	if (!view.summary)
 		return h(
 			Fragment,
@@ -180,6 +189,17 @@ function Summary({ owner, view, regenerate }: any) {
 // What the last automatic review of these conversations did, in one line, or nothing when
 // there is nothing worth saying. A valid empty answer and a clean application are silent;
 // a partial application or a batch that needs repair is not.
+// What the last forget of this memory covered, in one line: the plugin's own memory went,
+// the change log cannot bring it back, and the chats were never the plugin's to delete.
+export function forgetLine(lastForget: any): string | undefined {
+	if (lastForget === null || typeof lastForget !== "object") return undefined;
+	const removed = Number(lastForget.removed ?? 0);
+	if (!(removed > 0)) return undefined;
+	return t("Last forget: {count} entries · the change log cannot restore them · chats untouched", {
+		count: removed,
+	});
+}
+
 export function reviewNote(reviews: any[]): string | undefined {
 	const latest = (reviews ?? [])[0];
 	if (latest === null || typeof latest !== "object") return undefined;

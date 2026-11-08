@@ -1571,6 +1571,7 @@ export function install(rt: Runtime): void {
 				},
 			});
 			noteNews(scope, actor, "remove", before);
+			await recordForget(scope, 1);
 			return {
 				changed: true,
 				file: old.file,
@@ -2540,6 +2541,8 @@ export function install(rt: Runtime): void {
 			// What the last automatic review of these conversations did, so "nothing new",
 			// "part of it was refused" and "the answer could not be read" show apart.
 			reviews: panelReviews(panel),
+			// What the last forget in this panel's memory actually covered.
+			lastForget: panelForget(panel),
 		};
 	}
 
@@ -2679,6 +2682,7 @@ export function install(rt: Runtime): void {
 			// Every Session that reads this scope re-reads its memory on its next render.
 			renewScopeMemory(scopeKey(scope));
 		}
+		await recordForget(scope, removed, kept.length);
 		return { removed, kept, message: `${removed} ${removed === 1 ? "entry" : "entries"} forgotten.` };
 	}
 
@@ -2698,6 +2702,43 @@ export function install(rt: Runtime): void {
 			backups: "untouched",
 		};
 	}
+
+	// What the last forget of this scope covered, kept beside the tombstones so the panel
+	// can say the real range later without reconstructing it from the change log. It holds
+	// counts and layer names only, never the text that was forgotten.
+	const LAST_FORGET = "last-forget.json";
+	const lastForgetPath = (scope: MemoryScope): string => join(dirOf(scope), LAST_FORGET);
+	const recordForget = async (scope: MemoryScope, removed: number, kept = 0): Promise<void> => {
+		try {
+			await mkdir(dirOf(scope), { recursive: true });
+			const temp = `${lastForgetPath(scope)}.${process.pid}.tmp`;
+			await writeText(
+				temp,
+				`${JSON.stringify({ at: Date.now(), removed, kept, layers: forgottenLayers(removed) }, null, 1)}\n`,
+			);
+			await replaceFile(temp, lastForgetPath(scope));
+		} catch (error) {
+			// The panel line is a convenience; a forget that worked must not fail on it.
+			rt.warn("ocean-crew: could not record the forget range: %s", error);
+		}
+	};
+	const readForget = (scope: MemoryScope): Record<string, unknown> | undefined => {
+		try {
+			const value = JSON.parse(readFileSync(lastForgetPath(scope), "utf8")) as Record<string, unknown>;
+			return value !== null && typeof value === "object" ? value : undefined;
+		} catch {
+			return undefined;
+		}
+	};
+	const panelForget = (panel: Panel): Record<string, unknown> | undefined => {
+		let latest: Record<string, unknown> | undefined;
+		for (const scope of Object.values(panel.scopes)) {
+			const held = readForget(scope);
+			if (held === undefined) continue;
+			if (latest === undefined || Number(held.at ?? 0) > Number(latest.at ?? 0)) latest = held;
+		}
+		return latest;
+	};
 
 	async function memoryForget(body: Record<string, any>): Promise<Record<string, unknown>> {
 		const panel = panelOf(body);

@@ -314,3 +314,13 @@ test("reviewNote tells a partial review and an unreadable one apart, and stays q
 		"The last review kept 1 of its changes out of memory.",
 	);
 });
+
+test("the memory panel states the last forget's real range", async () => {
+	const { forgetLine } = await loadPage("memory-panel");
+	assert.equal(forgetLine(undefined), undefined);
+	assert.equal(forgetLine({ removed: 0 }), undefined);
+	assert.equal(
+		forgetLine({ removed: 2, layers: { chats: "untouched", journal: "kept-without-restore" } }),
+		"Last forget: 2 entries · the change log cannot restore them · chats untouched",
+	);
+});

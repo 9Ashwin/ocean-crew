@@ -1682,3 +1682,20 @@ test("the panel shows the review outcome of its own conversations only", async (
 	const other: any = await call("memory-view", { botId: "m1" });
 	assert.deepEqual(other.reviews, [], "another Bot's reviews are not shown");
 });
+
+test("the panel can state what the last forget actually covered", async (t) => {
+	const { tool, call, home, stop } = await start();
+	t.after(() => stop());
+	await tool("remember", { text: "The user lives in Shanghai" }, "b2");
+	await tool("remember", { text: "The user prefers metric units" }, "b2");
+	await tool("forget", { entry: "shanghai", range: true }, "b2");
+	const view: any = await call("memory-view", { botId: "b2" });
+	assert.equal(view.lastForget.removed, 1);
+	assert.equal(view.lastForget.layers.snapshots, "invalidated");
+	assert.equal(view.lastForget.layers.journal, "kept-without-restore");
+	assert.equal(view.lastForget.layers.chats, "untouched");
+	// The record holds counts and layer names only, never the forgotten text.
+	const saved = readFileSync(join(home, "memory", "bots", "b2", "last-forget.json"), "utf8");
+	assert.ok(!saved.includes("Shanghai"), "the forget range keeps no text");
+	assert.ok(!saved.includes("shanghai"), "the forget range keeps no text");
+});

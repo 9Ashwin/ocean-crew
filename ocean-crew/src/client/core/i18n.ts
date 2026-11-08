@@ -18,6 +18,9 @@ const ZH: Record<string, string> = {
 	"Tokens are counted from DSH's token meter; turns are counted here.":
 		"token 数来自 DSH 的 token-meter，轮数由这里统计。",
 	"DSH's token meter is not readable now, so only turns are counted.": "当前读不到 DSH 的 token-meter，只统计轮数。",
+	// Memory forget range
+	"Last forget: {count} entries · the change log cannot restore them · chats untouched":
+		"上次忘记：{count} 条 · 变更日志无法恢复 · 聊天记录未动",
 	// Memory review outcome
 	"The last review could not be read and is waiting to be fixed ({tries} tries).":
 		"上次回顾读不懂，正在等待修复（已尝试 {tries} 次）。",
