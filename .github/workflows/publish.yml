@@ -1,0 +1,46 @@
+name: Publish
+
+# The plugin is distributed on npm so installing it does not need Git or a local build:
+# DSH's Plugins → Add plugin takes a package name. A tag publishes that version once.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci --no-fund --no-audit
+      - name: Build the plugin (dist/ and client.js)
+        run: npm run build
+      - name: Check the shipped build against the sources
+        run: node ocean-crew/dev/check-bundle.mjs
+      - name: The tag names the version being published
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const pkg = JSON.parse(fs.readFileSync('ocean-crew/package.json', 'utf8'));
+            const tag = process.env.GITHUB_REF_NAME ?? '';
+            if (tag !== '' && tag !== 'v' + pkg.version)
+              throw new Error('tag ' + tag + ' does not match version ' + pkg.version);
+          "
+      - name: Publish
+        # The token lives in the repository secret, never in the tree. The build products
+        # are made here, so the published tarball is the same build the checks passed.
+        run: cd ocean-crew && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

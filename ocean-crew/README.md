@@ -14,16 +14,28 @@ Session，有自己的名字、角色、指令、模型、工作文件夹和形�
 
 先安装 DSH Desktop，并在 **Settings → Models** 里至少配置一个模型——Ocean Crew 使用 DSH 提供的模型。
 
-构建产物（`dist/`、`client.js`）不进 git，由安装时的 `prepare` 脚本现场构建。在 DSH 的
-**Plugins** → **Add plugin** 里填入：
+在 DSH 的 **Plugins** → **Add plugin** 里填入包名：
+
+```text
+ocean-crew
+```
+
+点 **Install**、**Enable now**。这是 npm 上的发布包，不需要本机装 Git，也不需要自己构建。
+
+<details>
+<summary>从 GitHub 安装（开发版、未发布到 npm 的提交）</summary>
+
+构建产物（`dist/`、`client.js`）不进 git，由安装时的 `prepare` 脚本现场构建。填：
 
 ```text
 github:9Ashwin/ocean-crew#main&path:/ocean-crew
 ```
 
-（需要本机装 Git。）点 **Install**、**Enable now**。pnpm 默认拦截依赖的构建脚本；遇到提示时允许
-`ocean-crew` 的构建（DSH 的 Plugins 页面会给出确认，或在 profile 的 `pnpm-workspace.yaml` 中加
-`allowBuilds`，或在本机 profile 的 `pnpm-workspace.yaml` 里加 `dangerouslyAllowAllBuilds: true`）。
+（需要本机装 Git。）pnpm 默认拦截依赖的构建脚本；遇到提示时允许 `ocean-crew` 的构建
+（DSH 的 Plugins 页面会给出确认，或在 profile 的 `pnpm-workspace.yaml` 中加 `allowBuilds`，
+或在本机 profile 的 `pnpm-workspace.yaml` 里加 `dangerouslyAllowAllBuilds: true`）。
+
+</details>
 
 ### 从本机检出安装（开发用）
 

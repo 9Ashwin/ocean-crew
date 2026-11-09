@@ -31,13 +31,26 @@
 侧栏选择 **Plugins** → **Add plugin**，在 **Package name or address** 里填入：
 
 ```text
+ocean-crew
+```
+
+点 **Install**、**Enable now**。这是 npm 上的发布包，不需要 Git，也不需要自己构建。
+
+<details>
+<summary>从 GitHub 安装（开发版或 npm 上还没有的提交）</summary>
+
+在同一个输入框里填：
+
+```text
 github:9Ashwin/ocean-crew#main&path:/ocean-crew
 ```
 
-（需要本机装 Git。）点 **Install**、**Enable now**；如果 DSH 提示改动下次启动生效，完全退出 DSH
-再打开。插件不提交构建产物，安装时由 `prepare` 脚本现场构建 `dist/` 和 `client.js`。pnpm 默认会
-拦截依赖的构建脚本：遇到提示时允许 `ocean-crew` 的构建（DSH 的 Plugins 页面会给出确认，或在
-profile 的 `pnpm-workspace.yaml` 中加 `allowBuilds`，或在本机 profile 的 `pnpm-workspace.yaml` 里加 `dangerouslyAllowAllBuilds: true`）。
+（需要本机装 Git。）插件不提交构建产物，安装时由 `prepare` 脚本现场构建 `dist/` 和 `client.js`。
+pnpm 默认会拦截依赖的构建脚本：遇到提示时允许 `ocean-crew` 的构建（DSH 的 Plugins 页面会给出
+确认，或在 profile 的 `pnpm-workspace.yaml` 中加 `allowBuilds`，或在本机 profile 的
+`pnpm-workspace.yaml` 里加 `dangerouslyAllowAllBuilds: true`）。
+
+</details>
 
 ### 从本机检出安装（开发用）
 
