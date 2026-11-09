@@ -926,7 +926,13 @@ test("a later message in another chat does not steal an earlier turn's reply", a
 	// Turn 7's late output arrives after turn 8 started: it still belongs to the first chat.
 	s.emitEvent("a", "assistant/message", { turn: 7, message: { content: [{ type: "text", text: "late first" }] } });
 	s.emitEvent("a", "assistant/message", { turn: 8, message: { content: [{ type: "text", text: "second" }] } });
-	assert.ok(await s.until(() => s.fake.sent.length === 2));
+	// Look for the two answers themselves, not a total: a late pairing reply from this
+	// test's own setup can land after the reset and make the count three.
+	const pair = () => s.fake.sent.map((entry: any) => `${entry.chat.key}:${entry.text}`);
+	assert.ok(
+		await s.until(() => ["dm-u1:late first", "dm-u2:second"].every((wanted) => pair().includes(wanted))),
+		"each answer reached its own chat",
+	);
 	const byChat = s.fake.sent.map((entry: any) => `${entry.chat.key}:${entry.text}`).sort();
 	assert.deepEqual(byChat, ["dm-u1:late first", "dm-u2:second"]);
 });
