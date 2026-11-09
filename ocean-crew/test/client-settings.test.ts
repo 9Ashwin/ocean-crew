@@ -3,6 +3,7 @@
 // subtitle, and the page reader's Markdown — loaded without a DOM where possible and
 // through a small bundle for the modules that import React.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -15,6 +16,18 @@ const harness = process.env.DSH_HARNESS ?? join(PLUGIN, "..", "dev", "harness");
 const requireHarness = createRequire(join(harness, "package.json"));
 const { build } = requireHarness("esbuild");
 const { JSDOM } = requireHarness("jsdom");
+
+// A page in the settings list without a render branch opens an empty page: the list and
+// the switch are edited apart, so the source has to keep them in step.
+test("every page in the settings list has a render branch", () => {
+	const source = readFileSync(join(PLUGIN, "src/client/pages/settings.ts"), "utf8");
+	const start = source.indexOf("const SETTINGS_PAGES");
+	assert.ok(start >= 0, "the settings list is declared");
+	const list = source.slice(start, source.indexOf("];", start));
+	const ids = [...list.matchAll(/\["([a-z]+)",/g)].map((match) => match[1]);
+	assert.ok(ids.length >= 12, `the list has ${ids.length} pages`);
+	for (const id of ids) assert.match(source, new RegExp(`shown === "${id}"`), `no render branch for ${id}`);
+});
 
 // The pure helpers of the React modules, bundled once with the platform modules left
 // external, as the client bundle leaves them.

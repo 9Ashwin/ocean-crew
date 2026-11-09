@@ -883,6 +883,9 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
 								shown === "connectors" ? h(ConnectorsPage, { roster, actions }) : null,
 								shown === "im" ? h(ImPage, { roster, actions }) : null,
 								shown === "voice" ? h(VoiceSettingsPage, { actions, Section: SetSection, Row: SetRow }) : null,
+								shown === "companion"
+									? h(CompanionSettingsPage, { actions, Section: SetSection, Row: SetRow })
+									: null,
 								shown === "capabilities" ? h(CapabilitiesPage, { roster, actions, run }) : null,
 								shown === "schedules" ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,
 								shown === "secrets" ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,
