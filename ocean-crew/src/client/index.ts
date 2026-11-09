@@ -1280,6 +1280,11 @@ export function apply(ctx: ClientContext): void {
 				{ id: "bot-learning", order: 850, priority: BOT_PRIORITY, inject: face },
 				LearningTurnTail,
 			),
+		// The third-party dsh-cost-meter draws a per-turn "本轮费用" line into the turn tail.
+		// A Bot chat keeps usage on its usage page instead of after every turn, so that entry
+		// is replaced with nothing: the same id and a shadowing priority below it win the cell,
+		// and the plugin itself stays installed (Agent mode still shows its line).
+		() => shadow("conversation.chat.turnTail", { id: "cost-meter-turn", order: 10, priority: BOT_PRIORITY }, Nothing),
 		// A Bot condenses its conversation without telling anyone; the chat keeps showing every
 		// message.
 		() =>
