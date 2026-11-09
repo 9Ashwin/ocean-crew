@@ -556,9 +556,10 @@ test("send chunks the text and turns the last chunk into a card", async () => {
 	const [first, last] = fake.creates;
 	assert.deepEqual(first.params, { receive_id_type: "chat_id" });
 	assert.equal(first.data.receive_id, "oc_group");
-	// Prose is a Markdown post, so the platform renders emphasis and lists itself.
-	assert.equal(first.data.msg_type, "post");
-	const firstText = JSON.parse(first.data.content).zh_cn.content[0][0].text;
+	// Prose without markdown is a plain text message: a post whose only element is a
+	// markdown block reads as a code-like block on some clients.
+	assert.equal(first.data.msg_type, "text");
+	const firstText = JSON.parse(first.data.content).text;
 	// A split reply marks each part, and the marker fits inside the limit.
 	assert.match(firstText, / \(1\/2\)$/);
 	assert.ok([...firstText].length <= 4000, `part is within the limit: ${[...firstText].length}`);
@@ -580,7 +581,8 @@ test("send posts text and edit patches the card", async () => {
 	assert.equal(sent.messageId, "om_1");
 	assert.equal(fake.creates.length, 1);
 	assert.equal(fake.creates[0].data.receive_id, "oc_p2p");
-	assert.equal(fake.creates[0].data.msg_type, "post");
+	assert.equal(fake.creates[0].data.msg_type, "text");
+	assert.deepEqual(JSON.parse(fake.creates[0].data.content), { text: "hello" });
 	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_9", {
 		text: "done",
 		buttons: [{ data: "a:1:allow", label: "Allow" }],
@@ -732,20 +734,24 @@ test("a reply whose target is gone is sent plainly instead of lost", async () =>
 	assert.equal(sent.messageId, "om_1");
 });
 
-test("edit patches a card and updates a post, each on its own endpoint", async () => {
+test("edit patches a card and updates a text message, each on its own endpoint", async () => {
 	const fake = fakeSdk();
 	const { handle } = await setup(fake);
 	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_5", { text: "done" });
-	assert.equal(fake.updates.length, 1, "a post is updated in place");
+	assert.equal(fake.updates.length, 1, "a message is updated in place");
 	assert.equal(fake.patches.length, 0);
 	assert.deepEqual(fake.updates[0].path, { message_id: "om_5" });
-	assert.equal(fake.updates[0].data.msg_type, "post");
+	assert.equal(fake.updates[0].data.msg_type, "text");
+	assert.deepEqual(JSON.parse(fake.updates[0].data.content), { text: "done" });
+	// A markdown answer is still edited as the post the platform renders.
+	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_7", { text: "**done**" });
+	assert.equal(fake.updates[1].data.msg_type, "post");
 	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_6", {
 		text: "answered",
 		buttons: [{ data: "a:1:allow", label: "Allow" }],
 	});
 	assert.equal(fake.patches.length, 1, "a card is patched");
-	assert.equal(fake.updates.length, 1);
+	assert.equal(fake.updates.length, 2, "a card is not updated, the two texts were");
 });
 
 // A post Feishu refuses is retried as plain text, so the answer still arrives.
@@ -965,7 +971,7 @@ test("an answer can carry an image and a file, uploaded first and sent as messag
 	// One text bubble, then the image, then the file, each as its own message.
 	assert.deepEqual(
 		fake.creates.map((payload: any) => payload.data.msg_type),
-		["post", "image", "file"],
+		["text", "image", "file"],
 	);
 	const imageMessage = fake.creates[1].data;
 	assert.deepEqual(JSON.parse(imageMessage.content), { image_key: "img_up_1" });
@@ -992,4 +998,19 @@ test("media alone is sent without an empty text bubble", async () => {
 		fake.creates.map((payload: any) => payload.data.msg_type),
 		["file"],
 	);
+});
+
+// Plain prose is not wrapped in a markdown block: on Feishu that block reads as a
+// code-like panel, which is what a normal answer must not look like.
+test("plain prose goes as text and markdown goes as a post the platform renders", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "好的，已经处理完了。" });
+	assert.equal(fake.creates[0].data.msg_type, "text");
+	assert.deepEqual(JSON.parse(fake.creates[0].data.content), { text: "好的，已经处理完了。" });
+	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "## 结果\n- 一\n- 二" });
+	assert.equal(fake.creates[1].data.msg_type, "post");
+	const rows = JSON.parse(fake.creates[1].data.content).zh_cn.content;
+	assert.equal(rows[0][0].tag, "md");
+	assert.match(rows[0][0].text, /## 结果/);
 });

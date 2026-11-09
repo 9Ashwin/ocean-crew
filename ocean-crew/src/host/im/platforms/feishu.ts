@@ -401,6 +401,11 @@ const POST_ROWS = (content: string): Array<Array<{ tag: string; text: string }>>
 	return rows.length > 0 ? rows : [[{ tag: "md", text: content }]];
 };
 const post = (content: string): string => JSON.stringify({ zh_cn: { content: POST_ROWS(content) } });
+// A post whose only element is a markdown block reads as a code-like block on some
+// Feishu clients, so plain prose goes out as a text message; markdown-shaped prose is
+// rendered by the platform. The shapes are what the reference platform client uses.
+const MARKDOWN_HINT =
+	/(^#{1,6}\s)|(^\s*[-*]\s)|(^\s*\d+\.\s)|(^\s*---+\s*$)|(```)|(`[^`\n]+`)|(\*\*[^*\n].+?\*\*)|(~~[^~\n].+?~~)|(<u>.+?<\/u>)|(\*[^*\n]+\*)|(\[[^\]]+\]\([^)]+\))|(^>\s)/m;
 
 // A card is an event, not a paragraph: a coloured header makes an approval read as one
 // at a glance, the way a chat client shows a pending decision.
@@ -786,8 +791,13 @@ const feishu = {
 				let replyToId = typeof replyTo === "string" && replyTo !== "" ? replyTo : undefined;
 				for (const [index, chunk] of chunks.entries()) {
 					const interactive = buttons !== undefined && index === chunks.length - 1;
-					const msgType = interactive ? "interactive" : "post";
-					const content = interactive ? card(chunk, buttons) : post(chunk);
+					const markup = MARKDOWN_HINT.test(chunk);
+					const msgType = interactive ? "interactive" : markup ? "post" : "text";
+					const content = interactive
+						? card(chunk, buttons)
+						: msgType === "post"
+							? post(chunk)
+							: JSON.stringify({ text: toPlain(chunk) });
 					const plain = msgType === "interactive" ? msgType : "text";
 					const plainContent = msgType === "interactive" ? content : JSON.stringify({ text: toPlain(chunk) });
 					const create = () =>
@@ -879,12 +889,16 @@ const feishu = {
 					);
 					return;
 				}
+				const markup = MARKDOWN_HINT.test(body);
 				await call(
 					"Feishu update",
 					() =>
 						client.im.message.update({
 							path: { message_id: String(messageId ?? "") },
-							data: { msg_type: "post", content: post(body) },
+							data: {
+								msg_type: markup ? "post" : "text",
+								content: markup ? post(body) : JSON.stringify({ text: toPlain(body) }),
+							},
 						}),
 					scrub,
 				);
