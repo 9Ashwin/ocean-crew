@@ -445,7 +445,7 @@ export function install(rt: any) {
 	// message that arrives before its turn/start is bound when the start lands.
 	const currentTurns = new Map<string, number>();
 	const waitingTurns = new Map<string, string>();
-	const sawSessionEvent = false;
+	let sawSessionEvent = false;
 	// Latest request that addressed each Bot or group, for lines that carry no request.
 	const ownerOrigins = new Map<string, string>();
 	const turnKey = (sessionId: string, turn: number) => `${sessionId}:${turn}`;
@@ -1690,6 +1690,10 @@ export function install(rt: any) {
 
 	// ----------------------------------------------------------------- outbound
 	listenGlobal(ctx, "session/event", (session: any, event: any) => {
+		if (!sawSessionEvent) {
+			sawSessionEvent = true;
+			rt.warn("ocean-crew: im now receives DSH session events");
+		}
 		if (event.type === "user/message") {
 			// The turn that carries this message has started; a queued message must not
 			// be settled by the end of the turn it waited behind.
@@ -1747,7 +1751,7 @@ export function install(rt: any) {
 			}
 		}
 		if (event.type === "turn/end") currentTurns.delete(session.id);
-		if (event.type === "user/message") {
+		if (event.type === "user/message" && event.data?.source?.kind === "user") {
 			const turn = turnOf(session.id, event);
 			const wanted = typeof rpcId === "string" && rpcId.startsWith("im:") ? rpcId : "";
 			if (typeof rpcId === "string" && rpcId.startsWith("im:")) sessionOrigins.set(session.id, rpcId);

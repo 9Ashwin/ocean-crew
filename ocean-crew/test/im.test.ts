@@ -1129,3 +1129,23 @@ test("a window turn in the same session does not inherit the IM route", async (t
 	await s.flush();
 	assert.deepEqual(s.fake.sent, [], "a turn from the window answers the window");
 });
+
+// DSH puts runtime-context, time-context and skill messages into the same turn as the
+// user's own message. Only the user's message starts the turn's origin: a synthetic one
+// that cleared it would silently drop the answer, which is exactly what real logs showed.
+test("a synthetic user-role message in the same turn does not clear the IM binding", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hi");
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "turn/start", { turn: 6 });
+	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, content: [] });
+	s.emitEvent("a", "user/message", { source: { kind: "runtime-context" }, content: [] });
+	s.emitEvent("a", "user/message", { source: { kind: "time-context" }, content: [] });
+	s.emitEvent("a", "assistant/message", { turn: 6, message: { content: [{ type: "text", text: "still routed" }] } });
+	assert.ok(await s.until(() => s.fake.sent.length === 1), "the answer still reaches the chat");
+	assert.equal(s.fake.sent[0].text, "still routed");
+});
