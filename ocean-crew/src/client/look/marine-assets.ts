@@ -520,6 +520,12 @@ export function renderMarineMark(
 				'" data-anchor="' +
 				e.center.join(" ") +
 				'">' +
+				// A happy arc in the eye's own place: the same curve the blink draws, thicker,
+				// hidden until the mark is petted. A marine character has no eyelid to shut,
+				// so this is how it smiles with its eyes like every other shape.
+				'<path class="mb-eye-happy" opacity="0" d="' +
+				esc(e.blink) +
+				'" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round"/>' +
 				(blink
 					? '<path class="mb-eye-closed" d="' +
 						esc(e.blink) +
@@ -554,9 +560,9 @@ export function renderMarineMark(
 		paths(def.body) +
 		'</g><g class="mb-markings" data-layer="markings" fill="#FFFFFF">' +
 		def.markings.map((x) => paths(x.d)).join("") +
-		'</g><g class="mb-eyes" data-layer="eyes">' +
+		'</g><g class="mb-eyes" data-layer="eyes"><g class="mb-gaze">' +
 		eyeMarkup +
-		"</g>"
+		"</g></g>"
 	);
 }
 export function renderMarineSvg(shapeId: string, options: MarineOptions = {}): string {

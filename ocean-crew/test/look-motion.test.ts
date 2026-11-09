@@ -302,3 +302,18 @@ test("the mark carries its companion mood, which is what the expression rules se
 	})();
 	assert.equal(plain.props["data-mood"], undefined);
 });
+
+test("a marine mark smiles with its eyes on hover, and follows the pointer", () => {
+	const html = markSvg({ id: "b1", companion: { mood: "calm" } });
+	// A pet closes the eyes into an arc: the marine eye carries its own happy path, hidden
+	// until the row is hovered, and its eyes sit in a group the gaze can translate.
+	assert.ok(html.includes('class="mb-eye-happy"'), "the happy arc is drawn");
+	assert.match(html, /class="mb-eye-happy"[^>]*opacity="0"/);
+	assert.ok(html.includes('class="mb-gaze"'), "the eyes move together");
+	// The stylesheet reaches both the wrapper and those layers.
+	const styles = readFileSync(join(PLUGIN, "src/client/look/styles.ts"), "utf8");
+	assert.match(styles, /:hover \.bt-mark\[data-live\][^{]*:is\(\.bt-eye,\.mb-eye-open\)\{scale:1 0/);
+	assert.match(styles, /:hover \.bt-mark\[data-live\][^{]*:is\(\.bt-eye-happy,\.mb-eye-happy\)\{opacity:1/);
+	assert.match(styles, /:is\(\.bt-b,\.bt-mark-img\)\{rotate:8deg;translate:5% -1%;animation:bt-nuzzle/);
+	assert.match(styles, /\.bt-mark\[data-gaze\] :is\(\.bt-gaze,\.mb-gaze\)\{transform:translate/);
+});

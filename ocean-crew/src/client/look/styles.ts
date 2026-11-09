@@ -26,7 +26,7 @@ ${Object.entries(INKS)
 .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
 .bt-mark svg{width:100%;height:100%;overflow:visible}
 .bt-mark-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;box-shadow:inset 0 0 0 1px var(--bt-line)}
-.bt-mark .bt-b,.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .bt-gaze,.bt-mark .mb-eye,.bt-mark .mb-eyes{transform-box:fill-box}
+.bt-mark .bt-b,.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .bt-gaze,.bt-mark .mb-eye,.bt-mark .mb-eyes,.bt-mark .mb-gaze,.bt-mark .mb-eye-happy{transform-box:fill-box}
 .bt-mark .bt-b{transform-origin:50% 100%}
 .bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .mb-eye,.bt-mark .mb-eyes{transform-origin:center}
 /* Motion levels (Settings → Bots → Animation) set body[data-bt-motion]: quiet moves a
@@ -51,16 +51,16 @@ body[data-bt-motion=lively] :is(.bt-row,.bt-tile)>.bt-mark:hover .bt-badge-alert
    closed in a happy arc, and springs back when the pointer leaves. */
 :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster)::before{content:'';position:absolute;inset:-20%;border-radius:50%}
 .bt-mark[data-live] .bt-b,.bt-mark[data-live] .bt-mark-img{transition:rotate .5s cubic-bezier(.34,1.56,.64,1),translate .5s cubic-bezier(.34,1.56,.64,1),scale .3s ease-out}
-.bt-mark[data-live] .bt-eye{transition:scale .14s ease-in}
-.bt-mark[data-live] .bt-eye-happy{transition:opacity .12s ease-out}
+.bt-mark[data-live] :is(.bt-eye,.mb-eye){transition:scale .14s ease-in}
+.bt-mark[data-live] :is(.bt-eye-happy,.mb-eye-happy){transition:opacity .12s ease-out}
 body:not([data-bt-motion=quiet]) :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster):hover .bt-mark[data-live]:is([data-state=idle],[data-state=alert]):not(.bt-mark-poke) :is(.bt-b,.bt-mark-img){rotate:8deg;translate:5% -1%;animation:bt-nuzzle .78s ease-in-out .32s infinite}
-body:not([data-bt-motion=quiet]) :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster):hover .bt-mark[data-live]:is([data-state=idle],[data-state=alert]) .bt-eye{scale:1 0;animation:none}
-body:not([data-bt-motion=quiet]) :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster):hover .bt-mark[data-live]:is([data-state=idle],[data-state=alert]) .bt-eye-happy{opacity:1;transition-delay:.1s}
+body:not([data-bt-motion=quiet]) :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster):hover .bt-mark[data-live]:is([data-state=idle],[data-state=alert]) :is(.bt-eye,.mb-eye-open){scale:1 0;animation:none}
+body:not([data-bt-motion=quiet]) :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster):hover .bt-mark[data-live]:is([data-state=idle],[data-state=alert]) :is(.bt-eye-happy,.mb-eye-happy){opacity:1;transition-delay:.1s}
 @keyframes bt-nuzzle{50%{rotate:14deg;translate:8% -3%;scale:1.03 .97}}
 .bt-mark[data-gaze] .bt-b{translate:calc(var(--bt-gx,0) * 5%) calc(var(--bt-gy,0) * 4%);transition:translate .18s ease-out}
-.bt-mark[data-gaze] .bt-gaze{transform:translate(calc(var(--bt-gx,0) * 12%),calc(var(--bt-gy,0) * 11%));transition:transform .18s ease-out}
+.bt-mark[data-gaze] :is(.bt-gaze,.mb-gaze){transform:translate(calc(var(--bt-gx,0) * 12%),calc(var(--bt-gy,0) * 11%));transition:transform .18s ease-out}
 body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-b{translate:none}
-body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-gaze{transform:none}
+body[data-bt-motion=quiet] .bt-mark[data-gaze] :is(.bt-gaze,.mb-gaze){transform:none}
 /* Companion moods: the mark wears its character's current feeling. The glow stays behind
    the body; the eyes squint or widen on their own layer. The expression moves at the
    default level too — the glow breathes, an excited mark hops — because a companion the
