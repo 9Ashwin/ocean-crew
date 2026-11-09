@@ -876,3 +876,59 @@ test("post elements keep mentions, line breaks and code blocks", async () => {
 	assert.match(messages[0].text, /第一行\n第二行/);
 	assert.match(messages[0].text, /```js\nconst a = 1;\n```/);
 });
+
+test("a voice note and a video are downloaded and named for the Bot", async () => {
+	const voice = Buffer.from("OggS fake opus");
+	const video = Buffer.from("ftyp mp4 bytes");
+	const fake = fakeSdk({ resources: { voice_1: voice, video_1: video } });
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_id: "om_1",
+			message_type: "audio",
+			content: JSON.stringify({ file_key: "voice_1", duration: 3200 }),
+		}),
+		() => messages.length === 1,
+	);
+	assert.equal(messages[0].text, "[Voice message, 3s]");
+	assert.equal(messages[0].files.length, 1);
+	assert.equal(messages[0].files[0].name, "voice-om_1.opus");
+	assert.deepEqual(messages[0].files[0].data, voice);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_id: "om_2",
+			message_type: "media",
+			content: JSON.stringify({ file_key: "video_1", duration: 60_000, file_name: "demo.mp4" }),
+		}),
+		() => messages.length === 2,
+	);
+	assert.equal(messages[1].text, "[Video, 60s]");
+	assert.equal(messages[1].files[0].name, "demo.mp4");
+	// Both came from the resource endpoint as files.
+	assert.deepEqual(fake.resourceGets.at(-1), {
+		path: { message_id: "om_2", file_key: "video_1" },
+		params: { type: "file" },
+	});
+});
+
+test("a voice note that cannot be downloaded says so instead of vanishing", async () => {
+	const fake = fakeSdk();
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_id: "om_1",
+			message_type: "audio",
+			content: JSON.stringify({ file_key: "gone", duration: 1000 }),
+		}),
+		() => messages.length === 1,
+	);
+	assert.equal(messages[0].text, "[Voice message, 1s: could not be read]");
+	assert.equal(messages[0].files.length, 0);
+	assert.ok(fake.warns.some((warn: string) => warn.includes("feishu audio download failed")));
+});

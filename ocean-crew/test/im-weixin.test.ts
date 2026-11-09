@@ -996,8 +996,8 @@ test("an image item downloads from its CDN URL and decrypts with its AES key", a
 	assert.equal(messages[0].images.length, 1);
 	assert.equal(messages[0].images[0].mediaType, "image/jpeg");
 	assert.deepEqual(Buffer.from(messages[0].images[0].data, "base64"), plain);
-	// A file item is reported by name; its bytes stay on the platform.
-	assert.deepEqual(messages[0].files, [{ name: "notes.txt", data: undefined }]);
+	// A file item without a media reference is reported by name only; nothing to fetch.
+	assert.deepEqual(messages[0].files, [{ name: "notes.txt" }]);
 });
 
 // The reply as chat bubbles: a short cascade of lines is sent one per bubble, the way a
@@ -1080,4 +1080,62 @@ test("a quoted image or file is named, not inlined", () => {
 test("a message with no quote is unchanged", () => {
 	assert.equal(withQuoted("你好", undefined), "你好");
 	assert.equal(withQuoted("你好", {}), "你好");
+});
+
+test("a file and a video download their bytes from the same CDN path", async (t) => {
+	const fake = await fakeIlink();
+	const runtime: any = {};
+	const messages: any[] = [];
+	const keyHex = "00112233445566778899aabbccddeeff";
+	const plain = Buffer.from("the attachment");
+	const cipher = createCipheriv("aes-128-ecb", Buffer.from(keyHex, "hex"), null);
+	const encrypted = Buffer.concat([cipher.update(plain), cipher.final()]);
+	const fileUrl = "https://cdn.example.test/file/1";
+	const videoUrl = "https://cdn.example.test/video/1";
+	let polls = 0;
+	fake.replies.updates = () => {
+		polls += 1;
+		if (polls > 1) return { ret: 0, msgs: [] };
+		return {
+			ret: 0,
+			get_updates_buf: "c1",
+			msgs: [
+				{
+					from_user_id: "u1",
+					message_id: "m1",
+					item_list: [
+						{
+							type: 4,
+							file_item: {
+								file_name: "report.txt",
+								media: { full_url: fileUrl, aes_key: Buffer.from(keyHex).toString("base64") },
+							},
+						},
+						// A video may carry its key as a plain hex field on the item.
+						{ type: 5, video_item: { file_name: "clip.mp4", aeskey: keyHex, media: { full_url: videoUrl } } },
+					],
+				},
+			],
+		};
+	};
+	const flaky = {
+		...env(fake, runtime),
+		fetch: (url: any, init: any) => {
+			if (String(url) === fileUrl || String(url) === videoUrl)
+				return Promise.resolve({ ok: true, arrayBuffer: async () => encrypted });
+			return (globalThis.fetch as any)(url, init);
+		},
+	};
+	const handle = weixin.connect(FIELDS, flaky, noopHandlers([], messages));
+	t.after(() => {
+		handle.stop();
+		return fake.close();
+	});
+	await until(() => messages.length === 1);
+	assert.equal(messages[0].files.length, 2);
+	assert.equal(messages[0].files[0].name, "report.txt");
+	assert.deepEqual(messages[0].files[0].data, plain);
+	assert.equal(messages[0].files[1].name, "clip.mp4");
+	assert.deepEqual(messages[0].files[1].data, plain);
+	assert.match(messages[0].text, /\[Video\]/);
 });

@@ -361,7 +361,7 @@ const weixin = {
 			if (userId === "") return;
 			rememberContext(userId, msg.context_token, msg);
 			const images: Array<{ mediaType: string; data: string }> = [];
-			const files: Array<{ name: string; data: undefined }> = [];
+			const files: Array<{ name: string; data?: Buffer }> = [];
 			const texts: string[] = [];
 			for (const item of msg.item_list ?? []) {
 				if (item.type === 1 && item.text_item?.text !== undefined) {
@@ -373,7 +373,15 @@ const weixin = {
 					const bytes = await image(item.image_item.media, env).catch(() => undefined);
 					if (bytes !== undefined) images.push({ mediaType: "image/jpeg", data: bytes.toString("base64") });
 				} else if (item.type === 4 && item.file_item !== undefined) {
-					files.push({ name: String(item.file_item.file_name ?? "file"), data: undefined });
+					const bytes = await mediaBytes(item.file_item, env).catch(() => undefined);
+					files.push({ name: String(item.file_item.file_name ?? "file"), ...(bytes ? { data: bytes } : {}) });
+				} else if (item.type === 5 && item.video_item !== undefined) {
+					const bytes = await mediaBytes(item.video_item, env).catch(() => undefined);
+					const name = String(
+						item.video_item.file_name ?? `video-${String(msg.client_id ?? msg.message_id ?? "clip")}.mp4`,
+					);
+					files.push({ name, ...(bytes ? { data: bytes } : {}) });
+					texts.push("[Video]");
 				}
 			}
 			await handlers.onMessage({
@@ -923,18 +931,31 @@ async function request(
 }
 
 // Inbound images: the CDN URL plus a base64 AES-128 key (ECB, PKCS7).
-async function image(media: any, env: any): Promise<Buffer | undefined> {
-	const url = String(media.full_url ?? media.url ?? "");
+const AES_KEY = /^[0-9a-f]{32}$/i;
+// The AES key of an attachment: iLink gives it either as a hex field on the item or
+// base64 inside `media.aes_key` (the pairing of the two encodings the reference client
+// handles). Anything else is not a key.
+function attachmentKey(holder: any): Buffer | undefined {
+	const direct = String(holder?.aeskey ?? "");
+	if (AES_KEY.test(direct)) return Buffer.from(direct, "hex");
+	const media = holder?.media ?? holder;
+	const decoded = Buffer.from(String(media?.aes_key ?? ""), "base64").toString("utf8");
+	if (AES_KEY.test(decoded)) return Buffer.from(decoded, "hex");
+	return undefined;
+}
+async function mediaBytes(holder: any, env: any): Promise<Buffer | undefined> {
+	const media = holder?.media ?? holder;
+	const url = String(media?.full_url ?? media?.url ?? "");
 	if (url === "") return undefined;
 	const response = await env.fetch(url);
 	if (!response.ok) return undefined;
 	const encrypted = Buffer.from(await response.arrayBuffer());
-	const hex = Buffer.from(String(media.aes_key ?? ""), "base64").toString("utf8");
-	const key = /^[0-9a-f]{32}$/i.test(hex) ? Buffer.from(hex, "hex") : undefined;
+	const key = attachmentKey(holder);
 	if (key === undefined) return encrypted;
 	const decipher = createDecipheriv("aes-128-ecb", key, null);
 	return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
+const image = (media: any, env: any): Promise<Buffer | undefined> => mediaBytes(media, env);
 
 // A reply quotes the message it answers. The model needs that context as part of the
 // text, since the platform carries it as a nested item rather than a field: a quoted

@@ -634,10 +634,34 @@ const feishu = {
 							warn("ocean-crew im: feishu file download failed: %s", error);
 						}
 					}
+					// A voice note and a video are attachments inside the message body, and
+					// their bytes come from the same resource endpoint. The Bot gets the file
+					// plus one line saying what it is; a download that failed is named as such
+					// instead of the message being dropped silently.
+					let attachment = "";
+					if (type === "audio" || type === "media") {
+						const kind = type === "audio" ? "Voice message" : "Video";
+						const seconds = Math.round(Number(content.duration) / 1000);
+						const length = Number.isFinite(seconds) && seconds > 0 ? `, ${seconds}s` : "";
+						const key = String(content.file_key ?? "");
+						const fallback = type === "audio" ? `voice-${messageId}.opus` : `video-${messageId}.mp4`;
+						let read = false;
+						if (key !== "") {
+							try {
+								const bytes = await messageResource(client, messageId, key, "file", MAX_FILE_BYTES);
+								files.push({ name: String(content.file_name ?? fallback), data: bytes });
+								read = true;
+							} catch (error) {
+								warn(`ocean-crew im: feishu ${type} download failed: %s`, error);
+							}
+						}
+						attachment = read ? `[${kind}${length}]` : `[${kind}${length}: could not be read]`;
+					}
+					const body = attachment === "" ? text : [text, attachment].filter(Boolean).join("\n\n").trim();
 					// A text that was nothing but a mention still matters: the host turns
 					// it into a pairing request. Other types without readable content are
 					// skipped rather than dispatched empty.
-					if (type !== "text" && text === "" && images.length === 0 && files.length === 0) return;
+					if (type !== "text" && body === "" && images.length === 0 && files.length === 0) return;
 					const chat = await chatOf(chatId, direct ? "direct" : "group");
 					if (stopped) return;
 					const sender = event.sender ?? {};
@@ -646,7 +670,7 @@ const feishu = {
 					await handlers.onMessage({
 						chat: { key: chatId, kind: chat.kind, title: chat.title },
 						sender: { id: senderId, name: senderLabel === "" ? senderId : senderLabel },
-						text,
+						text: body,
 						images,
 						files,
 						mentioned,
