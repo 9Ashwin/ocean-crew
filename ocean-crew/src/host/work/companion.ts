@@ -333,8 +333,12 @@ export function install(rt: Runtime): void {
 		const text = textOf(event.data?.message ?? event.data);
 		if (text === "") return;
 		void touch(session?.id, text);
-		const messageId = String((event.data as Record<string, unknown>)?.id ?? "");
-		if (messageId !== "") void react(session.id, messageId, text);
+		// The transcript knows a user message by its event seq (and sometimes the durable
+		// id); store under both so the bubble finds its emoji whichever the window has.
+		const seq = (event as Record<string, unknown>)?.seq;
+		const durable = String((event.data as Record<string, unknown>)?.id ?? "");
+		if (seq !== undefined) void react(session.id, String(seq), text);
+		else if (durable !== "") void react(session.id, durable, text);
 	});
 
 	// A short spoken line for the window's play button; the chat stays where the voice lives.

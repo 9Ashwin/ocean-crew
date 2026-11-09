@@ -258,11 +258,14 @@ test("a companion reacts to some of what the user says, not all of it", async (t
 	const { rt, ctx, state } = start(t);
 	await rt.companionSet("a", { enabled: true });
 	const listeners = ctx.listeners.get("session/event") ?? [];
+	let seq = 0;
 	const say = (id: string, text: string) =>
 		listeners[0](
 			{ id: "sess-a" },
 			{
 				type: "user/message",
+				seq: ++seq,
+				time: 1_000_000_000_000 + seq,
 				data: { id, role: "user", source: { kind: "user" }, content: [{ type: "text", text }] },
 			},
 		);
@@ -271,15 +274,15 @@ test("a companion reacts to some of what the user says, not all of it", async (t
 	say("m2", "爱你");
 	await new Promise((resolve) => setTimeout(resolve, 30));
 	const marks: any = (state as any).companionReactions;
-	assert.deepEqual(marks["sess-a"], { m2: "❤️" });
-	assert.deepEqual((rt.companionReactionsView() as any)["sess-a"], { m2: "❤️" });
+	assert.deepEqual(marks["sess-a"], { "2": "❤️" }, "keyed by the event seq the transcript carries");
+	assert.deepEqual((rt.companionReactionsView() as any)["sess-a"], { "2": "❤️" });
 	// The next matching pair gets its own emoji, and a plain message gets nothing.
 	say("m3", "今天天气一般");
 	say("m4", "哈哈笑死");
 	await new Promise((resolve) => setTimeout(resolve, 30));
-	assert.equal((marks as any)["sess-a"]?.["m4"], "😂");
+	assert.equal((marks as any)["sess-a"]?.["4"], "😂");
 	say("m5", "好的");
 	say("m6", "好的好的");
 	await new Promise((resolve) => setTimeout(resolve, 30));
-	assert.deepEqual(Object.keys((marks as any)["sess-a"] ?? {}), ["m2", "m4"]);
+	assert.deepEqual(Object.keys((marks as any)["sess-a"] ?? {}), ["2", "4"]);
 });

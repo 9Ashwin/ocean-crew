@@ -200,8 +200,10 @@ export function UserMessageCell({
 	const via = viaOf(data.source) ?? roster.imVia?.[sessionId]?.[data.seq];
 	// A companion may put one emoji on what the user said; it rides under that bubble.
 	const reaction =
-		useRoster((value: any) => value.companionReactions?.[sessionId]?.[String(data.id ?? data.seq ?? "")] ?? null) ??
-		null;
+		useRoster(
+			(value: any) =>
+				value.companionReactions?.[sessionId]?.[String(data.seq ?? data.messageId ?? data.id ?? "")] ?? null,
+		) ?? null;
 	const { shown, folded, control } = useFold(text, { markdown: false });
 	const body = h(UserText, {
 		text: shown,
