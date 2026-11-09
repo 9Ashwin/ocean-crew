@@ -928,11 +928,13 @@ test("a window turn clears the session's route instead of inheriting it", async 
 	await dm(s, "u1", "hello");
 	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
 	await dm(s, "u1", "from im");
-	await s.flush();
+	// Wait for the IM replies before resetting: a late one looks like the window turn
+	// sending to IM. Then the user types in the window, with the real source shape (a
+	// user message and no rpc id) and no turn on the message.
+	assert.ok(await s.until(() => s.fake.sent.length >= 2), "the IM replies are sent");
 	s.fake.sent.length = 0;
-	// The user types in the window: this turn has no IM request, so it must not inherit
-	// the chat the previous IM message came from.
-	s.emitEvent("a", "user/message", { turn: 3, content: [{ type: "text", text: "typed in the window" }] });
+	s.emitEvent("a", "turn/start", { turn: 3 });
+	s.emitEvent("a", "user/message", { source: { kind: "user" }, content: [{ type: "text", text: "x" }] });
 	s.emitEvent("a", "assistant/message", { turn: 3, message: { content: [{ type: "text", text: "window answer" }] } });
 	await s.flush();
 	assert.deepEqual(s.fake.sent, [], "a window turn is not sent to IM");
