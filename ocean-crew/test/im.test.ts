@@ -1289,3 +1289,38 @@ test("pressing a button on a view that is already answered reports it as stale",
 		"the chat is told the card was answered already",
 	);
 });
+
+// A view raised in a bound group chat is a card in that group only, with its buttons:
+// the group is the chat that asked, and the window is not asked to answer for it.
+test("a view raised in a bound group chat is a card there and nowhere else", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await gm(s, "u1", "@fakebot look at this");
+	await s.rt.imEndpoint("im-chat", { id: conn.id, chatKey: "g1", target: { roomId: "r1" } });
+	await gm(s, "u1", "@fakebot a view");
+	await s.flush();
+	s.fake.sent.length = 0;
+	s.rt.state.views.r1 = {
+		id: "v2",
+		title: "Pick a plan",
+		view: { type: "options", id: "plan", options: [{ label: "Basic" }, { label: "Pro" }] },
+	};
+	await s.rt.save();
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => entry.buttons?.length === 2)),
+		"the view card is sent",
+	);
+	assert.ok(
+		s.fake.sent.every((entry: any) => entry.chat.key === "g1"),
+		"the view card stays in the group chat",
+	);
+	const card = s.fake.sent.find((entry: any) => entry.buttons?.length === 2);
+	assert.equal(card.card, true, "the view is a card like the other cards");
+	assert.deepEqual(
+		card.buttons.map((button: any) => button.data),
+		["v:v2:plan:o0", "v:v2:plan:o1"],
+	);
+});
