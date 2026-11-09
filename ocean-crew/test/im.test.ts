@@ -783,10 +783,13 @@ test("a message whose queued record cannot be written is not accepted", async (t
 	rmSync(join(s.home, "im"), { recursive: true, force: true });
 	writeFileSync(join(s.home, "im"), "not a directory");
 	s.emitEvent("a", "assistant/message", { message: { content: [{ type: "text", text: "hello" }] } });
-	await delay(200);
+	// The refusal is reported asynchronously; wait for it rather than for a fixed nap.
+	const statusOf = (): any => (s.rt.imStatusView() as any)[conn.id];
+	assert.ok(
+		await s.until(() => /could not be queued for sending/.test(String(statusOf()?.error ?? ""))),
+		"the refusal is reported",
+	);
 	assert.deepEqual(s.fake.sent, [], "nothing is sent without a durable record");
-	const status: any = s.rt.imStatusView()[conn.id];
-	assert.match(String(status?.error ?? ""), /could not be queued for sending/);
 });
 
 test("the sending record is on disk before the platform is called", async (t) => {
