@@ -5,6 +5,17 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.4.7] - 2026-11-10
+
+### Fixed
+
+- A companion's reaction emoji now appears on the user's message. The lookup required the
+  chat's session from a slot whose props do not promise one, so every mark was stored and
+  never drawn; it asks the message's own chat first and falls back to any chat, since a
+  message id is unique.
+
+- `/help` on a plain-text platform is one message instead of one bubble per command.
+
 ## [0.4.6] - 2026-11-10
 
 ### Fixed

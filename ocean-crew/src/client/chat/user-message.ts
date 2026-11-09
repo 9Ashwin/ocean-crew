@@ -198,12 +198,22 @@ export function UserMessageCell({
 	const steering = node.kind === "steering";
 	const sentAt = Number.isFinite(data.time) ? messageClock(data.time) : undefined;
 	const via = viaOf(data.source) ?? roster.imVia?.[sessionId]?.[data.seq];
-	// A companion may put one emoji on what the user said; it rides under that bubble.
+	// A companion may put one emoji on what the user said; it rides under that bubble. The
+	// slot's own props do not promise a session, so the lookup asks this chat first and then
+	// every chat: a message id is unique, and a mark that was drawn is found either way.
 	const reaction =
-		useRoster(
-			(value: any) =>
-				value.companionReactions?.[sessionId]?.[String(data.seq ?? data.messageId ?? data.id ?? "")] ?? null,
-		) ?? null;
+		useRoster((value: any) => {
+			const marks: Record<string, Record<string, string>> = value.companionReactions ?? {};
+			const keys = [String(data.seq ?? ""), String(data.messageId ?? ""), String(data.id ?? "")].filter(
+				(key: string) => key !== "" && key !== "undefined",
+			);
+			for (const key of keys) {
+				const here = sessionId === undefined ? undefined : marks[sessionId]?.[key];
+				if (here !== undefined) return here;
+			}
+			for (const chat of Object.values(marks)) for (const key of keys) if (chat[key] !== undefined) return chat[key];
+			return null;
+		}) ?? null;
 	const { shown, folded, control } = useFold(text, { markdown: false });
 	const body = h(UserText, {
 		text: shown,

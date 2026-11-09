@@ -317,3 +317,11 @@ test("a marine mark smiles with its eyes on hover, and follows the pointer", () 
 	assert.match(styles, /:is\(\.bt-b,\.bt-mark-img\)\{rotate:8deg;translate:5% -1%;animation:bt-nuzzle/);
 	assert.match(styles, /\.bt-mark\[data-gaze\] :is\(\.bt-gaze,\.mb-gaze\)\{transform:translate/);
 });
+
+test("the reaction lookup does not depend on the slot's sessionId", () => {
+	const source = read("chat", "user-message.ts");
+	// The chat.node contract carries no session, so a lookup that needs one would never
+	// find a mark: the fallback across chats has to be there.
+	assert.match(source, /for \(const chat of Object\.values\(marks\)\)/);
+	assert.match(source, /data\.messageId/);
+});

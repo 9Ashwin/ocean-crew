@@ -1202,9 +1202,10 @@ export function install(rt: any) {
 			["/help", zh() ? "显示这份帮助" : "this list"],
 		];
 		const title = text("cmdHelpBody");
-		return card
-			? [`**${title}**`, "", ...rows.map(([name, what]) => `- \`${name}\` · ${what}`)].join("\n")
-			: [title, ...rows.map(([name, what]) => `▸ ${name} · ${what}`)].join("\n");
+		if (card) return [`**${title}**`, "", ...rows.map(([name, what]) => `- \`${name}\` · ${what}`)].join("\n");
+		// One message, not one bubble per command: a platform that splits chatty lines would
+		// otherwise turn this list into half a dozen messages.
+		return `${title}：${rows.map(([name, what]) => `${name} ${what}`).join("；")}`;
 	};
 
 	const statusLine = async (bot: any): Promise<string> => {

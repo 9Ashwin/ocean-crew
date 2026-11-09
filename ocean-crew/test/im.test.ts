@@ -1767,3 +1767,20 @@ test("/help lists the commands one per line, on a card where the platform draws 
 	assert.match(sent.text, /- `\/help` · this list/);
 	assert.equal(sent.text.split("\n").filter((line: string) => line.startsWith("- ")).length, 5);
 });
+
+// A platform that splits chatty lines sends the same list as one message, not one bubble
+// per command.
+test("/help on a plain platform is a single message", async (t) => {
+	// No buttons is what makes the platform plain: the same list goes out as one message.
+	const s = await start(t, { adapter: fakeAdapter({ buttons: false }) });
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "/help");
+	await s.flush();
+	const sent = await lastSent(s);
+	assert.equal(sent.card, undefined, "no card on a plain platform");
+	assert.equal(s.fake.sent.length, 1, "one message, not one per command");
+	assert.match(sent.text, /Commands：\/status this Bot's state；/);
+	assert.equal(sent.text.split("\n").length, 1);
+});
