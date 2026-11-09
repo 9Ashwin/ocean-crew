@@ -540,6 +540,7 @@ const weixin = {
 		// there was something to stop.
 		const typingShown = new Set<string>();
 		const typingTickets = new Map<string, { ticket: string; at: number }>();
+		let typingWarned = false;
 		const TICKET_TTL_MS = 10 * 60_000;
 		const typingTicket = async (chatKey: string): Promise<string> => {
 			const held = typingTickets.get(chatKey);
@@ -556,6 +557,10 @@ const weixin = {
 			).catch(() => undefined);
 			const ticket = String(config?.typing_ticket ?? "");
 			if (ticket !== "") typingTickets.set(chatKey, { ticket, at: Date.now() });
+			else if (!typingWarned) {
+				typingWarned = true;
+				env.log?.warn?.("ocean-crew im: weixin sent no typing ticket; the chat will not show typing");
+			}
 			return ticket;
 		};
 		const sendTyping = async (chatKey: string, ticket: string, status: number, contextToken?: string) => {

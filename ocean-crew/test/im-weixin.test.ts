@@ -1187,3 +1187,43 @@ test("a file answer uploads to the CDN and sends a file item", async (t) => {
 	assert.equal(item.file_item.media.encrypt_query_param, "download-param-1");
 	assert.equal(item.file_item.len, String(plain.length));
 });
+
+test("typing stops with status 2 and a missing ticket is reported once", async (t) => {
+	const fake = await fakeIlink();
+	const runtime: any = {
+		...contexts({ u1: { token: "tok-u1", seq: null, messageTimeMs: null, receivedAt: Date.now() } }),
+	};
+	const warns: any[] = [];
+	const seen = env(fake, runtime);
+	seen.log = { warn: (...args: any[]) => warns.push(args) } as any;
+	fake.replies["/ilink/bot/getconfig"] = { ret: 0, typing_ticket: "ticket-1" };
+	const handle = weixin.connect(FIELDS, seen, noopHandlers());
+	t.after(() => {
+		handle.stop();
+		return fake.close();
+	});
+	await handle.typing({ key: "u1", kind: "direct", title: "" });
+	await handle.stopTyping({ key: "u1", kind: "direct", title: "" });
+	const typing = fake.calls.filter((call: any) => call.path === "/ilink/bot/sendtyping");
+	assert.deepEqual(
+		typing.map((call: any) => call.params.status),
+		[1, 2],
+	);
+	assert.equal(warns.length, 0, "a working ticket does not warn");
+
+	// A platform that hands out no ticket: the chat cannot show typing, and the adapter
+	// says so once instead of retrying in silence.
+	const quiet = await fakeIlink();
+	const quietWarns: any[] = [];
+	const quietEnv = env(quiet, runtime);
+	quietEnv.log = { warn: (...args: any[]) => quietWarns.push(args) } as any;
+	const second = weixin.connect(FIELDS, quietEnv, noopHandlers());
+	t.after(() => {
+		second.stop();
+		return quiet.close();
+	});
+	await second.typing({ key: "u1", kind: "direct", title: "" });
+	await second.typing({ key: "u1", kind: "direct", title: "" });
+	assert.equal(quietWarns.length, 1, "the missing ticket is said once");
+	assert.match(String(quietWarns[0][0]), /no typing ticket/);
+});

@@ -26,6 +26,10 @@ const QUEUE_LIMIT = 100;
 // gone; the copy is dropped once the send has an outcome.
 const MEDIA_LIMIT = 25 * 1024 * 1024;
 const TYPING_MS = 4_000;
+// The first "typing" pulse does not wait for the four-second tick: a chat should see the
+// Bot is working as soon as its message is handed over, not once the turn may already be
+// over.
+const TYPING_FIRST_MS = 250;
 // A reaction left on a message no longer ends on its own; drop it after this long.
 const REACTION_MAX_MS = 15 * 60_000;
 const NUMBERS = /^\s*\d+(\s+\d+)*\s*$/;
@@ -963,6 +967,8 @@ export function install(rt: any) {
 		ownerOrigins.set(sessionId, requestId);
 		sessionOrigins.set(sessionId, requestId);
 		await rt.sendUser({ sessionId, content, requestId });
+		// The chat sees the Bot working before the model's first token, not on a later tick.
+		kickTyping(conn, msg.chat);
 		// A room message is answered by member Bot turns under their own sessions, so
 		// no single session end can settle its mark; only direct chats are marked.
 		if (target.botId !== undefined) beginReaction(conn, msg, sessionId, requestId);
@@ -1226,6 +1232,37 @@ export function install(rt: any) {
 		}
 	};
 
+	// A pending first pulse per connection and chat, so a message that lands while one is
+	// waiting does not stack timers.
+	const typingKicks = new Map<string, any>();
+	const typingPulse = (conn: any, chat: any, busy: boolean) => {
+		const handle = runners.get(conn.id)?.handle;
+		if (handle === undefined || typeof handle.typing !== "function") return;
+		const key = { key: chat.key, kind: chat.kind, title: chat.title };
+		void (busy ? handle.typing?.(key) : handle.stopTyping?.(key))?.catch?.(() => {});
+	};
+	const kickTyping = (conn: any, chat: any) => {
+		if (typeof runners.get(conn.id)?.handle?.typing !== "function") return;
+		const id = `${conn.id}:${chat.key}`;
+		clearTimeout(typingKicks.get(id));
+		const timer = setTimeout(() => {
+			typingKicks.delete(id);
+			typingPulse(conn, chat, true);
+		}, TYPING_FIRST_MS);
+		timer.unref?.();
+		typingKicks.set(id, timer);
+	};
+	const stopTypingNow = (botId: string) => {
+		for (const conn of Object.values(connections()) as any[]) {
+			if (runners.get(conn.id)?.handle === undefined) continue;
+			for (const { chatKey, chat } of listeners(conn, { botId })) {
+				clearTimeout(typingKicks.get(`${conn.id}:${chatKey}`));
+				typingKicks.delete(`${conn.id}:${chatKey}`);
+				typingPulse(conn, { ...chat, key: chatKey }, false);
+			}
+		}
+	};
+
 	const busyOf = (target: any) => {
 		if (target?.botId !== undefined) return rt.live.get(rt.chatOf(target.botId))?.turn !== undefined;
 		if (target?.roomId !== undefined) return (rt.roomWorkView?.()[target.roomId] ?? []).length > 0;
@@ -1319,9 +1356,7 @@ export function install(rt: any) {
 			if (typeof runner.handle?.typing === "function") {
 				runner.typing = setInterval(() => {
 					for (const { chat, target } of targetsOf(fresh(conn.id) ?? conn)) {
-						const busy = target !== undefined && busyOf(target);
-						const key = { key: chat.key ?? chat, kind: chat.kind, title: chat.title };
-						void (busy ? runner.handle.typing?.(key) : runner.handle.stopTyping?.(key))?.catch?.(() => {});
+						typingPulse(conn, { ...chat, key: chat.key ?? chat }, target !== undefined && busyOf(target));
 					}
 				}, TYPING_MS);
 				runner.typing.unref?.();
@@ -1336,6 +1371,11 @@ export function install(rt: any) {
 		const runner = runners.get(id);
 		runners.delete(id);
 		if (runner?.typing !== undefined) clearInterval(runner.typing);
+		for (const [key, timer] of typingKicks) {
+			if (!key.startsWith(`${id}:`)) continue;
+			clearTimeout(timer);
+			typingKicks.delete(key);
+		}
 		for (const queue of runner?.queues.values() ?? []) clearTimeout(queue.retry);
 		await Promise.resolve(runner?.handle?.stop?.()).catch(() => {});
 		if (statuses.get(id)?.state !== "error") setStatus(id, { state: "off" });
@@ -1750,7 +1790,11 @@ export function install(rt: any) {
 				}
 			}
 		}
-		if (event.type === "turn/end") currentTurns.delete(session.id);
+		if (event.type === "turn/end") {
+			currentTurns.delete(session.id);
+			const owner = rt.chatOwners.get(session.id);
+			if (owner !== undefined) stopTypingNow(owner);
+		}
 		if (event.type === "user/message" && event.data?.source?.kind === "user") {
 			const turn = turnOf(session.id, event);
 			const wanted = typeof rpcId === "string" && rpcId.startsWith("im:") ? rpcId : "";

@@ -21,6 +21,8 @@ function fakeAdapter({ buttons = true, reactions = false }: { buttons?: boolean;
 	const fails: any[] = [];
 	const reactionAdds: any[] = [];
 	const reactionRemoves: any[] = [];
+	const typingCalls: string[] = [];
+	const stopTypingCalls: string[] = [];
 	const adapter: any = {
 		id: "fake",
 		sent,
@@ -28,6 +30,8 @@ function fakeAdapter({ buttons = true, reactions = false }: { buttons?: boolean;
 		fails,
 		reactionAdds,
 		reactionRemoves,
+		typingCalls,
+		stopTypingCalls,
 		handlers: null,
 		buttons,
 		async check(fields: any) {
@@ -49,7 +53,12 @@ function fakeAdapter({ buttons = true, reactions = false }: { buttons?: boolean;
 				edit: async (chat: any, messageId: any, body: any) => {
 					edited.push({ chat, messageId, ...body });
 				},
-				typing: async () => {},
+				typing: async (chat: any) => {
+					typingCalls.push(chat.key);
+				},
+				stopTyping: async (chat: any) => {
+					stopTypingCalls.push(chat.key);
+				},
 				stop: () => {
 					adapter.stopped = (adapter.stopped ?? 0) + 1;
 				},
@@ -1150,4 +1159,19 @@ test("a synthetic user-role message in the same turn does not clear the IM bindi
 	s.emitEvent("a", "assistant/message", { turn: 6, message: { content: [{ type: "text", text: "still routed" }] } });
 	assert.ok(await s.until(() => s.fake.sent.length === 1), "the answer still reaches the chat");
 	assert.equal(s.fake.sent[0].text, "still routed");
+});
+
+// The chat should see "typing" while the Bot works, and stop seeing it when the turn ends:
+// the first pulse does not wait for the keep-alive tick, and the end does not wait either.
+test("typing starts as soon as the request is handed over and stops at turn end", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hi");
+	assert.ok(await s.until(() => s.fake.typingCalls.includes("dm-u1"), 2_000), "typing is shown early");
+	assert.ok(!s.fake.stopTypingCalls.includes("dm-u1"), "it is not stopped before the turn ends");
+	s.emitEvent("a", "turn/end", { turn: 2, reason: { kind: "completed" } });
+	assert.ok(await s.until(() => s.fake.stopTypingCalls.includes("dm-u1"), 2_000), "typing stops at the end");
 });
