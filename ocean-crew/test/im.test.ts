@@ -904,7 +904,9 @@ test("a later message in another chat does not steal an earlier turn's reply", a
 		await dm(s, id, "hello");
 		await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: id, allow: true });
 	}
-	// Both are paired now; each message starts its own turn.
+	// Both are paired now; each message starts its own turn. The two pairing requests have
+	// to land before the sent list is reset, or a late one looks like a third answer.
+	assert.ok(await s.until(() => s.fake.sent.length >= 2), "the pairing requests are sent");
 	await dm(s, "u1", "first chat asks");
 	await dm(s, "u2", "second chat asks");
 	await s.flush();
@@ -933,7 +935,10 @@ test("a later message in another chat does not steal an earlier turn's reply", a
 		await s.until(() => ["dm-u1:late first", "dm-u2:second"].every((wanted) => pair().includes(wanted))),
 		"each answer reached its own chat",
 	);
-	const byChat = s.fake.sent.map((entry: any) => `${entry.chat.key}:${entry.text}`).sort();
+	const byChat = s.fake.sent
+		.filter((entry: any) => entry.text === "late first" || entry.text === "second")
+		.map((entry: any) => `${entry.chat.key}:${entry.text}`)
+		.sort();
 	assert.deepEqual(byChat, ["dm-u1:late first", "dm-u2:second"]);
 });
 
