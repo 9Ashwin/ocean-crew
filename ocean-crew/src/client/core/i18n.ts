@@ -62,6 +62,9 @@ const ZH: Record<string, string> = {
 	"Softly and warmly": "轻声、温暖",
 	Behaviour: "行为",
 	"Also speak every answer": "每条回答也念出来",
+	"Speak answers instead of typing them": "用语音代替文字回复",
+	"A direct chat gets the answer as audio rather than text; a failed speech falls back to text":
+		"私聊里回答直接发成语音而不是文字；语音失败时退回文字",
 	"Pairs each IM answer with a spoken copy; happens in direct chats only": "给每条 IM 回答附一条语音；只在私聊",
 	"WeChat voice bubble": "微信原生语音条",
 	"Experimental: some WeChat clients do not draw a bot's voice message; off sends an audio file":

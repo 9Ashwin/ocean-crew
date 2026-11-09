@@ -1729,6 +1729,11 @@ test("autoReply speaks the final answer into the direct chat", async (t) => {
 	);
 	const media = s.fake.sent.find((entry: any) => entry.media?.[0]?.name === "voice.mp3");
 	assert.equal(media.media[0].voice, undefined, "a plain audio file by default");
+	// Speaking replaces the text for that answer: saying it twice is what the option is not.
+	assert.ok(
+		!s.fake.sent.some((entry: any) => String(entry.text ?? "").includes("here is the spoken answer")),
+		"the words went out once, as audio",
+	);
 });
 
 test("autoReply stays quiet unless the settings ask for it", async (t) => {
@@ -1766,6 +1771,33 @@ test("/help lists the commands one per line, on a card where the platform draws 
 	assert.match(sent.text, /- `\/status` · this Bot's state/);
 	assert.match(sent.text, /- `\/help` · this list/);
 	assert.equal(sent.text.split("\n").filter((line: string) => line.startsWith("- ")).length, 5);
+});
+
+// Companion mode used to force a spoken copy of every answer, which sent each reply twice:
+// once as text and once as audio. Alone, it now says nothing about speech.
+test("companion mode alone does not speak an answer", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	s.rt.state.companions = { a: { enabled: true, mood: "calm", affection: 10, interactions: 0 } };
+	await s.rt.save();
+	const spoken: string[] = [];
+	s.rt.speak = async (text: string) => {
+		spoken.push(text);
+		return { bytes: Buffer.from("x"), name: "voice.mp3" };
+	};
+	await dm(s, "u1", "answer me");
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "turn/start", { turn: 2 });
+	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, content: [] });
+	s.emitEvent("a", "assistant/message", { turn: 2, message: { content: [{ type: "text", text: "just text" }] } });
+	s.emitEvent("a", "turn/end", { turn: 2, reason: { kind: "completed" } });
+	await s.flush();
+	assert.equal(spoken.length, 0, "no speech unless the Voice page asks for it");
+	assert.ok(
+		s.fake.sent.some((entry: any) => String(entry.text ?? "").includes("just text")),
+		"the answer arrives as text",
+	);
 });
 
 // A platform that splits chatty lines sends the same list as one message, not one bubble

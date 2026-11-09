@@ -194,8 +194,8 @@ export function VoiceSettingsPage({ actions, Section, Row }: any) {
 			Section,
 			{ key: "behaviour", title: t("Behaviour") },
 			field(
-				t("Also speak every answer"),
-				t("Pairs each IM answer with a spoken copy; happens in direct chats only"),
+				t("Speak answers instead of typing them"),
+				t("A direct chat gets the answer as audio rather than text; a failed speech falls back to text"),
 				toggle("autoReply"),
 				Row,
 				"autoReply",

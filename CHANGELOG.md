@@ -5,6 +5,16 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.4.9] - 2026-11-10
+
+### Fixed
+
+- An answer is no longer said twice: companion mode used to force a spoken copy of every
+  reply, so each one arrived as both text and audio. Speaking is now only what Settings →
+  Voice asks for ("Speak answers instead of typing them"), and when it is on the audio
+  **replaces** that answer's text instead of repeating it. A speech that fails falls back to
+  sending the words as text, so an answer is never lost.
+
 ## [0.4.8] - 2026-11-10
 
 ### Changed

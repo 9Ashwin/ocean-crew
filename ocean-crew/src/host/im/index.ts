@@ -2214,7 +2214,24 @@ export function install(rt: any) {
 									"",
 								);
 							} catch (error: any) {
+								// The words were held back for the audio; a failed speech must not
+								// swallow the answer, so they go out as the text they were.
 								rt.warn("ocean-crew: im spoken answer failed: %s", error?.message ?? error);
+								await sendTo(
+									conn,
+									chatKey,
+									{ key: chatKey, kind: chat.kind, title: chat.title },
+									spoken,
+									undefined,
+									undefined,
+									undefined,
+									{
+										card: true,
+										...(rt.botOf(voiceBotId)?.name === undefined
+											? {}
+											: { title: rt.botOf(voiceBotId)?.name }),
+									},
+								);
 							}
 						})();
 					}
@@ -2341,21 +2358,25 @@ export function install(rt: any) {
 			return;
 		}
 		const voiceSettings = (rt as Record<string, any>).ttsSettingsView?.();
-		// A companion always speaks its answer; everyone else only when the page asked.
-		const companion = (rt as Record<string, any>).companionOf?.(botId);
-		const voiceAuto =
-			voiceSettings?.enabled !== false && (voiceSettings?.autoReply === true || companion !== undefined);
+		// Speaking an answer is a choice the user makes in Settings → Voice. It is off by
+		// default: a companion that also spoke every reply sent the same words twice, once as
+		// text and once as audio.
+		const voiceAuto = voiceSettings?.enabled !== false && voiceSettings?.autoReply === true;
+		const speakable = (text: string): boolean => text.trim() !== "" && text.length <= 300 && !text.includes("```");
 		if (event.type === "assistant/message" && voiceAuto) {
 			for (const item of rt.displayItems(session.id, [event]))
-				if (item.kind === "bot" && item.text.trim() !== "" && item.text.length <= 300)
-					spokenAnswers.set(session.id, item.text);
+				if (item.kind === "bot" && speakable(item.text)) spokenAnswers.set(session.id, item.text);
 		}
+		const spokenHere = voiceAuto && spokenAnswers.get(session.id);
 		for (const item of rt.displayItems(session.id, [event])) {
 			if (item.kind !== "bot" && item.kind !== "view") continue;
 			const body =
 				item.kind === "bot"
 					? item.text
 					: viewCardText({ title: item.title, view: item.view }) || (item.title ?? "");
+			// The answer being spoken now is held back: it goes out as audio, and only as text
+			// if the speech cannot be made. A view card is always text, because it is not prose.
+			if (item.kind === "bot" && spokenHere !== undefined && item.text === spokenHere) continue;
 			const replyTo = originOf(requestId)?.messageId;
 			const title = rt.botOf(botId)?.name;
 			for (const { conn, chatKey, chat } of targets)
