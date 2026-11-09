@@ -269,7 +269,7 @@ export function install(rt: Runtime): void {
 		team.companionReactions ??= {};
 		return team.companionReactions;
 	};
-	const react = async (sessionId: string, messageId: string, text: string): Promise<void> => {
+	const react = async (sessionId: string, keys: string[], text: string): Promise<void> => {
 		const botId = rt.chatOwners.get(sessionId);
 		if (botId === undefined || of(botId) === undefined) return;
 		const seen = (sinceReaction.get(sessionId) ?? 99) + 1;
@@ -283,7 +283,7 @@ export function install(rt: Runtime): void {
 		const table = visible();
 		table[sessionId] ??= {};
 		const held = table[sessionId];
-		held[messageId] = emoji;
+		for (const key of keys) if (key !== "") held[key] = emoji;
 		// Keep a bounded tail per chat: old marks are history, not state.
 		const ids = Object.keys(held);
 		for (const old of ids.slice(0, Math.max(0, ids.length - 300))) delete held[old];
@@ -337,8 +337,8 @@ export function install(rt: Runtime): void {
 		// id); store under both so the bubble finds its emoji whichever the window has.
 		const seq = (event as Record<string, unknown>)?.seq;
 		const durable = String((event.data as Record<string, unknown>)?.id ?? "");
-		if (seq !== undefined) void react(session.id, String(seq), text);
-		else if (durable !== "") void react(session.id, durable, text);
+		const keys = [...(seq === undefined ? [] : [String(seq)]), durable];
+		if (keys.some((key) => key !== "")) void react(session.id, keys, text);
 	});
 
 	// A short spoken line for the window's play button; the chat stays where the voice lives.

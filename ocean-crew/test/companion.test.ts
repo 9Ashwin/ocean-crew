@@ -274,8 +274,10 @@ test("a companion reacts to some of what the user says, not all of it", async (t
 	say("m2", "爱你");
 	await new Promise((resolve) => setTimeout(resolve, 30));
 	const marks: any = (state as any).companionReactions;
-	assert.deepEqual(marks["sess-a"], { "2": "❤️" }, "keyed by the event seq the transcript carries");
-	assert.deepEqual((rt.companionReactionsView() as any)["sess-a"], { "2": "❤️" });
+	// Stored under both identities: the seq the transcript numbers rows with, and the
+	// durable message id an event may carry instead.
+	assert.deepEqual(marks["sess-a"], { "2": "❤️", m2: "❤️" });
+	assert.deepEqual((rt.companionReactionsView() as any)["sess-a"], { "2": "❤️", m2: "❤️" });
 	// The next matching pair gets its own emoji, and a plain message gets nothing.
 	say("m3", "今天天气一般");
 	say("m4", "哈哈笑死");
@@ -284,5 +286,5 @@ test("a companion reacts to some of what the user says, not all of it", async (t
 	say("m5", "好的");
 	say("m6", "好的好的");
 	await new Promise((resolve) => setTimeout(resolve, 30));
-	assert.deepEqual(Object.keys((marks as any)["sess-a"] ?? {}), ["2", "4"]);
+	assert.deepEqual(Object.keys((marks as any)["sess-a"] ?? {}).sort(), ["2", "4", "m2", "m4"]);
 });

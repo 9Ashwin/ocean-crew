@@ -479,6 +479,8 @@ export function install(rt: Runtime): void {
 			btwCards: sync("btwView") ?? {},
 			sideChats: sync("sideView") ?? {},
 			agents: Object.values(state.agents),
+			// A companion's emoji on the user's messages, by Session and message seq.
+			companionReactions: sync("companionReactionsView") ?? {},
 			// Key names and who may use them; the values never leave the host.
 			secrets: sync("secretsView") ?? [],
 			capabilities: sync("capabilityLibraryView") ?? [],
