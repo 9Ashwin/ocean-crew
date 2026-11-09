@@ -7,6 +7,7 @@
 // Automation tasks bundle on, so the service is optional and every endpoint reports whether
 // it is there.
 import type { Runtime } from "../core/runtime.ts";
+import { runLog, type ScheduleRun } from "./schedule-runs.ts";
 
 const MAX_TITLE = 120;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -146,9 +147,16 @@ export function install(rt: Runtime): void {
 		owner !== undefined &&
 		(owner.botId === undefined ? rt.roomOf(owner.roomId) !== undefined : rt.botOf(owner.botId) !== undefined);
 
+	const runs = runLog(rt.home);
 	async function schedulesView(): Promise<{ available: boolean; tasks: any[] }> {
 		if (service === null) return { available: false, tasks: [] };
 		const now = Date.now();
+		let latest: Record<string, ScheduleRun> = {};
+		try {
+			latest = await runs.latest();
+		} catch (error: any) {
+			rt.warn("ocean-crew: schedule run records unreadable: %s", error?.message ?? error);
+		}
 		const tasks: any[] = [];
 		for (const entry of await service.catalog()) {
 			const sessionId = sessionOf(entry);
@@ -165,7 +173,8 @@ export function install(rt: Runtime): void {
 					: entry.status === "paused"
 						? "paused"
 						: "finished";
-			tasks.push({ ...entry, sessionId, ...owner, state });
+			const last = entry.id === undefined ? undefined : latest[entry.id];
+			tasks.push({ ...entry, sessionId, ...owner, state, ...(last === undefined ? {} : { lastRun: last }) });
 		}
 		return { available: true, tasks };
 	}

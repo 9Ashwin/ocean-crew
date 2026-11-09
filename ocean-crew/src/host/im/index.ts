@@ -7,8 +7,12 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path";
 import { IM_PLATFORMS, imPlatform } from "../../shared/im-platforms.ts";
 import { viewCardText } from "../chat/parts.ts";
+import { failureLine, turnFailure } from "../chat/turns.ts";
 import { listenGlobal } from "../core/events.ts";
 import { replaceFile } from "../core/files.ts";
+import { isPass } from "../groups/log.ts";
+import { noticeGate } from "../work/notice-gate.ts";
+import { runLog } from "../work/schedule-runs.ts";
 import { adapters as adapterRegistry } from "./platforms/index.ts";
 import { isSupportedImageType } from "./platforms/media-type.ts";
 import { startStatusReaction } from "./reaction.ts";
@@ -117,6 +121,9 @@ export function install(rt: any) {
 					? `${values.bot} 发了一个卡片，点下面的按钮就能回答。`
 					: `${values.bot} shared a card — press a button below to answer.`,
 				answered: zh() ? "已答" : "answered",
+				scheduledFailed: zh()
+					? `${values.bot} 的定时任务这次没跑成：${values.reason}。修好后它会继续跑。`
+					: `${values.bot}'s scheduled task did not run: ${values.reason}. It resumes once that is fixed.`,
 				cmdHelpBody: zh() ? "可以用的命令" : "Commands",
 				cmdStatus: zh()
 					? `${values.bot}：模型 ${values.model}；${values.running ? "正在工作" : "空闲"}；已开 ${values.parts} 段会话。`
@@ -528,9 +535,102 @@ export function install(rt: any) {
 	// The last text a window turn produced, held until the turn ends so one answer goes
 	// out instead of every step. Only used when `imDeliverAnswers` is on.
 	const windowAnswers = new Map<string, string>();
+	// A scheduled run that failed is the one thing a user cannot see from the window: the
+	// turn has no answer to push, and the failure card only exists on the desktop. The record
+	// says what happened; the notice tells them once, and again only if the reason changes.
+	const failureCodesSent = new Map<string, string>();
+	// The notice a failed scheduled run sends: the chat that last talked to the Bot, in the
+	// words a person reads, never the raw failure payload.
+	const notifyFailure = async (ownerId: string | undefined, record: any): Promise<void> => {
+		const owner = ownerId ?? [...rt.chatOwners.entries()].find(([, bot]) => bot !== undefined)?.[1];
+		if (owner === undefined) return;
+		const bot = rt.botOf(owner);
+		if (bot === undefined) return;
+		const targets = replyTargets(ownerOrigins.get(owner), `bot:${owner}`);
+		if (targets.length === 0) {
+			rt.warn("ocean-crew: scheduled task of %s failed and has no chat to report to", owner);
+			return;
+		}
+		const body = text("scheduledFailed", {
+			bot: bot.name,
+			reason: String(record.reason ?? record.code ?? "an error"),
+		});
+		// A task that cannot run is a blocked decision, not a chatty update: it goes out even
+		// in quiet hours, and the same failure is not repeated before it is fixed.
+		await gate.offer(
+			{
+				kind: "pending",
+				noticeId: `schedule-failure:${owner}:${record.code ?? record.reason ?? "error"}`,
+				items: [{ itemId: record.taskId, kind: "failure", title: body, since: record.startedAt }],
+			},
+			async () => {
+				for (const { conn, chatKey, chat } of targets)
+					await sendTo(
+						conn,
+						chatKey,
+						{ key: chatKey, kind: chat.kind, title: chat.title },
+						body,
+						undefined,
+						undefined,
+						undefined,
+						{ card: true, ...(bot.name === undefined ? {} : { title: bot.name }) },
+					);
+			},
+		);
+	};
+
+	const recordScheduledRun = (
+		sessionId: string,
+		run: { taskId?: string; ownerId?: string; startedAt: number },
+		event: any,
+	): void => {
+		if (run.taskId === undefined) return;
+		const reason: any = event.data?.reason;
+		const failed = reason?.kind === "error";
+		const silent = notifyAnswers.get(sessionId) === undefined;
+		const code = failed ? String(turnFailure(reason.error)?.code ?? "error").slice(0, 60) : undefined;
+		const record = {
+			taskId: run.taskId,
+			sessionId,
+			...(run.ownerId === undefined ? {} : { ownerId: run.ownerId }),
+			startedAt: run.startedAt,
+			finishedAt: Date.now(),
+			outcome: (failed ? "failed" : silent ? "silent" : "answered") as "failed" | "silent" | "answered",
+			...(failed ? { reason: failureLine(turnFailure(reason.error)).slice(0, 200) } : {}),
+			...(code === undefined ? {} : { code }),
+		};
+		void alertRuns.append(record).catch((error: any) => {
+			rt.warn("ocean-crew: schedule run not recorded: %s", error?.message ?? error);
+		});
+		if (!failed) {
+			// A later success clears the dedupe, so a recurrence is news again.
+			if (run.ownerId !== undefined) failureCodesSent.delete(run.ownerId);
+			return;
+		}
+		if (run.ownerId !== undefined && failureCodesSent.get(run.ownerId) === code) return;
+		if (run.ownerId !== undefined && code !== undefined) failureCodesSent.set(run.ownerId, code);
+		void notifyFailure(run.ownerId, record);
+	};
+
 	// A turn a scheduled reminder started: its answer is pushed to the chat that last
 	// talked to this Bot, so a reminder the user set up reaches them in IM.
 	const scheduledTurns = new Set<string>();
+	// The run in flight for a scheduled turn: the task it came from and when it started, so
+	// the record can say "ran and failed" rather than leaving the task looking untouched.
+	const scheduledRuns = new Map<string, { taskId?: string; ownerId?: string; startedAt: number }>();
+	const alertRuns = runLog(rt.home);
+	// Every unsolicited message passes one gate, so dedupe, quiet hours and the user's
+	// preferences are decided in one place instead of per path.
+	const gate = noticeGate({
+		home: rt.home,
+		preferences: () => ({
+			noChange: rt.config?.imNotify === false ? "silent" : "all_clear",
+			...(rt.config?.imSuggestions === true
+				? { suggestions: { minValue: 0.5, minGapMs: 6 * 60 * 60_000, rejectionCooldownMs: 24 * 60 * 60_000 } }
+				: {}),
+		}),
+		warn: (message: string, error: unknown) => rt.warn(message, error),
+	});
 	const notifyAnswers = new Map<string, string>();
 	const spokenAnswers = new Map<string, string>();
 
@@ -2181,7 +2281,10 @@ export function install(rt: any) {
 				for (const held of pendingReactions.values()) if (held.requestId === rpcId) held.started = true;
 		}
 		if (event.type === "turn/end") {
+			const run = scheduledRuns.get(session.id);
+			scheduledRuns.delete(session.id);
 			scheduledTurns.delete(session.id);
+			if (run !== undefined) recordScheduledRun(session.id, run, event);
 			const spoken = spokenAnswers.get(session.id);
 			spokenAnswers.delete(session.id);
 			if (spoken !== undefined) {
@@ -2250,20 +2353,30 @@ export function install(rt: any) {
 							session.id,
 						);
 					}
-					for (const { conn, chatKey, chat } of targets)
-						sendTo(
-							conn,
-							chatKey,
-							{ key: chatKey, kind: chat.kind, title: chat.title },
-							notify,
-							undefined,
-							undefined,
-							undefined,
-							{
-								card: true,
-								title: bot.name,
-							},
-						);
+					// A reminder's answer is a result the user asked for: quiet hours may defer it,
+					// but the policy is the one place that decides, and a delivery is a receipt.
+					void gate.offer(
+						{
+							kind: "requested_result",
+							noticeId: `reminder:${session.id}:${notify.length}:${notify.slice(0, 40)}`,
+						},
+						async () => {
+							for (const { conn, chatKey, chat } of targets)
+								await sendTo(
+									conn,
+									chatKey,
+									{ key: chatKey, kind: chat.kind, title: chat.title },
+									notify,
+									undefined,
+									undefined,
+									undefined,
+									{
+										card: true,
+										title: bot.name,
+									},
+								);
+						},
+					);
 				}
 			}
 			const held = windowAnswers.get(session.id);
@@ -2319,7 +2432,16 @@ export function install(rt: any) {
 			const owner = rt.chatOwners.get(session.id);
 			if (owner !== undefined) stopTypingNow(owner);
 		}
-		if (event.type === "user/message" && event.data?.source?.kind === "schedule") scheduledTurns.add(session.id);
+		if (event.type === "user/message" && event.data?.source?.kind === "schedule") {
+			scheduledTurns.add(session.id);
+			const source: any = event.data?.source ?? {};
+			const taskId = source.taskId ?? source.scheduleId ?? source.id;
+			scheduledRuns.set(session.id, {
+				...(typeof taskId === "string" && taskId !== "" ? { taskId } : {}),
+				...(rt.chatOwners.get(session.id) === undefined ? {} : { ownerId: rt.chatOwners.get(session.id) }),
+				startedAt: Date.now(),
+			});
+		}
 		if (event.type === "user/message" && event.data?.source?.kind === "user") {
 			const turn = turnOf(session.id, event);
 			const wanted = typeof rpcId === "string" && rpcId.startsWith("im:") ? rpcId : "";
@@ -2351,6 +2473,9 @@ export function install(rt: any) {
 				const scheduled = scheduledTurns.has(session.id);
 				for (const item of rt.displayItems(session.id, [event])) {
 					if (item.kind !== "bot" || item.text.trim() === "") continue;
+					// "[PASS]" is the Bot agreeing there is nothing new: a routine that found
+					// nothing stays quiet instead of saying so every time.
+					if (scheduled && isPass(item.text)) continue;
 					if (scheduled && rt.config?.imNotify !== false) notifyAnswers.set(session.id, item.text);
 					if (rt.config?.imDeliverAnswers === true) windowAnswers.set(session.id, item.text);
 				}

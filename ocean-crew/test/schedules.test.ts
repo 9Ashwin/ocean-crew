@@ -2,6 +2,9 @@
 // schedule service (both the Session-owned and the Host-wide service), moving a Bot's
 // tasks to a fresh part, and the reminder framing a group receives when one is due.
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { Runtime } from "../src/host/core/runtime.ts";
 import { install, reminderText } from "../src/host/work/schedules.ts";
@@ -117,6 +120,8 @@ function setup(services: Record<string, any> = {}) {
 	const ctx = fakeContext({ services });
 	const rt: any = {
 		ctx,
+		// The run log needs a team directory; a fresh one per setup keeps the tests apart.
+		home: mkdtempSync(join(tmpdir(), "ocean-crew-schedules-")),
 		state: JSON.parse(JSON.stringify(TEAM)),
 		chatOwners: new Map<string, string>([
 			["m1", "m1"],

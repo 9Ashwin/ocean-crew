@@ -98,6 +98,17 @@ export function timingText(task: any) {
 			return "";
 	}
 }
+// What the last run did, in the words the page uses. A task that never ran has no line.
+const lastRunText = (task: any): string => {
+	const run = task.lastRun;
+	if (run === undefined) return "";
+	if (run.outcome === "failed")
+		return run.reason === undefined ? t("Last run failed") : t("Last run failed: {reason}", { reason: run.reason });
+	if (run.outcome === "silent") return t("Last run: nothing to say");
+	if (run.outcome === "skipped") return t("Last run skipped");
+	return t("Last run: answered");
+};
+
 const nextText = (task: any) => {
 	if (
 		task.state === "overdue" ||
@@ -150,6 +161,13 @@ function TaskRow({ task, actions, onView, showBot, roster }: any) {
 				{ className: "bt-set-hint" },
 				[timingText(task), room ? t("in {name}", { name: room.name }) : ""].filter(Boolean).join(" · "),
 			),
+			task.lastRun === undefined
+				? null
+				: h(
+						"span",
+						{ className: "bt-task-run", "data-failed": task.lastRun.outcome === "failed" ? "" : undefined },
+						lastRunText(task),
+					),
 			task.prompt && task.prompt !== task.title
 				? h("span", { className: "bt-task-prompt", "data-open": expanded || undefined }, task.prompt)
 				: null,
@@ -596,6 +614,9 @@ export const SCHEDULE_CSS = `
 .bt-task-copy{padding:0;border:0;background:none;font:inherit;text-align:left;cursor:pointer}
 .bt-task-next{flex:none;font-size:12px;line-height:16px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
 .bt-task-next[data-state=overdue]{color:var(--bt-danger)}
+/* The last run of a task: a quiet line, red only when it failed. */
+.bt-task-run{font-size:12px;line-height:16px;color:var(--bt-ink-3)}
+.bt-task-run[data-failed]{color:var(--bt-danger)}
 .bt-task-remove{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;color:var(--bt-ink-3)}
 .bt-task-remove svg{width:14px;height:14px}
 .bt-task-remove[data-confirm]{background:color-mix(in srgb,var(--bt-danger) 10%,transparent);color:var(--bt-danger)}

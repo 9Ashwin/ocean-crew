@@ -1816,3 +1816,65 @@ test("/help on a plain platform is a single message", async (t) => {
 	assert.match(sent.text, /Commands：\/status this Bot's state；/);
 	assert.equal(sent.text.split("\n").length, 1);
 });
+
+// A scheduled turn that fails leaves no answer to push, so the failure itself is the news:
+// one notice per reason, and the run record says what happened.
+test("a failed scheduled run is recorded and reported once", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hello");
+	const fire = (seq: number) => {
+		s.emitEvent("a", "user/message", {
+			seq,
+			source: { kind: "schedule", taskId: "task-1" },
+			content: [{ type: "text", text: "routine" }],
+		});
+		s.emitEvent("a", "turn/start", { turn: seq });
+		s.emitEvent("a", "turn/end", {
+			turn: seq,
+			reason: { kind: "error", error: { code: "402", message: "no credit" } },
+		});
+	};
+	fire(3);
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => /did not run/.test(String(entry.text ?? "")))),
+		"the failure reaches the chat",
+	);
+	const notices = s.fake.sent.filter((entry: any) => /did not run/.test(String(entry.text ?? "")));
+	assert.equal(notices.length, 1);
+	// The same reason again is not news; a different one is.
+	fire(4);
+	await s.flush();
+	assert.equal(
+		s.fake.sent.filter((entry: any) => /did not run/.test(String(entry.text ?? ""))).length,
+		1,
+		"the same reason is said once",
+	);
+});
+
+// "[PASS]" is the Bot saying there is nothing new: a routine stays quiet instead of
+// reporting its own silence.
+test("a scheduled answer of [PASS] pushes nothing", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hello");
+	const before = s.fake.sent.length;
+	s.emitEvent("a", "user/message", {
+		seq: 5,
+		source: { kind: "schedule", taskId: "task-1" },
+		content: [{ type: "text", text: "routine" }],
+	});
+	s.emitEvent("a", "turn/start", { turn: 5 });
+	s.emitEvent("a", "assistant/message", { turn: 5, message: { content: [{ type: "text", text: "[PASS]" }] } });
+	s.emitEvent("a", "turn/end", { turn: 5, reason: { kind: "completed" } });
+	await s.flush();
+	assert.equal(
+		s.fake.sent.slice(before).filter((entry: any) => /PASS/.test(String(entry.text ?? ""))).length,
+		0,
+		"nothing was pushed for the pass",
+	);
+});

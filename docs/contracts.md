@@ -108,6 +108,19 @@ GitHub 安装方式保留给开发版（安装时由 `prepare` 现场构建）�
 
 命令带图片/文件时不识别为命令；未绑定的聊天按「未绑定」处理。卡片按钮回调数据为 `c:<命令>`。
 
+## 定时任务的运行记录与失败通知
+
+- 每次定时触发写一条运行记录到 `<home>/schedule-runs.jsonl`（一行一条，保留最近 200 条）：
+  `taskId`、`sessionId`、`ownerId`、`startedAt`、`finishedAt`、`outcome`（`answered` / `silent` /
+  `failed` / `skipped`）、可选的 `reason` 与失败 `code`。坏行跳过，不影响其余记录。
+- `schedules` 端点的每个任务带 `lastRun`，设置 → 定时任务 因此在任务下显示「上次运行」；失败时该行用危险色。
+- 定时回合以 `failed` 结束时，向该 Bot 最近说话的聊天发一条失败通知；同一 Bot 同一失败码在修好前只发一次，
+  后续成功会清除去重，所以复发仍然是新消息。通知文案不包含原始错误负载。
+- 定时回答为 `[PASS]` 视为「没有新内容」，不推送，运行记为 `silent`。
+- 所有主动推送（提醒回答、失败通知）都先过 `work/notice-gate.ts`：它调用 `notify.ts` 的纯策略
+  （去重、静默时段、偏好），**只有平台接受后才写回执**到 `<home>/notice-receipts.json`（保留最近 200 条），
+  所以发送失败不会被当成已送达。
+
 ## IM 通知与主动投递
 
 - **定时提醒的回答会主动推送**：DSH 的定时任务以 `source.kind = "schedule"` 的消息进入 Bot 的 Session；

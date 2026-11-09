@@ -12,6 +12,11 @@ const ZH: Record<string, string> = {
 	"Daily check-in": "每日关心",
 	"At this time the character speaks first; it costs one model call and shows in Scheduled tasks":
 		"到这个时间角色会主动说一句；会消耗一次模型调用，可在 定时任务 里看到",
+	"Last run failed": "上次运行失败",
+	"Last run failed: {reason}": "上次运行失败：{reason}",
+	"Last run: nothing to say": "上次运行：无新内容",
+	"Last run skipped": "上次运行跳过",
+	"Last run: answered": "上次运行：已回答",
 	// Companion settings
 	Companion: "伙伴",
 	"Which Bot becomes a character in its own chat": "哪个 Bot 在自己的聊天里成为角色",
