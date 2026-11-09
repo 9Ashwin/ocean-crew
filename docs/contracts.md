@@ -146,6 +146,9 @@ GitHub 安装方式保留给开发版（安装时由 `prepare` 现场构建）�
   心情随措辞变化（`warm/playful/calm/proud/pout/excited`）。
 - 伙伴 Bot 的回答默认自动语音（飞书语音条 / 微信音频文件），音色优先用角色自己的 `voiceId`，
   否则用 设置 → 语音 的声音；应用内可用消息菜单的「播放语音」按条播放（`companion-audio` 端点）。
+- **选择性 emoji 回应**：伙伴 Bot 会对部分用户消息贴一个 emoji（爱你→❤️、谢谢→🥰、哈哈→😂、晚安→🌙、
+  累/难过→🫂、好吃→😋、可爱→🥺、加油→🔥、为什么→🤔、天啊→😮），规则是「至少隔一条、不与上一条同 emoji」，
+  存在 `companionReactions[sessionId][messageId]`，聊天里显示在用户气泡下方。IM 端不贴（各平台能力不同）。
 - 界面呈现：头像左下角有心情 emoji 徽标（悬停显示心情与好感度），聊天头部 pill 显示心情文字，
   头像眼睛/光晕随心情变化；设置页「伙伴」显示好感度条。
 - 设置页「伙伴」通过 `companion-view` / `companion-set` 读写；每日关心复用 DSH 日程，创建/删除由

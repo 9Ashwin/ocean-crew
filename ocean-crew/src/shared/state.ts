@@ -290,6 +290,8 @@ export interface TeamState {
 	whaleStored?: boolean;
 	/** Companion mode records, by Bot id (see shared/companion.ts). */
 	companions?: Record<string, Companion>;
+	/** Reactions a companion put on the user's messages: session id → message id → emoji. */
+	companionReactions?: Record<string, Record<string, string>>;
 	im?: ImState;
 	secrets?: Record<string, unknown>;
 	connectors?: Record<string, unknown>;

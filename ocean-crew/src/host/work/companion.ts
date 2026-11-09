@@ -13,6 +13,7 @@ import {
 	cleanCharacter,
 	cleanCompanion,
 	moodOf,
+	pickReaction,
 	REMINDER_TIME,
 } from "../../shared/companion.ts";
 import type { BotId, TeamState } from "../../shared/state.ts";
@@ -259,6 +260,37 @@ export function install(rt: Runtime): void {
 		saveSoon();
 	};
 
+	// One reaction at most every few messages, and never the same emoji twice in a row: the
+	// mark has to read as a reaction to the words, not as a decoration on every bubble.
+	const sinceReaction = new Map<string, number>();
+	const lastEmoji = new Map<string, string>();
+	const visible = (): Record<string, Record<string, string>> => {
+		const team = state as TeamState;
+		team.companionReactions ??= {};
+		return team.companionReactions;
+	};
+	const react = async (sessionId: string, messageId: string, text: string): Promise<void> => {
+		const botId = rt.chatOwners.get(sessionId);
+		if (botId === undefined || of(botId) === undefined) return;
+		const seen = (sinceReaction.get(sessionId) ?? 99) + 1;
+		sinceReaction.set(sessionId, seen);
+		const emoji = pickReaction(text);
+		if (emoji === undefined) return;
+		if (lastEmoji.get(sessionId) === emoji) return;
+		if (seen < 2) return;
+		sinceReaction.set(sessionId, 0);
+		lastEmoji.set(sessionId, emoji);
+		const table = visible();
+		table[sessionId] ??= {};
+		const held = table[sessionId];
+		held[messageId] = emoji;
+		// Keep a bounded tail per chat: old marks are history, not state.
+		const ids = Object.keys(held);
+		for (const old of ids.slice(0, Math.max(0, ids.length - 300))) delete held[old];
+		await persist();
+	};
+	const reactionsView = (): Record<string, Record<string, string>> => visible();
+
 	// The mood and closeness are injected once per turn, on the first step, so the system
 	// prompt prefix stays stable and a long turn does not repeat them.
 	ctx.on(
@@ -301,6 +333,8 @@ export function install(rt: Runtime): void {
 		const text = textOf(event.data?.message ?? event.data);
 		if (text === "") return;
 		void touch(session?.id, text);
+		const messageId = String((event.data as Record<string, unknown>)?.id ?? "");
+		if (messageId !== "") void react(session.id, messageId, text);
 	});
 
 	// A short spoken line for the window's play button; the chat stays where the voice lives.
@@ -323,6 +357,7 @@ export function install(rt: Runtime): void {
 	};
 
 	Object.assign(rt, {
+		companionReactionsView: reactionsView,
 		companionAudio: audio,
 		companionOf: of,
 		companionMap,

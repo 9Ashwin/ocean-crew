@@ -414,6 +414,7 @@ export function install(rt: Runtime): void {
 		capabilityStatuses: sync("capabilityStatusesView") ?? {},
 		imStatus: sync("imStatusView") ?? {},
 		imVia: sync("imViaView") ?? {},
+		companionReactions: sync("companionReactionsView") ?? {},
 		computerLive: sync("computerLive") ?? {},
 	});
 	const liveAnswer = (): { key: string; value: Record<string, unknown> } => {

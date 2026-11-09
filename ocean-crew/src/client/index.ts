@@ -333,6 +333,12 @@ export function apply(ctx: ClientContext): void {
 		if (value.imVia !== undefined && JSON.stringify(value.imVia) !== JSON.stringify((current as any).imVia ?? {})) {
 			liveValue.imVia = value.imVia;
 		}
+		if (
+			value.companionReactions !== undefined &&
+			JSON.stringify(value.companionReactions) !== JSON.stringify((current as any).companionReactions ?? {})
+		) {
+			liveValue.companionReactions = value.companionReactions;
+		}
 		if (Object.keys(liveValue).length > 0 && current.ready) roster.set({ ...current, ...liveValue });
 		if (value.unchanged || (value.revision === current.revision && value.modelsKey === current.modelsKey)) return;
 		// On a browser with no visit record yet, everything already there counts as seen.

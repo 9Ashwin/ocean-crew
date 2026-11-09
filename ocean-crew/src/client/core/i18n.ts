@@ -6,6 +6,7 @@
 export const NAMESPACE = "ocean-crew";
 
 const ZH: Record<string, string> = {
+	Reaction: "回应",
 	"Play voice": "播放语音",
 	"Playing…": "播放中…",
 	"Daily check-in": "每日关心",

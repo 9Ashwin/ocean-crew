@@ -155,3 +155,22 @@ export const cleanCompanion = (input: unknown): Companion => {
 		...(typeof raw.reminderId === "string" && raw.reminderId !== "" ? { reminderId: raw.reminderId } : {}),
 	};
 };
+
+// The reactions a character may put on what the user said: the first match wins, so the
+// table is ordered from the most specific feeling to the most general. No match, no mark —
+// a reaction on every message would read as a machine.
+export const COMPANION_REACTIONS: ReadonlyArray<{ emoji: string; test: RegExp }> = [
+	{ emoji: "❤️", test: /爱你|喜欢你|想你|心动|抱抱|亲亲/ },
+	{ emoji: "🥰", test: /谢谢|感谢|感动|幸福/ },
+	{ emoji: "😂", test: /哈哈|嘿嘿|嘻嘻|笑死|逗|乐/ },
+	{ emoji: "🌙", test: /晚安|睡了|困了|梦见/ },
+	{ emoji: "🫂", test: /累|难过|烦|委屈|哭|压力|伤心|崩溃/ },
+	{ emoji: "😋", test: /好吃|吃饭|吃|饿|咖啡|奶茶/ },
+	{ emoji: "🥺", test: /可爱|想你陪|陪我|乖/ },
+	{ emoji: "🔥", test: /加油|厉害|棒|牛|赢了|成功|搞定/ },
+	{ emoji: "🤔", test: /为什么|怎么|是不是|真的吗|为什么呀/ },
+	{ emoji: "😮", test: /天啊|居然|竟然|卧槽|离谱|震惊/ },
+];
+
+export const pickReaction = (text: string): string | undefined =>
+	COMPANION_REACTIONS.find((entry) => entry.test.test(text))?.emoji;

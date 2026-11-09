@@ -253,3 +253,33 @@ test("the host's own user message event carries the words that move the relation
 	await new Promise((resolve) => setTimeout(resolve, 20));
 	assert.equal(rt.companionOf("a").interactions, 1);
 });
+
+test("a companion reacts to some of what the user says, not all of it", async (t) => {
+	const { rt, ctx, state } = start(t);
+	await rt.companionSet("a", { enabled: true });
+	const listeners = ctx.listeners.get("session/event") ?? [];
+	const say = (id: string, text: string) =>
+		listeners[0](
+			{ id: "sess-a" },
+			{
+				type: "user/message",
+				data: { id, role: "user", source: { kind: "user" }, content: [{ type: "text", text }] },
+			},
+		);
+	// The first message only opens the counter; the second matching one carries the mark.
+	say("m1", "嗯嗯");
+	say("m2", "爱你");
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	const marks: any = (state as any).companionReactions;
+	assert.deepEqual(marks["sess-a"], { m2: "❤️" });
+	assert.deepEqual((rt.companionReactionsView() as any)["sess-a"], { m2: "❤️" });
+	// The next matching pair gets its own emoji, and a plain message gets nothing.
+	say("m3", "今天天气一般");
+	say("m4", "哈哈笑死");
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal((marks as any)["sess-a"]?.["m4"], "😂");
+	say("m5", "好的");
+	say("m6", "好的好的");
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.deepEqual(Object.keys((marks as any)["sess-a"] ?? {}), ["m2", "m4"]);
+});
