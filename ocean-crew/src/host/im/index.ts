@@ -96,6 +96,9 @@ export function install(rt: any) {
 				viewShow: zh()
 					? `${values.bot} 发了一个卡片，请在电脑或手机 App 上回复。`
 					: `${values.bot} shared a card — answer it on the computer or the phone app.`,
+				viewPick: zh()
+					? `${values.bot} 发了一个卡片，点下面的按钮就能回答。`
+					: `${values.bot} shared a card — press a button below to answer.`,
 				answered: zh() ? "已答" : "answered",
 				numbers: zh() ? "回复编号" : "reply with the number",
 				numbersMulti: zh() ? "回复编号，多选用空格隔开" : "reply with the numbers, separated by spaces",
@@ -856,6 +859,55 @@ export function install(rt: any) {
 		}
 		return true;
 	};
+	const answerViewCard = async (conn: any, chat: any, cardKey: any, nodeId: any, choice: any) => {
+		const held = openCard(conn, chat.key, cardKey);
+		if (held === undefined) return false;
+		const viewId = held.cardKey.slice(2);
+		const found = Object.entries((state.views ?? {}) as Record<string, any>).find(
+			([, pending]: [string, any]) => pending.id === viewId,
+		);
+		if (found === undefined) {
+			await sendCardReply(conn, chat, text("stale"));
+			return true;
+		}
+		const [sessionId, pending] = found;
+		const nodes: any[] = [];
+		const walk = (value: any) => {
+			if (value === null || typeof value !== "object") return;
+			if (Array.isArray(value)) {
+				for (const child of value) walk(child);
+				return;
+			}
+			if (value.type === "options" || value.type === "confirm") nodes.push(value);
+			for (const child of Object.values(value)) walk(child);
+		};
+		walk(pending.view);
+		const node = nodes.find((entry: any) => entry.id === nodeId);
+		let values: any;
+		if (node?.type === "confirm" && (choice === "yes" || choice === "no")) {
+			values = { confirmed: choice === "yes" };
+		} else if (node?.type === "options" && /^o\d+$/.test(String(choice))) {
+			const label = node.options?.[Number(String(choice).slice(1))]?.label;
+			if (typeof label !== "string") return false;
+			values = { selected: [label] };
+		} else {
+			return false;
+		}
+		try {
+			await rt.answerView(sessionId, viewId, nodeId, values);
+			await settleCard(conn.id, held.cardKey, text("answered"));
+			await settledEdits(conn);
+		} catch (error: any) {
+			if (error?.code === "bot/stale") {
+				await settleCard(conn.id, held.cardKey, text("answered"));
+				await sendCardReply(conn, chat, text("stale"));
+				await settledEdits(conn);
+				return true;
+			}
+			throw error;
+		}
+		return true;
+	};
 	const answerApprovalCard = async (conn: any, chat: any, cardKey: any, choice: any) => {
 		const held = openCard(conn, chat.key, cardKey);
 		if (held === undefined) return false;
@@ -1015,6 +1067,15 @@ export function install(rt: any) {
 				if (!(await answerApprovalCard(conn, chat, cardKey, choice)))
 					await sendCardReply(conn, chat, text("stale"));
 			}
+			return;
+		}
+		if (data.startsWith("v:") && cut > 4) {
+			const rest = data.slice(2);
+			const inner = rest.lastIndexOf(":");
+			const viewId = rest.slice(0, inner).split(":")[0];
+			const nodeId = rest.slice(viewId.length + 1, inner);
+			if (!(await answerViewCard(conn, chat, `v:${viewId}`, nodeId, choice)))
+				await sendCardReply(conn, chat, text("stale"));
 		}
 	};
 
@@ -1047,11 +1108,55 @@ export function install(rt: any) {
 		],
 	};
 
-	const sendCard = async (conn: any, cardKey: any, targets: any, body: any, buttons?: any) => {
+	const viewButtons = (viewId: string, view: any): any[] | undefined => {
+		const nodes: any[] = [];
+		const walk = (value: any) => {
+			if (value === null || typeof value !== "object") return;
+			if (Array.isArray(value)) {
+				for (const child of value) walk(child);
+				return;
+			}
+			if ((value.type === "options" || value.type === "confirm") && typeof value.id === "string") nodes.push(value);
+			for (const child of Object.values(value)) walk(child);
+		};
+		walk(view);
+		const node = nodes.find((entry: any) =>
+			entry.type === "options"
+				? entry.multi !== true && Array.isArray(entry.options) && entry.options.length > 0
+				: true,
+		);
+		if (node === undefined) return undefined;
+		const choices =
+			node.type === "options"
+				? (node.options ?? []).slice(0, 4).map((option: any, index: number) => ({
+						choice: `o${index}`,
+						label: String(option?.label ?? ""),
+					}))
+				: [
+						{ choice: "yes", label: String(node.confirmLabel ?? "Yes") },
+						{ choice: "no", label: String(node.cancelLabel ?? "No") },
+					];
+		return choices
+			.filter((choice: any) => choice.label !== "")
+			.map((choice: any) => ({
+				data: `v:${viewId}:${node.id}:${choice.choice}`,
+				label: choice.label.slice(0, 20),
+			}));
+	};
+	const sendCard = async (conn: any, cardKey: any, targets: any, body: any, buttons?: any, look?: any) => {
 		for (const { chatKey, chat } of targets) {
-			sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body, buttons, (sent: any) => {
-				void markCard(conn.id, cardKey, chatKey, sent?.messageId, body);
-			});
+			sendTo(
+				conn,
+				chatKey,
+				{ key: chatKey, kind: chat.kind, title: chat.title },
+				body,
+				buttons,
+				(sent: any) => {
+					void markCard(conn.id, cardKey, chatKey, sent?.messageId, body);
+				},
+				undefined,
+				look,
+			);
 		}
 		// A card a chat never got (queued behind a failure) is still recorded below.
 		for (const { chatKey } of targets) await markCard(conn.id, cardKey, chatKey, undefined, body);
@@ -1113,13 +1218,15 @@ export function install(rt: any) {
 					);
 				}
 			}
-			// Views awaiting a reply: text form only. A view from a group chat goes there.
+			// Views awaiting a reply: a card, with buttons when the blueprint can be
+			// answered by pressing one. A view from a group chat goes there.
 			for (const [sessionId, view] of Object.entries((state.views ?? {}) as Record<string, any>)) {
 				const cardKey = `v:${view.id}`;
 				if (data.cards[cardKey] !== undefined) continue;
 				const botId = rt.chatOwners.get(sessionId);
 				const bot = rt.botOf(botId);
 				const form = viewCardText({ title: view.title, view: view.view });
+				const buttons = imPlatform(conn.platform)?.buttons === true ? viewButtons(view.id, view.view) : undefined;
 				if (bot === undefined) {
 					const room = roomOfSession(sessionId);
 					if (room === undefined) continue;
@@ -1127,7 +1234,9 @@ export function install(rt: any) {
 						conn,
 						cardKey,
 						replyTargets(ownerOrigins.get(room.id), `room:${room.id}`),
-						`${text("viewShow", { bot: room.name ?? "this group chat" })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
+						`${text(buttons === undefined ? "viewShow" : "viewPick", { bot: room.name ?? "this group chat" })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
+						buttons,
+						{ card: true, title: room.name },
 					);
 					continue;
 				}
@@ -1135,7 +1244,9 @@ export function install(rt: any) {
 					conn,
 					cardKey,
 					replyTargets(sessionOrigins.get(sessionId), `bot:${botId}`),
-					`${text("viewShow", { bot: bot.name })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
+					`${text(buttons === undefined ? "viewShow" : "viewPick", { bot: bot.name })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
+					buttons,
+					{ card: true, title: bot.name },
 				);
 			}
 		}

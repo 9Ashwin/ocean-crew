@@ -587,6 +587,42 @@ export function install(rt: Runtime): void {
 		return true;
 	}
 
+	// An answer to an interactive view: validated by the view layer, claimed before the
+	// follow-up is queued so a second answer is refused, and put back when queueing fails.
+	async function answerView(sessionRef: string, viewId: unknown, action: unknown, values: unknown): Promise<boolean> {
+		const validate = member("view-reply", "validateViewAnswer");
+		const build = member("view-reply", "viewReply");
+		await load();
+		const past = pastOwner(sessionRef);
+		const sessionId =
+			botOf(sessionRef) !== undefined
+				? chatOf(sessionRef)
+				: past?.roomId === undefined && past?.botId !== undefined
+					? chatOf(past.botId)
+					: sessionRef;
+		const pending = own(state.views, sessionId);
+		if (pending === undefined || pending.id !== viewId) throw stale("This view is no longer open");
+		const checked = validate(pending.view, action, values);
+		if (checked !== undefined && checked.error !== undefined) throw invalid(checked.error);
+		const reply = build(pending, action, values);
+		if (reply === undefined) throw invalid("Nothing to send");
+		// Claim the view before queueing so a second answer is refused.
+		delete state.views[sessionId];
+		try {
+			await record("ensureCapabilities", sessionId);
+			const agent = await call("resolveAgent", sessionId);
+			const source = reply.source as unknown as MessageSource;
+			agent.followup(createUserMessage({ content: [{ type: "text", text: reply.text }], source }));
+			const sessions = ctx.sessions as { flush?: (session: unknown) => Promise<unknown> } | undefined;
+			await sessions?.flush?.(agent.session);
+		} catch (error) {
+			state.views[sessionId] ??= pending;
+			throw error;
+		}
+		await save();
+		return true;
+	}
+
 	const setPrefs = async (body: Payload): Promise<void> => {
 		const current = prefs();
 		if (body.theme !== undefined) {
@@ -1015,37 +1051,13 @@ export function install(rt: Runtime): void {
 		},
 		async "view-reply"(body) {
 			if (typeof body.sessionId !== "string") return fail("Nothing to send", "bot/invalid");
-			const validate = member("view-reply", "validateViewAnswer");
-			const build = member("view-reply", "viewReply");
-			await load();
-			const past = pastOwner(body.sessionId);
-			const sessionId =
-				botOf(body.sessionId) !== undefined
-					? chatOf(body.sessionId)
-					: past?.roomId === undefined && past?.botId !== undefined
-						? chatOf(past.botId)
-						: body.sessionId;
-			const pending = own(state.views, sessionId);
-			if (pending === undefined || pending.id !== body.viewId)
-				return fail("This view is no longer open", "bot/stale");
-			const checked = validate(pending.view, body.action, body.values);
-			if (checked !== undefined && checked.error !== undefined) return fail(checked.error, "bot/invalid");
-			const reply = build(pending, body.action, body.values);
-			if (reply === undefined) return fail("Nothing to send", "bot/invalid");
-			// Claim the view before queueing so a second answer is refused.
-			delete state.views[sessionId];
 			try {
-				await record("ensureCapabilities", sessionId);
-				const agent = await call("resolveAgent", sessionId);
-				const source = reply.source as unknown as MessageSource;
-				agent.followup(createUserMessage({ content: [{ type: "text", text: reply.text }], source }));
-				const sessions = ctx.sessions as { flush?: (session: unknown) => Promise<unknown> } | undefined;
-				await sessions?.flush?.(agent.session);
-			} catch (error) {
-				state.views[sessionId] ??= pending;
-				throw error;
+				await answerView(body.sessionId, body.viewId, body.action, body.values);
+			} catch (error: any) {
+				// The endpoint's own codes survive: a missing module is unavailable, a refused
+				// queue is refused; anything else is the caller's payload.
+				return fail(String(error?.message ?? error), errorCode(error));
 			}
-			await save();
 			return ok(true);
 		},
 		async "btw-delete"(body) {
@@ -1226,5 +1238,5 @@ export function install(rt: Runtime): void {
 		return undefined;
 	}, "ocean-crew: load state");
 
-	Object.assign(rt, { sendUser, answerQuestion, uiLanguage });
+	Object.assign(rt, { sendUser, answerQuestion, answerView, uiLanguage });
 }

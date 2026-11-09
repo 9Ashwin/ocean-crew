@@ -1190,3 +1190,102 @@ test("typing starts as soon as the request is handed over and stops at turn end"
 	s.emitEvent("a", "turn/end", { turn: 2, reason: { kind: "completed" } });
 	assert.ok(await s.until(() => s.fake.stopTypingCalls.includes("dm-u1"), 2_000), "typing stops at the end");
 });
+
+// A view with something to press is a card whose buttons answer it: the press goes
+// through the same view validation and follow-up the window uses, and the card settles.
+test("an interactive view is a card whose buttons answer it", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "show me");
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, turn: 4, content: [] });
+	const asked: any[] = [];
+	s.rt.validateViewAnswer = (_view: any, action: any) =>
+		typeof action === "string" && action !== "" ? {} : { error: "action: expected a component id" };
+	s.rt.viewReply = (record: any, action: any, values: any) => {
+		asked.push({ action, values });
+		return {
+			text: JSON.stringify({
+				kind: "answer_to_pending_view",
+				callId: record.id,
+				answers: [{ id: record.id, action, values }],
+			}),
+			source: { kind: "deep-view-reply", callId: record.id, outcome: "answered" },
+		};
+	};
+	s.rt.state.views.a = {
+		id: "v1",
+		title: "Pick one",
+		view: { type: "options", id: "choice", options: [{ label: "A" }, { label: "B" }] },
+	};
+	// Saving wakes the card diff, which is what sends a newly open view.
+	await s.rt.save();
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => entry.card === true && entry.buttons?.length === 2)),
+		"the view arrives as a card with its option buttons",
+	);
+	const card = s.fake.sent.find((entry: any) => entry.card === true && entry.buttons?.length === 2);
+	assert.deepEqual(
+		card.buttons.map((button: any) => button.data),
+		["v:v1:choice:o0", "v:v1:choice:o1"],
+	);
+	await s.fake.handlers.onAction({
+		chat: { key: "dm-u1", kind: "direct", title: "U1" },
+		sender: { id: "u1" },
+		data: "v:v1:choice:o1",
+		messageId: 1,
+	});
+	assert.deepEqual(asked, [{ action: "choice", values: { selected: ["B"] } }]);
+	assert.equal(s.rt.state.views.a, undefined, "the view is claimed before the follow-up");
+	assert.equal(s.agents.get("a")?.followed, 1, "the answer is queued into the Session");
+	assert.ok(
+		await s.until(() => s.fake.edited.some((entry: any) => /answered/.test(String(entry.text ?? "")))),
+		"the answered card is edited shut",
+	);
+});
+
+test("pressing a button on a view that is already answered reports it as stale", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "show me");
+	s.emitEvent("a", "user/message", {
+		source: { kind: "user", rpcId: s.prompts.at(-1)?.requestId },
+		turn: 4,
+		content: [],
+	});
+	s.rt.validateViewAnswer = () => ({});
+	s.rt.viewReply = (record: any) => ({ text: "{}", source: { kind: "deep-view-reply", callId: record.id } });
+	s.rt.state.views.a = {
+		id: "v9",
+		title: "Confirm it",
+		view: { type: "confirm", id: "ok", confirmLabel: "Yes", cancelLabel: "No" },
+	};
+	await s.rt.save();
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => entry.card === true)));
+	s.fake.sent.length = 0;
+	await s.fake.handlers.onAction({
+		chat: { key: "dm-u1", kind: "direct", title: "U1" },
+		sender: { id: "u1" },
+		data: "v:v9:ok:yes",
+		messageId: 1,
+	});
+	assert.equal(s.agents.get("a")?.followed, 1);
+	assert.ok(await s.until(() => s.rt.state.views.a === undefined), "the view is claimed");
+	// The second press finds the card settled: nothing more is queued, the chat is told.
+	s.fake.sent.length = 0;
+	await s.fake.handlers.onAction({
+		chat: { key: "dm-u1", kind: "direct", title: "U1" },
+		sender: { id: "u1" },
+		data: "v:v9:ok:no",
+		messageId: 1,
+	});
+	assert.equal(s.agents.get("a")?.followed, 1, "a stale press does not queue another answer");
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => /already answered/.test(String(entry.text ?? "")))),
+		"the chat is told the card was answered already",
+	);
+});
