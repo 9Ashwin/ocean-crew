@@ -31,6 +31,7 @@ const ZH: Record<string, string> = {
 		"实验性：部分微信客户端不显示机器人的语音消息；关闭时发音频文件",
 	"Test voice": "测试语音",
 	"Voice test OK": "语音测试通过",
+	"The voice settings need a newer Ocean Crew build; restart DSH.": "语音设置需要更新的 Ocean Crew 构建，请重启 DSH。",
 	// Group spending limits
 	"Spending limits": "花费上限",
 	"Member work": "成员工作",

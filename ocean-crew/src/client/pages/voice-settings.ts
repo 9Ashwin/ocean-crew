@@ -23,11 +23,17 @@ export function VoiceSettingsPage({ actions, Section, Row }: any) {
 	const [draft, setDraft] = useState<any>({});
 	const edit = (key: string, value: any) => setDraft((current: any) => ({ ...current, [key]: value }));
 	const value = (key: string) => (Object.hasOwn(draft, key) ? draft[key] : (view?.[key] ?? ""));
-	const load = () =>
+	const [failed, setFailed] = useState("");
+	const load = () => {
+		if (typeof actions.ttsSettings !== "function") {
+			setFailed(t("The voice settings need a newer Ocean Crew build; restart DSH."));
+			return;
+		}
 		actions
-			.ttsSettings?.()
+			.ttsSettings()
 			.then((next: any) => setView(next))
-			.catch((error: any) => setNote(String(error?.message ?? error)));
+			.catch((error: any) => setFailed(String(error?.message ?? error)));
+	};
 	useEffect(() => {
 		void load();
 	}, []);
@@ -71,6 +77,7 @@ export function VoiceSettingsPage({ actions, Section, Row }: any) {
 			setBusy(false);
 		}
 	};
+	if (failed !== "") return h("div", { className: "bt-set-hint" }, failed);
 	if (view === null) return h("div", { className: "bt-set-hint" }, t("Loading…"));
 	const toggle = (key: string) =>
 		h("input", {
