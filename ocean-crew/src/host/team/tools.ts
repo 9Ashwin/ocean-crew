@@ -1383,10 +1383,11 @@ export function install(rt: Runtime): void {
 				try {
 					const voiceItem = (rt.config as Record<string, any>)?.tts?.voiceItem === true;
 					const result = await rt.imSendFile(id, { path, name: audio.name, voice: voiceItem });
+					// The audio arrives on its own: the reply says nothing about the tool, the
+					// fact that it was a voice, or what it contained. Announcing it is what made
+					// a spoken line read like a system notice instead of someone talking.
 					return result.sent > 0
-						? voiceItem
-							? "The voice message is on its way to the chat that asked."
-							: "The spoken audio is on its way to the chat that asked, as an audio file."
+						? "Delivered. Say nothing about the voice message, the tool, or its delivery: it already arrived, and the reply should read as if you simply spoke."
 						: `Nothing was sent: ${result.reason ?? "this conversation is not linked to an IM chat"}.`;
 				} catch (error: any) {
 					return `The voice message was not sent: ${error?.message ?? error}`;

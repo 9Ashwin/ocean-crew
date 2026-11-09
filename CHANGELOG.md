@@ -5,6 +5,17 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.4.8] - 2026-11-10
+
+### Changed
+
+- A Bot's answer in Feishu is a plain white card: no coloured header bar, the text alone on
+  the card's background. Interactive cards (buttons, forms) keep their header, because the
+  buttons need that context.
+- The `speak` tool no longer invites the model to announce itself: its result says the line
+  already arrived and that the reply should not mention the voice, the tool or the delivery,
+  so a spoken answer reads as someone talking instead of a system notice.
+
 ## [0.4.7] - 2026-11-10
 
 ### Fixed

@@ -1040,26 +1040,26 @@ test("plain prose goes as text and markdown goes as a post the platform renders"
 	assert.match(rows[0][0].text, /## 结果/);
 });
 
-test("a reply card carries the Bot's name as its header and the answer as markdown", async () => {
+test("a reply card is white with no header, and the title is not drawn", async () => {
 	const fake = fakeSdk();
 	const { handle } = await setup(fake);
 	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "## 结果\n- 已完成", card: true, title: "阿鱼" });
 	assert.equal(fake.creates[0].data.msg_type, "interactive");
 	const sent = JSON.parse(fake.creates[0].data.content);
-	assert.deepEqual(sent.header, { title: { tag: "plain_text", content: "阿鱼" }, template: "blue" });
+	assert.equal(sent.header, undefined, "a Bot's answer carries no header bar");
+	assert.equal(sent.schema, "2.0");
 	assert.deepEqual(sent.body.elements, [{ tag: "markdown", content: "## 结果\n- 已完成" }]);
 });
 
-test("a long card reply repeats no header on its later parts", async () => {
+test("a long card reply splits without a header on any part", async () => {
 	const fake = fakeSdk();
 	const { handle } = await setup(fake);
 	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "a".repeat(4001), card: true, title: "阿鱼" });
 	assert.equal(fake.creates.length, 2);
-	const first = JSON.parse(fake.creates[0].data.content);
-	const second = JSON.parse(fake.creates[1].data.content);
-	assert.equal(first.header.title.content, "阿鱼");
-	assert.equal(second.header, undefined, "the continuation has no header of its own");
-	assert.equal(fake.creates[1].data.msg_type, "interactive");
+	for (const create of fake.creates) {
+		assert.equal(create.data.msg_type, "interactive");
+		assert.equal(JSON.parse(create.data.content).header, undefined, "no part carries a header");
+	}
 });
 
 test("a card the platform refuses for its content falls back to plain text", async () => {

@@ -464,10 +464,12 @@ const postWith = (text: string, rows: any[]): string => {
 	return JSON.stringify({ zh_cn: { content } });
 };
 
-const replyCard = (text: string, title: string | undefined): string =>
+// A Bot's answer is a plain white card: no header bar, the text alone on the card's own
+// background. The title is accepted for callers that still pass one and deliberately not
+// drawn, because a coloured header over every reply reads as a system notice.
+const replyCard = (text: string): string =>
 	JSON.stringify({
 		schema: "2.0",
-		...(title === undefined ? {} : { header: { title: { tag: "plain_text", content: title }, template: "blue" } }),
 		body: { elements: [{ tag: "markdown", content: text }] },
 	});
 
@@ -1009,8 +1011,9 @@ const feishu = {
 				for (const [index, chunk] of chunks.entries()) {
 					// A form is an interactive card as well: its submit button reports the answer.
 					const interactive = (buttons !== undefined || form !== undefined) && index === chunks.length - 1;
-					// A Bot's answer reads as a card on this platform; only the first part
-					// carries the header, so a split answer is not a stack of headers.
+					// A Bot's answer rides on a card (white, no header): Feishu lays the text out
+					// better there, and a split answer just repeats the card without a stack of
+					// headers. A card that carries buttons or a form is the interactive path.
 					const replyCardMode = asCard === true && !interactive;
 					const markup = MARKDOWN_HINT.test(chunk);
 					// Images ride on the last part of the answer, as a caption with its media,
@@ -1025,7 +1028,7 @@ const feishu = {
 					const content = interactive
 						? card(chunk, buttons, title, form)
 						: replyCardMode
-							? replyCard(chunk, index === 0 ? title : undefined)
+							? replyCard(chunk)
 							: caption.length > 0
 								? postWith(
 										chunk,

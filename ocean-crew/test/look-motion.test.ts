@@ -325,3 +325,15 @@ test("the reaction lookup does not depend on the slot's sessionId", () => {
 	assert.match(source, /for \(const chat of Object\.values\(marks\)\)/);
 	assert.match(source, /data\.messageId/);
 });
+
+test("a Feishu reply card carries no header, while an interactive one keeps its own", () => {
+	const feishu = read("..", "host", "im", "platforms", "feishu.ts");
+	// The plain answer is a white card: schema 2.0 and a body, nothing above it.
+	assert.match(
+		feishu,
+		/const replyCard = \(text: string\): string =>\s*JSON\.stringify\(\{\s*schema: "2\.0",\s*body:/,
+	);
+	assert.doesNotMatch(feishu, /replyCard = [\s\S]{0,200}header/);
+	// An interactive card still names itself, because its buttons need that context.
+	assert.match(feishu, /header: \{\s*title: \{ tag: "plain_text", content: title \?\? "Action needed" \}/);
+});
