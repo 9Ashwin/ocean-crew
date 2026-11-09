@@ -45,6 +45,7 @@ import { install as installMemory } from "./host/work/memory.ts";
 import { install as installReset } from "./host/work/reset.ts";
 import { install as installSchedules } from "./host/work/schedules.ts";
 import { install as installSecrets } from "./host/work/secrets.ts";
+import { install as installTts } from "./host/work/tts.ts";
 import { install as installUsage } from "./host/work/usage.ts";
 import type { PluginConfig } from "./shared/config.ts";
 
@@ -93,6 +94,7 @@ const MODULES: HostModule[] = [
 	installBtw,
 	installSide,
 	installImages,
+	installTts,
 	installAvatar,
 	installAvatarLibrary,
 	installSecrets,

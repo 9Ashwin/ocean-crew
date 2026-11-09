@@ -111,6 +111,9 @@
   不会循环重试、也不用心跳伪造活跃；聊天里再给 Bot 发一条消息后，下一次推送即可恢复。
 - 语音：微信出站把 `.mp3/.amr/.silk/.ogg/.opus` 音频文件按 **voice item**（type 3、上传类型 4）发送，
   其它音频容器按普通文件发送，不猜编码。
+- 文字转语音：`speak` 工具把一段短文本交给配置的语音模型（Breeze Blue HTTP API），拿到音频后按
+  「发文件」的同一条链路送到这一轮请求的来源聊天；微信侧因此是一条语音消息，飞书侧是音频文件。
+  密钥只从 secret 读取，不进配置、状态或工具结果；没有配置时工具直接说明而不是静默失败。
 
 ## IM 投递与 outbox
 
@@ -178,6 +181,14 @@ host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件
 | `github` | 显示 | `false` 隐藏 GitHub 连接器。 |
 | `mail` | 使用 host 自己的传输 | 覆盖邮件连接器的 IMAP 连接及其 `fetch`。 |
 | `ocrModel` | DSH 默认图像模型，否则取第一个可用的 | 把图片转成文字、供不能读图的模型使用的模型。 |
+| `tts.enabled` | `true`（有密钥时） | `false` 关掉 `speak` 工具。 |
+| `tts.baseUrl` | `https://api.breeze.blue` | Breeze Blue 兼容的语音 API 基址。 |
+| `tts.secret` | `BREEZE_API_KEY` | 存放语音 API 密钥的 secret 名（在 设置 → Secrets 里保存，值不进配置/状态）。 |
+| `tts.model` | 服务端默认（`breeze-tts-2` / `breeze-tts-2-multilingual`） | 语音模型 id。 |
+| `tts.voice` | 账号里的第一个声音 | 声音 id；未配置时自动取 `/v1/voices` 的第一个并缓存 10 分钟。 |
+| `tts.language` | 不传 | ISO 639-1 语言代码，如 `zh`、`en`。 |
+| `tts.format` | `mp3` | 输出格式（`mp3`、`opus` 等，按服务端枚举）。 |
+| `tts.instructions` | 不传 | 表演/语气指令，与文本同语言。 |
 | `textOnlyModels` | 无 | `provider/model` 引用，这些模型必须收到文本，绝不收到图片。 |
 | `handoffListTokens`、`handoffRecentTokens` | `4096`、`16384` | 交接包中列表段与最近消息段的大小。 |
 | `timeRefreshIntervalMs` | `600000` | 时间上下文多久刷新一次。 |

@@ -403,6 +403,7 @@ const M2_TOOLS = [
 	"post_to_group",
 	"ask_user",
 	"show_view",
+	"speak",
 	"send_file",
 ];
 const GROUP_TOOLS = ["group_relay", "read_own_chat", "read_group_chat"];
@@ -485,7 +486,7 @@ test("a tool added after the first scoping reaches every Bot Session, and removi
 	host.rt.removeTeamTool("late_tool");
 	assert.ok(!host.scopedNames("chief").includes("late_tool"));
 	assert.ok(!host.rt.teamTools.some((tool) => tool.name === "late_tool"));
-	assert.equal(host.rt.teamTools.length, 13);
+	assert.equal(host.rt.teamTools.length, M2_TOOLS.length);
 });
 
 // ----- the hidden tools: masks, assembly filter, guard -----

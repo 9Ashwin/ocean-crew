@@ -11,6 +11,17 @@ export interface PluginConfig {
 	imReactions?: boolean;
 	/** Push an answer a scheduled prompt asked for to the Bot's latest IM chat. */
 	imNotify?: boolean;
+	/** Text to speech: which provider, model, voice and secret the `speak` tool uses. */
+	tts?: {
+		enabled?: boolean;
+		baseUrl?: string;
+		secret?: string;
+		model?: string;
+		voice?: string;
+		language?: string;
+		format?: string;
+		instructions?: string;
+	};
 	im?: Record<string, unknown>;
 	checkRatio?: number;
 	memory?: boolean;

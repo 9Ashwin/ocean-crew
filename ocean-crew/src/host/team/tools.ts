@@ -16,6 +16,8 @@
 // registered until the whole scope lifted; no caller depended on that).
 
 import { randomUUID } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { defineTool as defineDshTool } from "@deepseek-ai/dsh-tools";
 import { mentionSpans } from "../../shared/mentions.ts";
 import type { Bot, Room } from "../../shared/state.ts";
@@ -1346,6 +1348,47 @@ export function install(rt: Runtime): void {
 	// came from. The host keeps the bytes and the origin routing; this tool is the way a
 	// Bot hands a result over without waiting for the user to come back to the desktop.
 	rt.teamTools.push(
+		defineTool({
+			name: "speak",
+			description:
+				"Speak a short line in the IM chat this request came from, as a voice message (text to speech). Use it when the user asks to hear something, or when a short spoken answer is friendlier than text. It needs the speech model configured on this computer; a conversation that is not linked to IM gets a note instead of a message. Keep it to one or two sentences.",
+			parameters: {
+				text: {
+					type: "string",
+					description: "What to say, in plain text without markdown, up to about 1000 characters",
+				},
+			},
+			execute: async (args, exec) => {
+				await rt.load();
+				const words = String(args.text ?? "").trim();
+				if (words === "") return "Give the words to speak.";
+				if (typeof (rt as Record<string, any>).speak !== "function")
+					return "Text to speech is not configured; answer in text instead.";
+				const id = exec.agent?.id ?? "";
+				let audio: { bytes: Buffer; name: string };
+				try {
+					audio = await (rt as Record<string, any>).speak(words);
+				} catch (error: any) {
+					return `Nothing was spoken: ${error?.message ?? error}`;
+				}
+				// The queue carries a queue-safe copy, so the spoken file lives in the plugin
+				// home until the send settles and then goes away.
+				const dir = join(rt.home, "voice");
+				await mkdir(dir, { recursive: true });
+				const path = join(dir, `${randomUUID()}-${audio.name}`);
+				await writeFile(path, audio.bytes, { mode: 0o600 });
+				try {
+					const result = await rt.imSendFile(id, { path, name: audio.name });
+					return result.sent > 0
+						? "The voice message is on its way to the chat that asked."
+						: `Nothing was sent: ${result.reason ?? "this conversation is not linked to an IM chat"}.`;
+				} catch (error: any) {
+					return `The voice message was not sent: ${error?.message ?? error}`;
+				} finally {
+					await rm(path, { force: true }).catch(() => undefined);
+				}
+			},
+		}),
 		defineTool({
 			name: "send_file",
 			description:
