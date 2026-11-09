@@ -96,13 +96,19 @@ export function install(rt: Runtime): void {
 		return voices.first;
 	};
 
-	const speak = async (text: string, formatOverride?: string): Promise<{ bytes: Buffer; name: string }> => {
+	const speak = async (
+		text: string,
+		formatOverride?: string,
+		voiceOverride?: string,
+	): Promise<{ bytes: Buffer; name: string }> => {
 		const raw = String(text ?? "").trim();
 		if (raw === "") throw refusals.invalid("Nothing to speak");
 		const key = rt.secretValue?.(secretName());
 		if (key === undefined || key === "")
 			throw refusals.unavailable(`The ${secretName()} secret is not set; save the speech API key first`);
-		const chosen = await voice(key);
+		// A companion names its own voice; the page's voice is the default for everyone else.
+		const chosen =
+			typeof voiceOverride === "string" && voiceOverride.trim() !== "" ? voiceOverride.trim() : await voice(key);
 		const chunks = splitSpeech(raw);
 		const parts: Buffer[] = [];
 		for (const chunk of chunks) {

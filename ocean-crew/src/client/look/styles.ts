@@ -60,6 +60,25 @@ body:not([data-bt-motion=quiet]) :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster)
 .bt-mark[data-gaze] .bt-gaze{transform:translate(calc(var(--bt-gx,0) * 12%),calc(var(--bt-gy,0) * 11%));transition:transform .18s ease-out}
 body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-b{translate:none}
 body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-gaze{transform:none}
+/* Companion moods: the mark wears its character's current feeling. The glow stays behind
+   the body; the eyes squint or widen on their own layer. */
+.bt-mark[data-mood]{--bt-mood:#8fc7ff}
+.bt-mark[data-mood=warm]{--bt-mood:#ffb7c9}
+.bt-mark[data-mood=playful]{--bt-mood:#ffd27a}
+.bt-mark[data-mood=calm]{--bt-mood:#8fc7ff}
+.bt-mark[data-mood=proud]{--bt-mood:#c3a6ff}
+.bt-mark[data-mood=pout]{--bt-mood:#9fb4c8}
+.bt-mark[data-mood=excited]{--bt-mood:#ffcf5c}
+.bt-mark[data-mood]::after{content:"";position:absolute;inset:-8%;border-radius:50%;z-index:-1;pointer-events:none;background:radial-gradient(circle at 50% 58%,color-mix(in srgb,var(--bt-mood) 34%,transparent),transparent 72%);animation:bt-companion-glow 4.6s ease-in-out infinite}
+@keyframes bt-companion-glow{0%,100%{opacity:.42;scale:.97}50%{opacity:.7;scale:1.04}}
+.bt-mark[data-mood=warm] :is(.mb-eye,.bt-eyes){scale:1 .9}
+.bt-mark[data-mood=playful] :is(.mb-eye,.bt-eyes){translate:0 1px}
+.bt-mark[data-mood=proud] :is(.mb-eye,.bt-eyes){translate:0 -1px;scale:1 1.06}
+.bt-mark[data-mood=pout] :is(.mb-eye,.bt-eyes){scale:1 .62}
+.bt-mark[data-mood=excited] :is(.mb-eye,.bt-eyes){scale:1 1.12}
+.bt-mark[data-mood=pout] .bt-b{translate:0 1%}
+.bt-mark[data-mood=excited] .bt-b{animation:bt-companion-hop 3.4s ease-in-out infinite}
+@keyframes bt-companion-hop{0%,86%,100%{translate:0 0}90%{translate:0 -4%}94%{translate:0 0}}
 .bt-mark[data-state=thinking] .bt-b{animation:bt-ponder 2.2s ease-in-out infinite}
 .bt-mark[data-state=thinking] .bt-eyes{animation:bt-squint 2.2s ease-in-out infinite}
 .bt-mark[data-state=searching] .bt-b{animation:bt-seek 1s ease-in-out infinite}
@@ -571,6 +590,9 @@ button.bt-set-row:hover{background:var(--bt-hover)}
 .bt-set-row:last-child{border-bottom-left-radius:12px;border-bottom-right-radius:12px}
 .bt-set-copy{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
 .bt-set-hint{font-size:12px;line-height:16px;color:color-mix(in srgb,var(--bt-ink-2) 50%,var(--bt-ink-3))}
+/* The companion page's closeness meter: one bar that fills from the left. */
+.bt-comp-bar{width:100%;height:6px;border-radius:999px;background:var(--bt-line);overflow:hidden}
+.bt-comp-bar>span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#ffb7c9,#ffcf5c);transition:width .4s ease}
 .bt-set-control{flex:none;display:flex;align-items:center;gap:6px}
 .bt-set-places .bt-set-control{flex:0 1 auto;max-width:50%;min-width:0}
 /* Shrinkable, so a long model name gets its ellipsis instead of pushing Reset out of the card. */

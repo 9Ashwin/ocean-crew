@@ -5,6 +5,7 @@
 
 // hooks;
 
+import type { Companion } from "../../shared/companion.ts";
 import type { PluginConfig } from "../../shared/config.ts";
 import type { Bot, BotId, Room, RoomLogLine, TeamState } from "../../shared/state.ts";
 
@@ -106,6 +107,13 @@ export interface Runtime extends StoreApi {
 	indexAgents?: () => void;
 	syncScopedTools?: () => void;
 	cancelApprovals?: (sessionId: string) => void;
+
+	// companion mode
+	companionOf?: (botId?: string) => Companion | undefined;
+	companionMap?: () => Record<string, { name: string; mood: string; affection: number }>;
+	companionView?: () => unknown;
+	companionSet?: (botId: string, patch: unknown) => Promise<unknown>;
+	companionTouch?: (sessionId: string, text: string) => Promise<void>;
 
 	// handoffs, requests, delivery, roster, folders, privacy, prompt, tools, groups,
 	// resume, feed, channel.

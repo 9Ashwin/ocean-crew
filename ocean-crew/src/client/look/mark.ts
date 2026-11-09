@@ -11,6 +11,8 @@ export interface BotLike {
 	name?: string;
 	avatar?: { shape?: string; image?: string; color?: string } | null;
 	color?: string;
+	/** Companion mode: the character's current mood, which the mark wears as an expression. */
+	companion?: { name?: string; mood?: string; affection?: number } | null;
 }
 
 export interface BotLook {
@@ -119,6 +121,7 @@ export function BotMark({
 		ref,
 		className: poked ? "bt-mark bt-mark-poke" : "bt-mark",
 		"data-shape": image ? "image" : shapeId(look.shape),
+		"data-mood": bot?.companion?.mood,
 		"data-state": STATES.includes(state) ? state : "idle",
 		"data-live": live ? "" : undefined,
 		"data-fidget": live ? FIDGETS[fnv1a(`${bot?.id ?? ""}:fidget`) % FIDGETS.length] : undefined,

@@ -318,6 +318,10 @@ export const TrashIcon = lineIcon([
 ]);
 export const DuplicateIcon = lineIcon(["M7 7h8.5v9.5H7z", "M4.5 13V3.5H13", "M11.25 9.5v4.5M9 11.75h4.5"]);
 export const SlidersIcon = lineIcon(["M4 6.5h5M12.5 6.5H16M4 13.5h4M11.5 13.5H16", "M10.5 4.5v4M9.5 11.5v4"]);
+// A heart for the companion page: a friendship mark, not a medical one.
+export const HeartIcon = lineIcon([
+	"M10 16.6S3.4 12.6 3.4 8a3.4 3.4 0 0 1 6.6-1.2 3.4 3.4 0 0 1 6.6 1.2c0 4.6-6.6 8.6-6.6 8.6z",
+]);
 // A notebook with a ribbon: what a Bot remembers.
 export const MemoryIcon = lineIcon([
 	"M5.5 3.5h8A1.5 1.5 0 0 1 15 5v10a1.5 1.5 0 0 1-1.5 1.5h-8z",

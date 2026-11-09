@@ -315,6 +315,8 @@ export function teamActions({
 		approveCapability: (name: string) => after(call("capability-approve", { name })),
 		setBotCapability: (botId: string, name: string, attached: boolean) =>
 			after(call("bot-capability", { botId, name, attached })),
+		companionView: () => call("companion-view"),
+		companionSet: (botId: string, patch: unknown) => after(call("companion-set", { botId, patch })),
 		ttsSettings: () => call("tts-settings"),
 		ttsSet: (patch: unknown) => after(call("tts-set", patch)),
 		ttsVoices: () => call("tts-voices"),

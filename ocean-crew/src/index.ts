@@ -37,6 +37,7 @@ import { install as installApprovals } from "./host/work/approvals.ts";
 import { install as installAvatar } from "./host/work/avatar.ts";
 import { install as installAvatarLibrary } from "./host/work/avatar-library.ts";
 import { install as installCapabilities } from "./host/work/capabilities.ts";
+import { install as installCompanion } from "./host/work/companion.ts";
 import { install as installGoalSkills } from "./host/work/goal-skills.ts";
 import { install as installGoals } from "./host/work/goals.ts";
 import { install as installImages } from "./host/work/images.ts";
@@ -95,6 +96,7 @@ const MODULES: HostModule[] = [
 	installSide,
 	installImages,
 	installTts,
+	installCompanion,
 	installAvatar,
 	installAvatarLibrary,
 	installSecrets,

@@ -53,6 +53,7 @@ export const READS: ReadonlySet<string> = new Set([
 	"exchange-text",
 	"file-text",
 	"usage",
+	"companion-view",
 	"schedules",
 	"memory-view",
 	"diagnostics",
@@ -139,6 +140,9 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 	"goal-draft",
 	"goal-control",
 	"room-budget",
+
+	"companion-view",
+	"companion-set",
 
 	"tts-settings",
 	"tts-set",
@@ -422,6 +426,7 @@ export function install(rt: Runtime): void {
 	// What the browser renders. a field
 
 	const view = (): Record<string, unknown> => {
+		const companions = sync("companionMap") ?? {};
 		const bots = Object.values(state.bots).map((bot) => {
 			const { segments, kickoff, ...rest } = bot;
 			return {
@@ -429,6 +434,7 @@ export function install(rt: Runtime): void {
 				sessionId: chatOf(bot.id),
 				parts: (segments ?? []).map((segment) => segment.sessionId),
 				...(kickoff ? { waiting: true } : {}),
+				...(companions[bot.id] === undefined ? {} : { companion: companions[bot.id] }),
 			};
 		});
 		const rooms = Object.values(state.rooms).map((room) => {
@@ -1136,6 +1142,19 @@ export function install(rt: Runtime): void {
 		},
 		async "repo-stars"() {
 			return ok(await callMember("repo-stars", "repoStars"));
+		},
+		async "companion-view"() {
+			return ok(await callMember("companion-view", "companionView"));
+		},
+		async "companion-set"(body) {
+			const botId = String((body as Record<string, unknown>)?.botId ?? "");
+			if (botId === "") throw Object.assign(new Error("Choose a Bot first"), { code: "bot/invalid" });
+			const patch =
+				(body as Record<string, unknown>)?.patch !== null &&
+				typeof (body as Record<string, unknown>)?.patch === "object"
+					? (body as Record<string, any>).patch
+					: {};
+			return ok(await callMember("companion-set", "companionSet", botId, patch));
 		},
 		async "tts-settings"() {
 			return ok(await callMember("tts-settings", "ttsSettingsView"));

@@ -173,6 +173,7 @@ const PROBES: Record<string, unknown> = {
 	chat: { botId: "chief", cursor: "cursor-1" },
 	"bot-new-part": { botId: "chief" },
 	"bot-open-part": { botId: "chief", sessionId: "worker-old" },
+	"companion-set": { botId: "chief" },
 	usage: { timeZone: "Asia/Shanghai" },
 	"team-workspace": { path: "/tmp/team" },
 	"private-release": { id: "private-1" },
@@ -257,6 +258,9 @@ function moduleMembers(calls: Array<[string, ...unknown[]]>): Record<string, Mem
 			rec("setGroupBudget")(roomId, body);
 			return { available: true, members: { spent: 0 }, summary: { spent: 0 }, idle: { streak: 0, paused: false } };
 		},
+		companionView: async () => ({ bots: [], example: null, moods: [], bands: [] }),
+		companionSet: async (botId: string, patch: unknown) => ({ botId, patch }),
+		companionMap: () => ({}),
 		ttsSettingsView: async () => ({ enabled: true, model: "breeze-tts-2", hasSecret: true }),
 		ttsSettingsSet: async (patch: unknown) => ({ saved: true, patch }),
 		ttsVoices: async () => [{ id: "voc_1", name: "Narrator" }],

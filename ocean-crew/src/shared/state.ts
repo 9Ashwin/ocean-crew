@@ -3,6 +3,8 @@
 
 // typed exactly.
 
+import type { Companion } from "./companion.ts";
+
 export type BotId = string;
 export type RoomId = string;
 export type ConnectionId = string;
@@ -286,6 +288,8 @@ export interface TeamState {
 	switching: Record<string, unknown>;
 	revision: number;
 	whaleStored?: boolean;
+	/** Companion mode records, by Bot id (see shared/companion.ts). */
+	companions?: Record<string, Companion>;
 	im?: ImState;
 	secrets?: Record<string, unknown>;
 	connectors?: Record<string, unknown>;

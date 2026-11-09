@@ -2174,9 +2174,14 @@ export function install(rt: any) {
 						if (chat.kind !== "direct" || typeof rt.speak !== "function") continue;
 						const settingsView: any = (rt as Record<string, any>).ttsSettingsView?.();
 						const spokenFormat = conn.platform === "feishu" ? "opus" : "mp3";
+						const voiceCompanion = (rt as Record<string, any>).companionOf?.(voiceBotId);
 						void (async () => {
 							try {
-								const audio = await rt.speak(spoken.replace(/[*_`#>]+/g, ""), spokenFormat);
+								const audio = await rt.speak(
+									spoken.replace(/[*_`#>]+/g, ""),
+									spokenFormat,
+									voiceCompanion?.voiceId,
+								);
 								await sendMedia(
 									conn,
 									chatKey,
@@ -2319,7 +2324,11 @@ export function install(rt: any) {
 			return;
 		}
 		const voiceSettings = (rt as Record<string, any>).ttsSettingsView?.();
-		if (event.type === "assistant/message" && voiceSettings?.enabled !== false && voiceSettings?.autoReply === true) {
+		// A companion always speaks its answer; everyone else only when the page asked.
+		const companion = (rt as Record<string, any>).companionOf?.(botId);
+		const voiceAuto =
+			voiceSettings?.enabled !== false && (voiceSettings?.autoReply === true || companion !== undefined);
+		if (event.type === "assistant/message" && voiceAuto) {
 			for (const item of rt.displayItems(session.id, [event]))
 				if (item.kind === "bot" && item.text.trim() !== "" && item.text.length <= 300)
 					spokenAnswers.set(session.id, item.text);

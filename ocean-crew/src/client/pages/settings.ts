@@ -9,6 +9,7 @@ import {
 	CloseIcon,
 	ConnectorIcon,
 	GlobeIcon,
+	HeartIcon,
 	InfoIcon,
 	MonitorIcon,
 	PlugIcon,
@@ -25,6 +26,7 @@ import { isMainOf } from "../shell/sources.ts";
 import { AboutPage } from "./about.ts";
 import { BotSettingsForm, Switch } from "./bot-settings.ts";
 import { CapabilitiesPage } from "./capability-settings.ts";
+import { CompanionSettingsPage } from "./companion-settings.ts";
 import { ConnectorsPage } from "./connectors-page.ts";
 import { CreateBot } from "./create-bot.ts";
 import { FeedbackIcon, FeedbackPage } from "./feedback.ts";
@@ -54,6 +56,7 @@ const SETTINGS_PAGES: ReadonlyArray<readonly [string, string]> = [
 	["connectors", "Connectors"],
 	["im", "IM"],
 	["voice", "Voice"],
+	["companion", "Companion"],
 	["capabilities", "Capabilities"],
 	["schedules", "Scheduled tasks"],
 	["usage", "Usage"],
@@ -68,6 +71,7 @@ const PAGE_ICONS: Record<string, any> = {
 	im: ChatsIcon,
 	capabilities: PlugIcon,
 	voice: SlidersIcon,
+	companion: HeartIcon,
 	schedules: ClockIcon,
 	secrets: KeyIcon,
 	feedback: FeedbackIcon,

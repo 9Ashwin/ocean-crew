@@ -38,6 +38,8 @@ export interface RosterBot {
 	parts?: string[];
 	hidden?: boolean;
 	private?: boolean;
+	/** Companion mode, when the Bot has it on: the character's name, mood and closeness. */
+	companion?: { name?: string; mood?: string; affection?: number };
 	[key: string]: unknown;
 }
 

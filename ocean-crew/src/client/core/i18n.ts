@@ -6,6 +6,37 @@
 export const NAMESPACE = "ocean-crew";
 
 const ZH: Record<string, string> = {
+	// Companion settings
+	Companion: "伙伴",
+	"Which Bot becomes a character in its own chat": "哪个 Bot 在自己的聊天里成为角色",
+	"Companion mode": "伙伴模式",
+	"The Bot speaks as this character, keeps a mood, and grows closer over time":
+		"Bot 以这个角色的身份说话，会有心情，并随时间变得更亲近",
+	"Character card": "角色卡",
+	"What the character calls itself": "角色怎么称呼自己",
+	"Who they are": "角色是谁",
+	"One or two lines the model keeps in mind": "一两句人设，模型会一直记得",
+	"How they talk": "说话方式",
+	"Sentence length, tone, pet phrases": "句子长短、语气、口头禅",
+	Likes: "喜欢",
+	Dislikes: "不喜欢",
+	"Separate with 、 or ,": "用、或 , 分隔",
+	Greeting: "开场白",
+	"Shown when the character opens a chat": "角色开启聊天时显示",
+	"Leave empty to use the voice from Settings → Voice": "留空则使用 设置 → 语音 里的声音",
+	"Settings → Voice": "设置 → 语音",
+	Relationship: "关系",
+	"Closeness grows a little with every message, and a little more when the user is warm":
+		"每句话都会让亲近度涨一点，用户温柔时涨得更多",
+	"Keeps the character card, starts the relationship over": "保留角色卡，关系从头开始",
+	Warm: "温柔",
+	Playful: "调皮",
+	Calm: "平静",
+	Proud: "得意",
+	Pouting: "闹别扭",
+	Excited: "兴奋",
+	"The companion settings need a newer Ocean Crew build; restart DSH.":
+		"伙伴设置需要更新的 Ocean Crew 构建，请重启 DSH。",
 	// Voice settings
 	Voice: "语音",
 	"Enable spoken answers": "启用语音回复",

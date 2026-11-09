@@ -485,6 +485,7 @@ test("module endpoints are wired dynamically: unavailable without the module, se
 	const probes: Record<string, unknown> = {
 		"bot-new-part": { botId: "chief" },
 		"bot-open-part": { botId: "chief", sessionId: "worker-old" },
+		"companion-set": { botId: "chief" },
 		"view-reply": { sessionId: "sess-1", viewId: "v1" },
 		"btw-delete": { sessionId: "sess-1", cardId: "c1" },
 		"side-new": { sessionId: "chief" },
@@ -516,6 +517,8 @@ test("the speech endpoints answer from their own members", async (t) => {
 	t.after(async () => {
 		await rig.dispose();
 	});
+	(rig.rt as Record<string, any>).companionView = () => ({ bots: [], example: null, moods: [], bands: [] });
+	(rig.rt as Record<string, any>).companionSet = async (botId: string, patch: any) => ({ botId, ...patch });
 	(rig.rt as Record<string, any>).ttsSettingsView = () => ({ model: "breeze-tts-2", hasSecret: true });
 	(rig.rt as Record<string, any>).ttsSettingsSet = async (patch: any) => ({ ...patch, saved: true });
 	(rig.rt as Record<string, any>).ttsVoices = async () => [{ id: "voc_1", name: "Narrator" }];
