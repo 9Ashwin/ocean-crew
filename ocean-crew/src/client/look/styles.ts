@@ -79,6 +79,9 @@ body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-gaze{transform:none}
 .bt-mark[data-mood=pout] .bt-b{translate:0 1%}
 .bt-mark[data-mood=excited] .bt-b{animation:bt-companion-hop 3.4s ease-in-out infinite}
 @keyframes bt-companion-hop{0%,86%,100%{translate:0 0}90%{translate:0 -4%}94%{translate:0 0}}
+.bt-mark[data-mood].bt-speaking .bt-b{animation:bt-companion-talk .4s ease-in-out infinite}
+.bt-mark[data-mood].bt-speaking :is(.mb-eye,.bt-eyes){scale:1 .86}
+@keyframes bt-companion-talk{0%,100%{translate:0 0;scale:1 1}50%{translate:0 1.5%;scale:1.015 .985}}
 .bt-mark[data-state=thinking] .bt-b{animation:bt-ponder 2.2s ease-in-out infinite}
 .bt-mark[data-state=thinking] .bt-eyes{animation:bt-squint 2.2s ease-in-out infinite}
 .bt-mark[data-state=searching] .bt-b{animation:bt-seek 1s ease-in-out infinite}

@@ -262,6 +262,31 @@ export function CompanionSettingsPage({ actions, Section, Row }: any) {
 						),
 					),
 					field(
+						t("Daily check-in"),
+						t("At this time the character speaks first; it costs one model call and shows in Scheduled tasks"),
+						h(
+							"div",
+							{ className: "bt-actions" },
+							h("input", {
+								type: "checkbox",
+								checked: companion.reminder !== undefined,
+								onChange: (event: any) =>
+									void save({ reminder: event.target.checked ? { time: "09:00" } : null }),
+							}),
+							companion.reminder === undefined
+								? null
+								: h("input", {
+										type: "time",
+										className: "bt-input",
+										value: companion.reminder.time,
+										onChange: (event: any) =>
+											event.target.value && void save({ reminder: { time: event.target.value } }),
+									}),
+						),
+						Row,
+						"reminder",
+					),
+					field(
 						t("Reset"),
 						t("Keeps the character card, starts the relationship over"),
 						h(

@@ -122,6 +122,7 @@ export function BotMark({
 		className: poked ? "bt-mark bt-mark-poke" : "bt-mark",
 		"data-shape": image ? "image" : shapeId(look.shape),
 		"data-mood": bot?.companion?.mood,
+		"data-bot": bot?.id,
 		"data-state": STATES.includes(state) ? state : "idle",
 		"data-live": live ? "" : undefined,
 		"data-fidget": live ? FIDGETS[fnv1a(`${bot?.id ?? ""}:fidget`) % FIDGETS.length] : undefined,

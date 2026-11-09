@@ -30,6 +30,7 @@ import {
 	DownloadIcon,
 	GoalIcon,
 	MemoryIcon,
+	MusicIcon,
 	ReplyIcon,
 	SmileIcon,
 } from "../look/icons.ts";
@@ -120,6 +121,7 @@ export function Bubbles({
 // theirs is intercepted or cloned.
 function FoldCodeCopy({ code, actions }: any) {
 	const [copied, setCopied] = useState(false);
+	const [playing, setPlaying] = useState(false);
 	const copy = () => {
 		void Promise.resolve(writeClipboard(code)).then(
 			(ok: any) => {
@@ -223,6 +225,8 @@ function Bubble({
 						name: roster.byId[selfId]?.name ?? t("Bot"),
 						sessionId,
 						react: key ? (emoji: any) => actions.toggleReaction(msgKey, index, emoji) : undefined,
+						botId: selfId,
+						companion: roster.byId[selfId]?.companion,
 						actions,
 						open: toolsOpen,
 					}),
@@ -281,7 +285,7 @@ function useDismiss(open: any, close: any, refs: any) {
 
 // The hover toolbar beside a reply bubble: Add reaction, Reply, More. `open` is
 // the touch fallback: a tap on the bubble toggles it (see Bubble).
-function MessageTools({ text, name, sessionId, react, actions, open: tapped }: any) {
+function MessageTools({ text, name, sessionId, react, actions, botId, companion, open: tapped }: any) {
 	// The anchor element is kept, not its rect: the visible viewport can move
 	// (on-screen keyboard) while the popover is open.
 	const [panel, setPanel] = useState<any>(null);
@@ -317,11 +321,44 @@ function MessageTools({ text, name, sessionId, react, actions, open: tapped }: a
 						: { bottom: viewBottom() - rect.top + 4, "--bt-origin": "bottom left" }),
 				};
 	}, [panel, tick]);
+	const [playing, setPlaying] = useState(false);
 	const copy = () => {
 		void navigator.clipboard?.writeText(text).then(() => {
 			setCopied(true);
 			setTimeout(() => setCopied(false), 1000);
 		});
+	};
+	const play = async () => {
+		if (typeof actions.companionAudio !== "function" || botId === undefined) return;
+		setPlaying(true);
+		const marks = Array.from(document.querySelectorAll(`.bt-mark[data-bot="${String(botId).replace(/"/g, "")}"]`));
+		for (const mark of marks) (mark as HTMLElement).classList.add("bt-speaking");
+		const stop = () => {
+			setPlaying(false);
+			for (const mark of marks) (mark as HTMLElement).classList.remove("bt-speaking");
+		};
+		try {
+			const answer = await actions.companionAudio(botId, text);
+			if (answer?.data === undefined) {
+				stop();
+				return;
+			}
+			const bytes = Uint8Array.from(atob(answer.data), (char) => char.charCodeAt(0));
+			const url = URL.createObjectURL(new Blob([bytes], { type: answer.mime ?? "audio/mpeg" }));
+			const audio = new Audio(url);
+			audio.addEventListener("ended", () => {
+				stop();
+				URL.revokeObjectURL(url);
+			});
+			audio.addEventListener("error", () => {
+				stop();
+				URL.revokeObjectURL(url);
+			});
+			await audio.play();
+		} catch (error: any) {
+			stop();
+			actions.reportError?.(error, "voice");
+		}
 	};
 	const download = () => {
 		const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
@@ -419,6 +456,7 @@ function MessageTools({ text, name, sessionId, react, actions, open: tapped }: a
 						{ ref: pop, className: "bt-menu", role: "menu", "aria-label": t("Message actions"), style: place },
 						item(t("Copy"), CopyIcon, copy),
 						item(t("Download"), DownloadIcon, download),
+						companion ? item(playing ? t("Playing…") : t("Play voice"), MusicIcon, () => void play()) : null,
 					),
 					document.body,
 				)

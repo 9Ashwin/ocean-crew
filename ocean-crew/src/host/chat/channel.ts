@@ -143,6 +143,7 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 
 	"companion-view",
 	"companion-set",
+	"companion-audio",
 
 	"tts-settings",
 	"tts-set",
@@ -1142,6 +1143,12 @@ export function install(rt: Runtime): void {
 		},
 		async "repo-stars"() {
 			return ok(await callMember("repo-stars", "repoStars"));
+		},
+		async "companion-audio"(body) {
+			const botId = String((body as Record<string, unknown>)?.botId ?? "");
+			const text = String((body as Record<string, unknown>)?.text ?? "");
+			if (botId === "" || text === "") throw Object.assign(new Error("Nothing to speak"), { code: "bot/invalid" });
+			return ok(await callMember("companion-audio", "companionAudio", botId, text));
 		},
 		async "companion-view"() {
 			return ok(await callMember("companion-view", "companionView"));

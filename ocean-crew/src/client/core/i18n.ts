@@ -6,6 +6,11 @@
 export const NAMESPACE = "ocean-crew";
 
 const ZH: Record<string, string> = {
+	"Play voice": "播放语音",
+	"Playing…": "播放中…",
+	"Daily check-in": "每日关心",
+	"At this time the character speaks first; it costs one model call and shows in Scheduled tasks":
+		"到这个时间角色会主动说一句；会消耗一次模型调用，可在 定时任务 里看到",
 	// Companion settings
 	Companion: "伙伴",
 	"Which Bot becomes a character in its own chat": "哪个 Bot 在自己的聊天里成为角色",

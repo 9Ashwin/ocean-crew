@@ -27,7 +27,13 @@ export interface Companion {
 	lastAt?: number;
 	/** The last thing the user said, short: continuity for the character's next line. */
 	lastLine?: string;
+	/** A daily moment the character speaks first, when the user asked for one. */
+	reminder?: { time: string };
+	/** The DSH schedule that carries the reminder; absent when automation is off. */
+	reminderId?: string;
 }
+
+export const REMINDER_TIME = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 
 /** The character a newly enabled Bot starts as: a calm, curious fish with opinions. */
 export const COMPANION_EXAMPLE: Companion = {
@@ -141,5 +147,11 @@ export const cleanCompanion = (input: unknown): Companion => {
 		...(typeof raw.lastLine === "string" && raw.lastLine !== ""
 			? { lastLine: cleanLine(raw.lastLine, COMPANION_LIMITS.line) }
 			: {}),
+		...(raw.reminder !== null &&
+		typeof raw.reminder === "object" &&
+		REMINDER_TIME.test(String((raw.reminder as Record<string, unknown>).time ?? ""))
+			? { reminder: { time: String((raw.reminder as Record<string, unknown>).time) } }
+			: {}),
+		...(typeof raw.reminderId === "string" && raw.reminderId !== "" ? { reminderId: raw.reminderId } : {}),
 	};
 };

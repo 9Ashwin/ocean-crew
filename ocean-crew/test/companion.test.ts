@@ -20,11 +20,13 @@ function start(t: any, options: { now?: number; events?: any[] } = {}) {
 		b: { id: "b", name: "Dev" } as any,
 	};
 	const saves = { count: 0 };
+	const created: Array<[string, any]> = [];
 	const rt = {
 		ctx,
 		config: {},
 		state,
 		chatOwners: new Map([["sess-a", "a"]]),
+		chatOf: (id: string) => `sess-${id}`,
 		botOf: (id?: string) => state.bots[id ?? ""],
 		roomOf: () => undefined,
 		selfOf: (id?: string) => (id === "sess-a" || id === "a" ? "a" : id),
@@ -35,6 +37,16 @@ function start(t: any, options: { now?: number; events?: any[] } = {}) {
 			saves.count += 1;
 		},
 		warn: () => {},
+		scheduleEndpoint: async (endpoint: string, body: any) => {
+			created.push([endpoint, body]);
+			if (endpoint === "schedules") return { available: true, tasks: [] };
+			if (endpoint === "schedule-create")
+				return {
+					available: true,
+					tasks: [{ id: `task-${created.length}`, title: body.title, botId: "a", sessionId: "sess-a" }],
+				};
+			return { available: true, tasks: [] };
+		},
 		async *eventsBackwards() {
 			yield* [...(options.events ?? [])].reverse();
 		},
@@ -47,7 +59,7 @@ function start(t: any, options: { now?: number; events?: any[] } = {}) {
 	const advance = (ms: number) => {
 		now += ms;
 	};
-	return { rt, ctx, state, saves, step, advance, now: () => now };
+	return { rt, ctx, state, saves, created, step, advance, now: () => now };
 }
 
 test("a Bot starts as the example character, and the page can change the card", async (t) => {
@@ -154,4 +166,59 @@ test("a companion's identity prompt carries the character card", async (t) => {
 	// A Bot without companion mode renders the plain identity prompt.
 	const plain = identity.text({ agent: { id: "sess-b" } });
 	assert.doesNotMatch(plain, /# Your character/);
+});
+
+test("the window's play button gets mp3 audio in the character's voice", async (t) => {
+	const { rt } = start(t);
+	await rt.companionSet("a", { enabled: true, voiceId: "voc_fish" });
+	const calls: Array<{ text: string; format?: string; voice?: string }> = [];
+	rt.speak = async (text: string, format?: string, voice?: string) => {
+		calls.push({ text, format, voice });
+		return { bytes: Buffer.from("mp3"), name: "voice.mp3" };
+	};
+	const answer = await rt.companionAudio("a", "  你好呀  ");
+	assert.deepEqual(calls, [{ text: "你好呀", format: "mp3", voice: "voc_fish" }]);
+	assert.equal(answer.name, "voice.mp3");
+	assert.equal(answer.mime, "audio/mpeg");
+	assert.equal(Buffer.from(answer.data, "base64").toString(), "mp3");
+	await assert.rejects(rt.companionAudio("a", "   "), (error: any) => error.code === "bot/invalid");
+});
+
+test("a daily check-in becomes a DSH schedule, and leaving turns it off", async (t) => {
+	const { rt, created } = start(t);
+	await rt.companionSet("a", { enabled: true });
+	created.length = 0;
+	await rt.companionSet("a", { reminder: { time: "09:00" } });
+	const create = created.find(([endpoint]) => endpoint === "schedule-create");
+	assert.ok(create, "the reminder is a scheduled task");
+	assert.equal(create[1].target, "a");
+	assert.equal(create[1].when.kind, "daily");
+	assert.equal(create[1].when.time, "09:00");
+	assert.match(create[1].prompt, /主动关心/);
+	assert.equal(rt.companionOf("a").reminder.time, "09:00");
+	assert.equal(rt.companionOf("a").reminderId, "task-1");
+	// A new time replaces the old task instead of adding a second one.
+	created.length = 0;
+	await rt.companionSet("a", { reminder: { time: "21:30" } });
+	assert.equal(created[1][0], "schedule-create");
+	assert.equal(created[1][1].when.time, "21:30");
+	// Disabling the companion removes the task.
+	created.length = 0;
+	await rt.companionSet("a", { enabled: false });
+	assert.equal(rt.companionOf("a"), undefined);
+});
+
+test("a schedule that cannot be created fails the change instead of pretending", async (t) => {
+	const { rt } = start(t);
+	await rt.companionSet("a", { enabled: true });
+	rt.scheduleEndpoint = async (endpoint: string) => {
+		if (endpoint === "schedule-create")
+			throw Object.assign(new Error("Automation tasks are off in DSH"), { code: "bot/invalid" });
+		return { available: true, tasks: [] };
+	};
+	await assert.rejects(rt.companionSet("a", { reminder: { time: "09:00" } }), (error: any) => {
+		assert.equal(error.code, "bot/refused");
+		assert.match(error.message, /daily reminder was not created/);
+		return true;
+	});
 });

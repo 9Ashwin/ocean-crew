@@ -13,6 +13,7 @@ import {
 	cleanCharacter,
 	cleanCompanion,
 	moodOf,
+	REMINDER_TIME,
 } from "../../shared/companion.ts";
 import type { BotId, TeamState } from "../../shared/state.ts";
 import { listenGlobal } from "../core/events.ts";
@@ -121,6 +122,26 @@ export function install(rt: Runtime): void {
 			}),
 		);
 
+	const reminderTitle = (companion: Companion): string => `Companion · ${companion.character.name}`;
+	const reminderPrompt = (companion: Companion): string =>
+		`这是每天的主动关心时间。用 ${companion.character.name} 的身份，结合你们最近的聊天，主动跟用户说一句关心或问候；一两句就够，别解释这是定时任务，别调用工具。`;
+	const schedule = () =>
+		(rt as Record<string, any>).scheduleEndpoint as ((endpoint: string, body: unknown) => Promise<any>) | undefined;
+	const dropReminder = async (botId: string, companion: Companion): Promise<Companion> => {
+		if (companion.reminderId === undefined) return companion;
+		const run = schedule();
+		if (run !== undefined) {
+			try {
+				await run("schedule-delete", { sessionId: rt.chatOf(botId), id: companion.reminderId });
+			} catch (error: any) {
+				rt.warn("ocean-crew: companion reminder not removed: %s", error?.message ?? error);
+			}
+		}
+		const next = { ...companion };
+		delete next.reminderId;
+		return next;
+	};
+
 	const view = () => ({
 		bots: Object.values(state.bots).map((bot) => ({
 			id: bot.id,
@@ -144,13 +165,23 @@ export function install(rt: Runtime): void {
 		if (bot === undefined) throw Object.assign(new Error("No such Bot"), { code: "bot/not-found" });
 		const raw = patch !== null && typeof patch === "object" ? (patch as Record<string, unknown>) : {};
 		const current = table()[botId] ?? COMPANION_EXAMPLE;
-		const next: Companion = cleanCompanion(current);
+		let next: Companion = cleanCompanion(current);
 		if (typeof raw.enabled === "boolean") next.enabled = raw.enabled;
 		if (raw.character !== undefined) next.character = cleanCharacter(raw.character, next.character);
 		if (typeof raw.voiceId === "string") {
 			const voiceId = raw.voiceId.trim().slice(0, COMPANION_LIMITS.voiceId);
 			if (voiceId === "") delete next.voiceId;
 			else next.voiceId = voiceId;
+		}
+		if (raw.reminder !== undefined) {
+			const when = raw.reminder;
+			if (when === null) delete next.reminder;
+			else if (
+				typeof when === "object" &&
+				REMINDER_TIME.test(String((when as Record<string, unknown>).time ?? ""))
+			) {
+				next.reminder = { time: String((when as Record<string, unknown>).time) };
+			}
 		}
 		if (raw.reset === true) {
 			next.mood = "calm";
@@ -159,6 +190,40 @@ export function install(rt: Runtime): void {
 			delete next.lastAt;
 			delete next.lastLine;
 		}
+		// A wanted reminder is created when it is missing or its time changed; an unwanted
+		// one is deleted. The schedule keeps its own view; only the id is remembered here.
+		const run = schedule();
+		const wanted = next.reminder;
+		if (next.enabled && wanted !== undefined && run !== undefined) {
+			const previous = cleanCompanion(current);
+			const sameTime = previous.reminder?.time === wanted.time;
+			if (next.reminderId === undefined || !sameTime) {
+				if (next.reminderId !== undefined) next = await dropReminder(botId, next);
+				try {
+					const answer: any = await run("schedule-create", {
+						target: botId,
+						title: reminderTitle(next),
+						prompt: reminderPrompt(next),
+						when: {
+							kind: "daily",
+							time: wanted.time,
+							timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+						},
+					});
+					const tasks: any[] = Array.isArray(answer?.tasks) ? answer.tasks : [];
+					const made = tasks.find(
+						(task) => task.title === reminderTitle(next) && task.botId === botId && task.id !== undefined,
+					);
+					if (made !== undefined) next.reminderId = String(made.id);
+				} catch (error: any) {
+					rt.warn("ocean-crew: companion reminder not created: %s", error?.message ?? error);
+					throw Object.assign(new Error(`The daily reminder was not created: ${error?.message ?? error}`), {
+						code: "bot/refused",
+					});
+				}
+			}
+		}
+		if (next.enabled === false || next.reminder === undefined) next = await dropReminder(botId, next);
 		table()[botId] = next;
 		await persist();
 		return view();
@@ -238,7 +303,27 @@ export function install(rt: Runtime): void {
 		void touch(session?.id, text);
 	});
 
+	// A short spoken line for the window's play button; the chat stays where the voice lives.
+	const audio = async (botId: string, text: string): Promise<{ name: string; mime: string; data: string }> => {
+		const said = String(text ?? "")
+			.trim()
+			.slice(0, 300);
+		if (said === "") throw Object.assign(new Error("Nothing to speak"), { code: "bot/invalid" });
+		if (typeof rt.speak !== "function")
+			throw Object.assign(new Error("The speech module is not installed in this build."), {
+				code: "bot/unavailable",
+			});
+		const companion = of(botId);
+		const spoken = await rt.speak(said, "mp3", companion?.voiceId);
+		return {
+			name: spoken.name,
+			mime: "audio/mpeg",
+			data: Buffer.from(spoken.bytes).toString("base64"),
+		};
+	};
+
 	Object.assign(rt, {
+		companionAudio: audio,
 		companionOf: of,
 		companionMap,
 		companionView: view,
