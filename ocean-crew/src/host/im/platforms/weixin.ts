@@ -11,7 +11,7 @@
 // a send whose outcome is unknown is never retried blindly.
 // from dsh-im (MIT, see NOTICE).
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { imageMediaTypeOf } from "./media-type.ts";
+import { imageMediaTypeOf, mp3Timing } from "./media-type.ts";
 
 const QR_BASE = "https://ilinkai.weixin.qq.com/";
 const BOT_TYPE = "3";
@@ -692,7 +692,27 @@ const weixin = {
 						item_list: image
 							? [{ type: 2, image_item: { media: mediaInfo, mid_size: padded } }]
 							: voiceCodec !== undefined
-								? [{ type: 3, voice_item: { media: mediaInfo, encode_type: voiceCodec } }]
+								? [
+										{
+											type: 3,
+											voice_item: {
+												media: mediaInfo,
+												encode_type: voiceCodec,
+												// The bubble needs a length; only an MP3 can be measured
+												// here, and an unmeasured one is left to the platform.
+												...(() => {
+													const timing = ext === "mp3" ? mp3Timing(bytes) : undefined;
+													return timing === undefined
+														? {}
+														: {
+																sample_rate: timing.sampleRate,
+																bits_per_sample: 16,
+																playtime: timing.durationMs,
+															};
+												})(),
+											},
+										},
+									]
 								: [
 										{
 											type: 4,

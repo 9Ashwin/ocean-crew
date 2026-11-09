@@ -1297,6 +1297,9 @@ test("an mp3 is sent as a voice item, and an unnamed audio container as a file",
 			return (seen.fetch as any)(url, init);
 		},
 	};
+	// Two MPEG-1 Layer III frames at 128 kbps / 44.1 kHz: 417 bytes each.
+	const frame = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x00]), Buffer.alloc(413)]);
+	const mp3 = Buffer.concat([frame, frame]);
 	const handle = weixin.connect(FIELDS, wrapped, noopHandlers([], []));
 	t.after(() => {
 		handle.stop();
@@ -1304,7 +1307,7 @@ test("an mp3 is sent as a voice item, and an unnamed audio container as a file",
 	});
 	await handle.send(
 		{ key: "u1", kind: "direct" },
-		{ text: "", media: [{ kind: "file", name: "note.mp3", data: Buffer.from("voice bytes") }] },
+		{ text: "", media: [{ kind: "file", name: "note.mp3", data: mp3 }] },
 	);
 	await handle.send(
 		{ key: "u1", kind: "direct" },
@@ -1315,7 +1318,11 @@ test("an mp3 is sent as a voice item, and an unnamed audio container as a file",
 	assert.equal(uploads[1].params.media_type, 3, "an unnamed container is uploaded as a file");
 	const sends = fake.calls.filter((call: any) => call.path === "/ilink/bot/sendmessage");
 	assert.equal(sends[0].params.msg.item_list[0].type, 3);
-	assert.equal(sends[0].params.msg.item_list[0].voice_item.encode_type, 7);
+	const voice = sends[0].params.msg.item_list[0].voice_item;
+	assert.equal(voice.encode_type, 7);
+	// The bubble is drawn from the duration; two frames of 1152 samples at 44.1 kHz.
+	assert.equal(voice.sample_rate, 44100);
+	assert.equal(voice.playtime, 52);
 	assert.equal(sends[1].params.msg.item_list[0].type, 4);
 	assert.equal(sends[1].params.msg.item_list[0].file_item.file_name, "clip.wav");
 });
