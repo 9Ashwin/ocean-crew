@@ -1622,3 +1622,46 @@ test("cancelling a form view answers it as cancelled", async (t) => {
 	});
 	assert.deepEqual(asked, [{ action: "details", values: { canceled: true } }]);
 });
+
+// A reminder the user scheduled runs in the Bot's Session with no IM request of its own;
+// its answer is pushed to the chat that last talked to the Bot, titled with its name.
+test("a scheduled prompt's answer is pushed to the last IM chat", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	// One IM message is enough to record the chat this Bot's reminders should reach.
+	await dm(s, "u1", "hello");
+	await s.flush();
+	s.fake.sent.length = 0;
+	s.emitEvent("a", "turn/start", { turn: 1 });
+	s.emitEvent("a", "user/message", { source: { kind: "schedule" }, content: [{ type: "text", text: "reminder" }] });
+	s.emitEvent("a", "assistant/message", {
+		turn: 1,
+		message: { content: [{ type: "text", text: "the reminder answer" }] },
+	});
+	s.emitEvent("a", "turn/end", { turn: 1, reason: { kind: "completed" } });
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => entry.text === "the reminder answer")),
+		"the reminder answer reaches the chat",
+	);
+	const sent = s.fake.sent.find((entry: any) => entry.text === "the reminder answer");
+	assert.equal(sent.card, true, "it arrives as a card, like a normal answer");
+	assert.equal(sent.title, "Chief");
+});
+
+test("imNotify: false keeps a scheduled answer out of IM", async (t) => {
+	const s = await start(t, { config: { imNotify: false } });
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hello");
+	await s.flush();
+	s.fake.sent.length = 0;
+	s.emitEvent("a", "turn/start", { turn: 1 });
+	s.emitEvent("a", "user/message", { source: { kind: "schedule" }, content: [{ type: "text", text: "reminder" }] });
+	s.emitEvent("a", "assistant/message", { turn: 1, message: { content: [{ type: "text", text: "quiet" }] } });
+	s.emitEvent("a", "turn/end", { turn: 1, reason: { kind: "completed" } });
+	await s.flush();
+	assert.equal(s.fake.sent.length, 0, "nothing is pushed");
+});

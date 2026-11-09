@@ -649,6 +649,13 @@ const weixin = {
 					const aesKey = randomBytes(16);
 					const padded = Math.ceil((bytes.length + 1) / 16) * 16;
 					const image = item.kind === "image";
+					const ext =
+						String(item.name ?? "")
+							.split(".")
+							.pop()
+							?.toLowerCase() ?? "";
+					const voiceCodec = item.kind === "image" ? undefined : VOICE_CODECS[ext];
+					const uploadType = image ? 1 : voiceCodec === undefined ? 3 : 4;
 					const answer = await request(
 						env,
 						base(env, fields),
@@ -656,7 +663,7 @@ const weixin = {
 						"getuploadurl",
 						{
 							filekey: fileKey,
-							media_type: image ? 1 : 3,
+							media_type: uploadType,
 							to_user_id: chatKey,
 							rawsize: bytes.length,
 							rawfilemd5: createHash("md5").update(bytes).digest("hex"),
@@ -684,16 +691,18 @@ const weixin = {
 						message_state: 2,
 						item_list: image
 							? [{ type: 2, image_item: { media: mediaInfo, mid_size: padded } }]
-							: [
-									{
-										type: 4,
-										file_item: {
-											media: mediaInfo,
-											file_name: String(item.name ?? "file"),
-											len: String(bytes.length),
+							: voiceCodec !== undefined
+								? [{ type: 3, voice_item: { media: mediaInfo, encode_type: voiceCodec } }]
+								: [
+										{
+											type: 4,
+											file_item: {
+												media: mediaInfo,
+												file_name: String(item.name ?? "file"),
+												len: String(bytes.length),
+											},
 										},
-									},
-								],
+									],
 						...(contextToken ? { context_token: contextToken } : {}),
 					};
 					try {
@@ -710,7 +719,10 @@ const weixin = {
 							},
 						);
 						const code = rejection(sent);
-						if (code !== undefined) throw refusal(`WeChat refused the file (${sent.errmsg ?? code})`);
+						if (code !== undefined)
+							throw refusal(
+								`WeChat refused the ${voiceCodec === undefined ? (image ? "image" : "file") : "voice"} (${sent.errmsg ?? code})`,
+							);
 					} catch (error: any) {
 						if (error?.network === true)
 							throw uncertain(`WeChat did not answer the file send (${error.message})`, error);
@@ -750,6 +762,10 @@ const weixin = {
 		};
 	},
 };
+
+// The voice codecs iLink names in a voice item; an audio file with one of these
+// extensions is sent as a voice message instead of a generic file.
+const VOICE_CODECS: Record<string, number> = { mp3: 7, amr: 5, silk: 6, ogg: 8, opus: 8 };
 
 // Visible length: a limit counts what the reader sees, so an emoji costs one, not two.
 const width = (text: string): number => [...text].length;

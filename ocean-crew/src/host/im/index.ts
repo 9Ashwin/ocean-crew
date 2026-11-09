@@ -530,6 +530,10 @@ export function install(rt: any) {
 	// The last text a window turn produced, held until the turn ends so one answer goes
 	// out instead of every step. Only used when `imDeliverAnswers` is on.
 	const windowAnswers = new Map<string, string>();
+	// A turn a scheduled reminder started: its answer is pushed to the chat that last
+	// talked to this Bot, so a reminder the user set up reaches them in IM.
+	const scheduledTurns = new Set<string>();
+	const notifyAnswers = new Map<string, string>();
 
 	const targetsOf = (conn: any) => {
 		const out: any[] = [];
@@ -659,9 +663,14 @@ export function install(rt: any) {
 			);
 		});
 	};
-	const dropSend = (conn: any, how: any, error: any) => {
+	const dropSend = (conn: any, how: any, error: any, notify = false) => {
 		const message = rt.redactSecrets(String(error?.message ?? error)).slice(0, 300);
 		const reference = referenceId();
+		if (notify)
+			rt.warn(
+				"ocean-crew: an IM notification for %s was not delivered; the platform may require the chat to message the Bot first",
+				conn.id,
+			);
 		if (how === "permanent") {
 			// The connection may be fine; mark the message failure so the supervisor
 			// does not restart the link, and clear it on the next successful send.
@@ -773,7 +782,7 @@ export function install(rt: any) {
 						state: how === "permanent" ? "failed" : "unknown",
 						error: rt.redactSecrets(String(error?.message ?? error)).slice(0, 300),
 					}).catch(() => {});
-				dropSend(conn, how, error);
+				dropSend(conn, how, error, job.notify === true);
 			} finally {
 				queue.sending = undefined;
 			}
@@ -802,7 +811,7 @@ export function install(rt: any) {
 		buttons?: any,
 		after?: any,
 		replyTo?: string,
-		look?: { card?: boolean; title?: string; form?: any },
+		look?: { card?: boolean; title?: string; form?: any; notify?: boolean },
 	) =>
 		await enqueue(conn, chatKey, {
 			chat,
@@ -813,6 +822,7 @@ export function install(rt: any) {
 			...(look?.card === true ? { card: true } : {}),
 			...(look?.title === undefined ? {} : { title: look.title }),
 			...(look?.form === undefined ? {} : { form: look.form }),
+			...(look?.notify === true ? { notify: true } : {}),
 		});
 
 	// Status reactions mark the message that asked for the work while its turn runs
@@ -2151,6 +2161,36 @@ export function install(rt: any) {
 				for (const held of pendingReactions.values()) if (held.requestId === rpcId) held.started = true;
 		}
 		if (event.type === "turn/end") {
+			scheduledTurns.delete(session.id);
+			const notify = notifyAnswers.get(session.id);
+			notifyAnswers.delete(session.id);
+			if (notify !== undefined && notify.trim() !== "") {
+				const owner = rt.chatOwners.get(session.id);
+				const bot = rt.botOf(owner);
+				if (owner !== undefined && bot !== undefined) {
+					const targets = replyTargets(ownerOrigins.get(owner), `bot:${owner}`);
+					if (targets.length === 0) {
+						rt.warn(
+							"ocean-crew: im reminder answer for %s has no chat to go to; a chat must talk to the Bot first",
+							session.id,
+						);
+					}
+					for (const { conn, chatKey, chat } of targets)
+						sendTo(
+							conn,
+							chatKey,
+							{ key: chatKey, kind: chat.kind, title: chat.title },
+							notify,
+							undefined,
+							undefined,
+							undefined,
+							{
+								card: true,
+								title: bot.name,
+							},
+						);
+				}
+			}
 			const held = windowAnswers.get(session.id);
 			if (held !== undefined) {
 				windowAnswers.delete(session.id);
@@ -2204,6 +2244,7 @@ export function install(rt: any) {
 			const owner = rt.chatOwners.get(session.id);
 			if (owner !== undefined) stopTypingNow(owner);
 		}
+		if (event.type === "user/message" && event.data?.source?.kind === "schedule") scheduledTurns.add(session.id);
 		if (event.type === "user/message" && event.data?.source?.kind === "user") {
 			const turn = turnOf(session.id, event);
 			const wanted = typeof rpcId === "string" && rpcId.startsWith("im:") ? rpcId : "";
@@ -2227,13 +2268,17 @@ export function install(rt: any) {
 					session.id,
 					requestId === undefined ? "no turn binding" : "origin no longer resolves",
 				);
-			// A turn that started in the window answers the window. It reaches IM only when
-			// the user asked for that (`imDeliverAnswers`), and then as one final answer
-			// rather than every step, so a chat is not filled with a turn's working notes.
-			if (rt.config?.imDeliverAnswers !== true) return;
-			for (const item of rt.displayItems(session.id, [event])) {
-				if (item.kind !== "bot" || item.text.trim() === "") continue;
-				windowAnswers.set(session.id, item.text);
+			// A turn that started in the window answers the window. A scheduled reminder's
+			// answer is pushed to the chat that last talked to the Bot; an ordinary window
+			// turn reaches IM only when the user asked for that (`imDeliverAnswers`), and
+			// then as one final answer rather than every step.
+			if (event.type === "assistant/message") {
+				const scheduled = scheduledTurns.has(session.id);
+				for (const item of rt.displayItems(session.id, [event])) {
+					if (item.kind !== "bot" || item.text.trim() === "") continue;
+					if (scheduled && rt.config?.imNotify !== false) notifyAnswers.set(session.id, item.text);
+					if (rt.config?.imDeliverAnswers === true) windowAnswers.set(session.id, item.text);
+				}
 			}
 			return;
 		}

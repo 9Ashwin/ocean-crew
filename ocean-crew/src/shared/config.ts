@@ -9,6 +9,8 @@ export interface PluginConfig {
 	imReconcileMs?: number;
 	imSendTimeoutMs?: number;
 	imReactions?: boolean;
+	/** Push an answer a scheduled prompt asked for to the Bot's latest IM chat. */
+	imNotify?: boolean;
 	im?: Record<string, unknown>;
 	checkRatio?: number;
 	memory?: boolean;

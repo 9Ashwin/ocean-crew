@@ -1276,3 +1276,46 @@ test("an image is announced with the media type its bytes have", async (t) => {
 	await until(() => messages.length === 1);
 	assert.equal(messages[0].images[0].mediaType, "image/png");
 });
+
+// An audio file the Bot has is sent as a voice message (item type 3) and uploaded with
+// the voice media type; a container the protocol does not name stays a file.
+test("an mp3 is sent as a voice item, and an unnamed audio container as a file", async (t) => {
+	const fake = await fakeIlink();
+	const runtime: any = {};
+	fake.replies["/ilink/bot/getuploadurl"] = { ret: 0, upload_param: "up-voice" };
+	const seen = env(fake, runtime);
+	const wrapped = {
+		...seen,
+		fetch: async (url: any, init: any) => {
+			if (String(url).startsWith("https://novac2c.cdn.weixin.qq.com/c2c/upload")) {
+				return {
+					ok: true,
+					status: 200,
+					headers: { get: (name: string) => (name === "x-encrypted-param" ? "download-param-v" : null) },
+				};
+			}
+			return (seen.fetch as any)(url, init);
+		},
+	};
+	const handle = weixin.connect(FIELDS, wrapped, noopHandlers([], []));
+	t.after(() => {
+		handle.stop();
+		return fake.close();
+	});
+	await handle.send(
+		{ key: "u1", kind: "direct" },
+		{ text: "", media: [{ kind: "file", name: "note.mp3", data: Buffer.from("voice bytes") }] },
+	);
+	await handle.send(
+		{ key: "u1", kind: "direct" },
+		{ text: "", media: [{ kind: "file", name: "clip.wav", data: Buffer.from("wave bytes") }] },
+	);
+	const uploads = fake.calls.filter((call: any) => call.path === "/ilink/bot/getuploadurl");
+	assert.equal(uploads[0].params.media_type, 4, "voice upload type");
+	assert.equal(uploads[1].params.media_type, 3, "an unnamed container is uploaded as a file");
+	const sends = fake.calls.filter((call: any) => call.path === "/ilink/bot/sendmessage");
+	assert.equal(sends[0].params.msg.item_list[0].type, 3);
+	assert.equal(sends[0].params.msg.item_list[0].voice_item.encode_type, 7);
+	assert.equal(sends[1].params.msg.item_list[0].type, 4);
+	assert.equal(sends[1].params.msg.item_list[0].file_item.file_name, "clip.wav");
+});
