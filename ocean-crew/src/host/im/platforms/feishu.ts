@@ -770,8 +770,18 @@ const feishu = {
 		return {
 			// An answer threads under the message that asked for it, which is what makes a
 			// private chat read as a conversation rather than a wall of separate bubbles.
-			send: async (chat: any, { text, buttons, replyTo }: any = {}) => {
+			send: async (chat: any, { text, buttons, replyTo, media }: any = {}) => {
 				const chunks = chunkMarkdown(String(text ?? ""), TEXT_LIMIT);
+				const createBody = (type: string, body: string) => ({
+					params: { receive_id_type: "chat_id" },
+					data: {
+						receive_id: String(chat?.key ?? ""),
+						msg_type: type,
+						content: body,
+						// A retried send must not arrive twice.
+						uuid: randomUUID(),
+					},
+				});
 				let messageId: string | undefined;
 				let replyToId = typeof replyTo === "string" && replyTo !== "" ? replyTo : undefined;
 				for (const [index, chunk] of chunks.entries()) {
@@ -780,16 +790,6 @@ const feishu = {
 					const content = interactive ? card(chunk, buttons) : post(chunk);
 					const plain = msgType === "interactive" ? msgType : "text";
 					const plainContent = msgType === "interactive" ? content : JSON.stringify({ text: toPlain(chunk) });
-					const createBody = (type: string, body: string) => ({
-						params: { receive_id_type: "chat_id" },
-						data: {
-							receive_id: String(chat?.key ?? ""),
-							msg_type: type,
-							content: body,
-							// A retried send must not arrive twice.
-							uuid: randomUUID(),
-						},
-					});
 					const create = () =>
 						call("Feishu send", () => client.im.message.create(createBody(msgType, content)), scrub).catch(
 							async (failure: any) => {
@@ -829,6 +829,36 @@ const feishu = {
 					messageId = String(body?.data?.message_id ?? messageId ?? "");
 					// Only the first bubble threads under the question.
 					replyToId = undefined;
+				}
+				// An attachment is uploaded first and sent as its own message after the
+				// answer, so the text still reads as the reply and the file follows it.
+				for (const item of Array.isArray(media) ? media : []) {
+					const bytes = Buffer.from(item.data);
+					const name = String(item.name ?? "file");
+					let key = "";
+					let kind: "image" | "file" = "file";
+					if (item.kind === "image") {
+						const uploaded = await call(
+							"Feishu image upload",
+							() => client.im.image.create({ data: { image_type: "message", image: bytes } }),
+							scrub,
+						);
+						key = String(uploaded?.data?.image_key ?? "");
+						kind = "image";
+					} else {
+						const uploaded = await call(
+							"Feishu file upload",
+							() => client.im.file.create({ data: { file_type: "stream", file_name: name, file: bytes } }),
+							scrub,
+						);
+						key = String(uploaded?.data?.file_key ?? "");
+					}
+					if (key === "")
+						throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
+					const content =
+						kind === "image" ? JSON.stringify({ image_key: key }) : JSON.stringify({ file_key: key });
+					const sent = await call("Feishu send", () => client.im.message.create(createBody(kind, content)), scrub);
+					messageId = String(sent?.data?.message_id ?? messageId ?? "");
 				}
 				return { messageId };
 			},

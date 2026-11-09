@@ -20,10 +20,29 @@ const OUTBOX_LIMIT = 50;
 const RETRY_MS = 5_000;
 const SEND_TIMEOUT_MS = 60_000;
 const QUEUE_LIMIT = 100;
+// The largest file an answer may carry out. The bytes are copied under the plugin home
+// before the record is written, so a crash cannot leave a message naming a file that is
+// gone; the copy is dropped once the send has an outcome.
+const MEDIA_LIMIT = 25 * 1024 * 1024;
 const TYPING_MS = 4_000;
 // A reaction left on a message no longer ends on its own; drop it after this long.
 const REACTION_MAX_MS = 15 * 60_000;
 const NUMBERS = /^\s*\d+(\s+\d+)*\s*$/;
+// What a file handed to a chat may look like: an image when its extension says so, a
+// file otherwise, and a media type for the platforms that want one.
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const MIME_EXT: Record<string, string> = {
+	png: "image/png",
+	jpg: "image/jpeg",
+	jpeg: "image/jpeg",
+	gif: "image/gif",
+	webp: "image/webp",
+	pdf: "application/pdf",
+	txt: "text/plain",
+	md: "text/markdown",
+	json: "application/json",
+	zip: "application/zip",
+};
 
 // The registry is read as a map the tests (and a future adapter) can extend by platform id.
 const adapters: Record<string, any> = adapterRegistry as any;
@@ -36,6 +55,7 @@ export function install(rt: any) {
 	// works through its own record type. One cast states that gap.
 	const state: any = rt.state as any;
 	const imDir = join(rt.home, "im");
+	const mediaDir = join(imDir, "media");
 	// The health check and the per-message timeout; the plugin config may shorten
 	// them, which the unit tests use to see the supervisor work without fake timers.
 	const reconcileMs = Number(rt.config?.imReconcileMs) > 0 ? Number(rt.config.imReconcileMs) : RECONCILE_MS;
@@ -165,6 +185,22 @@ export function install(rt: any) {
 			if (outboxWrites.get(id) === next) outboxWrites.delete(id);
 		}
 	};
+	// One outgoing attachment on disk: the record in the outbox names this file, so a
+	// restart after the crash can still send exactly what the Bot handed over.
+	const mediaPath = (name: string): string => {
+		const safe = name.replace(/[^A-Za-z0-9._ -]/g, "_").slice(-80) || "file";
+		return join(mediaDir, `${randomUUID()}-${safe}`);
+	};
+	const saveMedia = async (kind: "image" | "file", name: string, data: Uint8Array): Promise<any> => {
+		if (data.byteLength > MEDIA_LIMIT) throw new Error(`the file is larger than ${MEDIA_LIMIT} bytes`);
+		await mkdir(mediaDir, { recursive: true });
+		const path = mediaPath(name);
+		await writeFile(path, data, { mode: 0o600 });
+		return { kind, name, path };
+	};
+	const dropMedia = (held: any): Promise<void> =>
+		held?.path === undefined ? Promise.resolve() : rm(held.path, { force: true }).catch(() => {});
+
 	// Records for one chat, in send order; a chat with none is absent.
 	const outboxRecords = async (id: any, chatKey: any): Promise<any[]> => {
 		const held = await outboxOf(id);
@@ -500,6 +536,7 @@ export function install(rt: any) {
 			attempts: 0,
 			body: job.text,
 			...(job.buttons === undefined ? {} : { buttons: job.buttons }),
+			...(job.media === undefined ? {} : { media: job.media }),
 		};
 		job.outboxId = record.id;
 		let queue = runner.queues.get(chatKey);
@@ -610,7 +647,28 @@ export function install(rt: any) {
 				}
 			}
 			try {
-				const sent = await withSendTimeout(runner.handle.send(job.chat, job));
+				let media: any[] | undefined;
+				if (Array.isArray(job.media) && job.media.length > 0) {
+					media = [];
+					for (const held of job.media) {
+						try {
+							media.push({
+								kind: held.kind,
+								name: held.name,
+								...(held.mime === undefined ? {} : { mime: held.mime }),
+								data: await readFile(held.path),
+							});
+						} catch (error: any) {
+							// The copy is missing (another host cleaned it): the file is lost, and
+							// the text still goes rather than the whole job failing.
+							rt.warn("ocean-crew: im media for %s is gone: %s", conn.id, error?.message ?? error);
+						}
+					}
+				}
+				const sent = await withSendTimeout(
+					runner.handle.send(job.chat, media === undefined ? job : { ...job, media }),
+				);
+				for (const held of job.media ?? []) await dropMedia(held);
 				job.after?.(sent);
 				queue.jobs.shift();
 				if (job.outboxId !== undefined) {
@@ -635,6 +693,7 @@ export function install(rt: any) {
 					return;
 				}
 				queue.jobs.shift();
+				for (const held of job.media ?? []) await dropMedia(held);
 				// Nothing is resent automatically here: a permanent refusal and an unknown
 				// outcome both leave a record the user can see instead.
 				if (job.outboxId !== undefined)
@@ -647,6 +706,19 @@ export function install(rt: any) {
 				queue.sending = undefined;
 			}
 		}
+	};
+	const sendMedia = async (conn: any, chatKey: any, chat: any, items: any[], note?: string): Promise<boolean> => {
+		const saved: any[] = [];
+		for (const item of items)
+			saved.push({
+				...(await saveMedia(item.kind, item.name, item.data)),
+				...(item.mime === undefined ? {} : { mime: item.mime }),
+			});
+		// The record is written before the queue is touched, like a text: a body that
+		// cannot be queued is refused instead of silently lost.
+		const accepted = await enqueue(conn, chatKey, { chat, text: note ?? "", media: saved });
+		if (!accepted) for (const held of saved) await dropMedia(held);
+		return accepted;
 	};
 	const sendText = async (conn: any, chat: any, body: any, buttons?: any, after?: any) =>
 		await enqueue(conn, chat.key, { chat, text: body, buttons, after });
@@ -1793,5 +1865,58 @@ export function install(rt: any) {
 			]),
 		);
 
-	Object.assign(rt, { imView, imStatusView, imViaView, imEndpoint });
+	// The owner a Session speaks for: the group chat it belongs to, or the Bot whose own
+	// chat it is. Both kinds have their own IM origins, and only those decide where a
+	// file goes.
+	const ownerOfSession = (sessionId: string): string | undefined => {
+		const room = rt.roomOf(sessionId);
+		if (room !== undefined) return room.id;
+		const member = rt.groupOwners.get(sessionId);
+		if (member !== undefined) return member.roomId;
+		return rt.chatOwners.get(sessionId) ?? rt.pastOwners.get(sessionId)?.botId;
+	};
+
+	// Hand a file to the chats the current request came from. Nothing is broadcast: the
+	// origin record of the turn decides the targets, exactly as a text answer does.
+	const imSendFile = async (
+		sessionId: string,
+		file: { path: string; note?: string; name?: string },
+	): Promise<{ sent: number; reason?: string }> => {
+		const owner = ownerOfSession(sessionId);
+		if (owner === undefined) return { sent: 0, reason: "this conversation is not linked to an IM chat" };
+		const requestId = ownerOrigins.get(owner);
+		const targets = replyTargets(requestId, rt.roomOf(owner) !== undefined ? `room:${owner}` : `bot:${owner}`);
+		if (targets.length === 0) return { sent: 0, reason: "this conversation is not linked to an IM chat" };
+		let data: Buffer;
+		try {
+			data = await readFile(String(file.path ?? ""));
+		} catch {
+			throw Object.assign(new Error(`Cannot read ${String(file.path ?? "")}.`), { code: "bot/not-found" });
+		}
+		if (data.byteLength > MEDIA_LIMIT) {
+			throw Object.assign(new Error(`The file is larger than ${MEDIA_LIMIT} bytes.`), { code: "bot/invalid" });
+		}
+		const name =
+			String(file.name ?? file.path ?? "file")
+				.split(/[\\/]/)
+				.pop() || "file";
+		const kind = IMAGE_EXT.test(name) ? "image" : "file";
+		const mime = MIME_EXT[name.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
+		let sent = 0;
+		for (const target of targets) {
+			if (
+				await sendMedia(
+					target.conn,
+					target.chatKey,
+					target.chat,
+					[{ kind, name, mime, data }],
+					String(file.note ?? ""),
+				)
+			)
+				sent += 1;
+		}
+		return { sent };
+	};
+
+	Object.assign(rt, { imView, imStatusView, imViaView, imEndpoint, imSendFile });
 }

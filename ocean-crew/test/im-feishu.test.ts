@@ -34,6 +34,7 @@ function fakeSdk(overrides: any = {}) {
 		replies: [] as any[],
 		messageGets: [] as any[],
 		contactGets: [] as any[],
+		uploads: [] as any[],
 		reactionCreates: [] as any[],
 		reactionDeletes: [] as any[],
 		chatGets: [] as any[],
@@ -87,6 +88,18 @@ function fakeSdk(overrides: any = {}) {
 				},
 			};
 			this.im = {
+				image: {
+					create: (payload: any) => {
+						fake.uploads.push(["image", payload]);
+						return settle(undefined, { code: 0, data: { image_key: "img_up_1" } });
+					},
+				},
+				file: {
+					create: (payload: any) => {
+						fake.uploads.push(["file", payload]);
+						return settle(undefined, { code: 0, data: { file_key: "file_up_1" } });
+					},
+				},
 				message: {
 					create: (payload: any) => {
 						fake.creates.push(payload);
@@ -931,4 +944,52 @@ test("a voice note that cannot be downloaded says so instead of vanishing", asyn
 	assert.equal(messages[0].text, "[Voice message, 1s: could not be read]");
 	assert.equal(messages[0].files.length, 0);
 	assert.ok(fake.warns.some((warn: string) => warn.includes("feishu audio download failed")));
+});
+
+test("an answer can carry an image and a file, uploaded first and sent as messages", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]);
+	const file = Buffer.from("a report");
+	const result = await handle.send(
+		{ key: "oc_p2p", kind: "direct" },
+		{
+			text: "Here it is",
+			media: [
+				{ kind: "image", name: "chart.png", mime: "image/png", data: image },
+				{ kind: "file", name: "report.txt", data: file },
+			],
+		},
+	);
+	assert.ok(result.messageId, "the last sent message is reported");
+	// One text bubble, then the image, then the file, each as its own message.
+	assert.deepEqual(
+		fake.creates.map((payload: any) => payload.data.msg_type),
+		["post", "image", "file"],
+	);
+	const imageMessage = fake.creates[1].data;
+	assert.deepEqual(JSON.parse(imageMessage.content), { image_key: "img_up_1" });
+	const fileMessage = fake.creates[2].data;
+	assert.deepEqual(JSON.parse(fileMessage.content), { file_key: "file_up_1" });
+	// The uploads happened before their messages and carried the bytes.
+	assert.deepEqual(
+		fake.uploads.map(([kind]: any) => kind),
+		["image", "file"],
+	);
+	assert.deepEqual(fake.uploads[0][1].data.image, image);
+	assert.deepEqual(fake.uploads[1][1].data.file, file);
+	assert.equal(fake.uploads[1][1].data.file_name, "report.txt");
+});
+
+test("media alone is sent without an empty text bubble", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.send(
+		{ key: "oc_p2p", kind: "direct" },
+		{ text: "", media: [{ kind: "file", name: "only.txt", data: Buffer.from("x") }] },
+	);
+	assert.deepEqual(
+		fake.creates.map((payload: any) => payload.data.msg_type),
+		["file"],
+	);
 });

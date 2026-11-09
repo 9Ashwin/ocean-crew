@@ -3,7 +3,7 @@
 // without touching the network. Every request's path, headers and body are recorded.
 
 import assert from "node:assert/strict";
-import { createCipheriv, createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { test } from "node:test";
 import weixin, { chunk, withQuoted } from "../src/host/im/platforms/weixin.ts";
@@ -1138,4 +1138,52 @@ test("a file and a video download their bytes from the same CDN path", async (t)
 	assert.equal(messages[0].files[1].name, "clip.mp4");
 	assert.deepEqual(messages[0].files[1].data, plain);
 	assert.match(messages[0].text, /\[Video\]/);
+});
+
+test("a file answer uploads to the CDN and sends a file item", async (t) => {
+	const fake = await fakeIlink();
+	const runtime: any = {};
+	fake.replies["/ilink/bot/getuploadurl"] = { ret: 0, upload_param: "up-param-1" };
+	const plain = Buffer.from("the report body");
+	let uploaded: { url: string; body: Buffer } | undefined;
+	const seen = env(fake, runtime);
+	const wrapped = {
+		...seen,
+		fetch: async (url: any, init: any) => {
+			if (String(url).startsWith("https://novac2c.cdn.weixin.qq.com/c2c/upload")) {
+				uploaded = { url: String(url), body: Buffer.from(init.body) };
+				return {
+					ok: true,
+					status: 200,
+					headers: { get: (name: string) => (name === "x-encrypted-param" ? "download-param-1" : null) },
+				};
+			}
+			return (seen.fetch as any)(url, init);
+		},
+	};
+	const handle = weixin.connect(FIELDS, wrapped, noopHandlers());
+	t.after(() => {
+		handle.stop();
+		return fake.close();
+	});
+	await until(() => handle !== undefined);
+	await handle.send(
+		{ key: "u1", kind: "direct", title: "" },
+		{ text: "", media: [{ kind: "file", name: "report.txt", data: plain }] },
+	);
+	assert.ok(uploaded !== undefined, "the file was uploaded");
+	assert.match(uploaded!.url, /filekey=/);
+	// What went to the CDN is the AES-128-ECB ciphertext of the file.
+	const upload = fake.calls.find((call: any) => call.path === "/ilink/bot/getuploadurl");
+	assert.ok(upload !== undefined);
+	const key = Buffer.from(String(upload.params.aeskey), "hex");
+	const decipher = createDecipheriv("aes-128-ecb", key, null);
+	assert.deepEqual(Buffer.concat([decipher.update(uploaded!.body), decipher.final()]), plain);
+	const send = fake.calls.find((call: any) => call.path === "/ilink/bot/sendmessage");
+	assert.ok(send !== undefined, "a message was sent");
+	const item = send.params.msg.item_list[0];
+	assert.equal(item.type, 4);
+	assert.equal(item.file_item.file_name, "report.txt");
+	assert.equal(item.file_item.media.encrypt_query_param, "download-param-1");
+	assert.equal(item.file_item.len, String(plain.length));
 });

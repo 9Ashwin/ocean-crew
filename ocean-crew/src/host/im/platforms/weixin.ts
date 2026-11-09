@@ -10,7 +10,7 @@
 // the CDN and decrypt with their AES key. A platform refusal is permanent and
 // a send whose outcome is unknown is never retried blindly.
 // from dsh-im (MIT, see NOTICE).
-import { createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 const QR_BASE = "https://ilinkai.weixin.qq.com/";
 const BOT_TYPE = "3";
@@ -576,10 +576,11 @@ const weixin = {
 		};
 
 		return {
-			send: async (chat: any, { text }: any = {}) => {
+			send: async (chat: any, { text, media }: any = {}) => {
 				const chatKey = String(chat.key);
 				const chunks = chunk(String(text ?? ""), TEXT_LIMIT);
-				if (chunks.length === 0) return {};
+				const mediaItems = Array.isArray(media) ? media : [];
+				if (chunks.length === 0 && mediaItems.length === 0) return {};
 				const contextToken = contextTokenFor(chatKey);
 				let messageId: string | undefined;
 				for (const [index, chunkText] of chunks.entries()) {
@@ -630,6 +631,82 @@ const weixin = {
 							if (error?.timeout === true) throw uncertain("WeChat did not confirm the reply in time", error);
 							throw error;
 						}
+					}
+					messageId = clientId;
+				}
+				for (const item of mediaItems) {
+					const bytes = Buffer.from(item.data);
+					const fileKey = randomBytes(16).toString("hex");
+					const aesKey = randomBytes(16);
+					const padded = Math.ceil((bytes.length + 1) / 16) * 16;
+					const image = item.kind === "image";
+					const answer = await request(
+						env,
+						base(env, fields),
+						token,
+						"getuploadurl",
+						{
+							filekey: fileKey,
+							media_type: image ? 1 : 3,
+							to_user_id: chatKey,
+							rawsize: bytes.length,
+							rawfilemd5: createHash("md5").update(bytes).digest("hex"),
+							filesize: padded,
+							no_need_thumb: true,
+							aeskey: aesKey.toString("hex"),
+						},
+						SEND_TIMEOUT_MS,
+						{ signal: lifecycle.signal },
+					);
+					const refused = rejection(answer);
+					if (refused !== undefined) throw refusal(`WeChat refused the upload (${answer?.errmsg ?? refused})`);
+					const downloadParam = await uploadCdn(env, uploadUrlOf(answer, fileKey), bytes, aesKey);
+					const mediaInfo = {
+						encrypt_query_param: downloadParam,
+						aes_key: Buffer.from(aesKey.toString("hex")).toString("base64"),
+						encrypt_type: 1,
+					};
+					const clientId = `ocean-crew-${randomBytes(8).toString("hex")}`;
+					const message = {
+						from_user_id: "",
+						to_user_id: chatKey,
+						client_id: clientId,
+						message_type: 2,
+						message_state: 2,
+						item_list: image
+							? [{ type: 2, image_item: { media: mediaInfo, mid_size: padded } }]
+							: [
+									{
+										type: 4,
+										file_item: {
+											media: mediaInfo,
+											file_name: String(item.name ?? "file"),
+											len: String(bytes.length),
+										},
+									},
+								],
+						...(contextToken ? { context_token: contextToken } : {}),
+					};
+					try {
+						const sent = await request(
+							env,
+							base(env, fields),
+							token,
+							"sendmessage",
+							{ msg: message },
+							SEND_TIMEOUT_MS,
+							{
+								send: true,
+								signal: lifecycle.signal,
+							},
+						);
+						const code = rejection(sent);
+						if (code !== undefined) throw refusal(`WeChat refused the file (${sent.errmsg ?? code})`);
+					} catch (error: any) {
+						if (error?.network === true)
+							throw uncertain(`WeChat did not answer the file send (${error.message})`, error);
+						if (error?.timeout === true) throw uncertain("WeChat did not confirm the file send in time", error);
+						throw error;
 					}
 					messageId = clientId;
 				}
@@ -931,6 +1008,52 @@ async function request(
 }
 
 // Inbound images: the CDN URL plus a base64 AES-128 key (ECB, PKCS7).
+const CDN_HOST = "novac2c.cdn.weixin.qq.com";
+const CDN_BASE = `https://${CDN_HOST}/c2c`;
+const uploadUrlOf = (answer: any, fileKey: string): string => {
+	const full = String(answer?.upload_full_url ?? "");
+	if (full !== "") {
+		let url: URL;
+		try {
+			url = new URL(full);
+		} catch {
+			throw refusal("WeChat returned an invalid upload address");
+		}
+		if (
+			url.protocol !== "https:" ||
+			url.hostname !== CDN_HOST ||
+			(url.port && url.port !== "443") ||
+			url.pathname !== "/c2c/upload"
+		)
+			throw refusal("WeChat returned an untrusted upload address");
+		url.username = "";
+		url.password = "";
+		url.hash = "";
+		return url.toString();
+	}
+	const param = String(answer?.upload_param ?? "");
+	if (param === "") throw refusal("WeChat returned no upload address");
+	const url = new URL(`${CDN_BASE}/upload`);
+	url.searchParams.set("encrypted_query_param", param);
+	url.searchParams.set("filekey", fileKey);
+	return url.toString();
+};
+// The body is the AES-128-ECB ciphertext; iLink answers with the parameter a later
+// message names instead of the file itself.
+const uploadCdn = async (env: any, url: string, bytes: Buffer, key: Buffer): Promise<string> => {
+	const cipher = createCipheriv("aes-128-ecb", key, null);
+	const body = Buffer.concat([cipher.update(bytes), cipher.final()]);
+	const response: any = await (env.fetch as any)(url, {
+		method: "POST",
+		headers: { "content-type": "application/octet-stream", "content-length": String(body.length) },
+		body,
+	});
+	if (response?.status === 413) throw refusal("WeChat refused the upload: the file is too large");
+	if (!response?.ok) throw fail(`WeChat refused the upload (${response?.status})`);
+	const param = String(response?.headers?.get?.("x-encrypted-param") ?? "");
+	if (param === "") throw refusal("WeChat returned no download parameter for the upload");
+	return param;
+};
 const AES_KEY = /^[0-9a-f]{32}$/i;
 // The AES key of an attachment: iLink gives it either as a hex field on the item or
 // base64 inside `media.aes_key` (the pairing of the two encodings the reference client

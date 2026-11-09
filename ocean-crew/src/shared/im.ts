@@ -24,6 +24,14 @@ export interface ImMessage {
 	messageId?: string;
 }
 
+/** One attachment an answer sends out: its kind, its name and its bytes. */
+export interface ImMedia {
+	kind: "image" | "file";
+	name: string;
+	mime?: string;
+	data: Uint8Array;
+}
+
 export interface ImAction {
 	chat: ImChat;
 	sender: ImSender;
@@ -57,7 +65,7 @@ export interface ImSendResult {
 export interface ImAdapter {
 	check(fields: Record<string, string>, env: ImEnv): Promise<{ account: { id: string; name: string } }>;
 	connect(fields: Record<string, string>, env: ImEnv, handlers: ImHandlers): ImHandle;
-	send(chat: ImChat, message: { text: string; buttons?: ImButton[] }): Promise<ImSendResult>;
+	send(chat: ImChat, message: { text: string; buttons?: ImButton[]; media?: ImMedia[] }): Promise<ImSendResult>;
 	edit?(chat: ImChat, messageId: string, message: { text: string; buttons?: ImButton[] }): Promise<void>;
 }
 

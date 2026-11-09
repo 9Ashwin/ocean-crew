@@ -1051,3 +1051,40 @@ test("an unpaired sender in a group asks once, and pairing lets the mention thro
 	assert.equal(s.prompts.length, 1, "the paired mention starts a turn in the group chat");
 	assert.equal(s.prompts[0].sessionId, "r1");
 });
+
+test("a Bot hands a file to the IM chat its request came from, and the copy is dropped", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	// A direct chat of a paired sender already belongs to the connection's Bot.
+	await dm(s, "u1", "make me a report");
+	await s.flush();
+	const file = join(s.home, "report.txt");
+	writeFileSync(file, "the numbers");
+	const result = await s.rt.imSendFile(s.rt.chatOf("a"), { path: file, note: "Here is the report" });
+	assert.equal(result.sent, 1);
+	const sent = await lastSent(s);
+	assert.equal(sent.text, "Here is the report");
+	assert.equal(sent.media.length, 1);
+	assert.equal(sent.media[0].name, "report.txt");
+	assert.equal(Buffer.from(sent.media[0].data).toString(), "the numbers");
+	// The copy under the plugin home is gone once the send has an outcome.
+	await s.until(() => {
+		try {
+			return readdirSync(join(s.home, "im", "media")).length === 0;
+		} catch {
+			return true;
+		}
+	});
+});
+
+test("a file is refused when the request did not come from an IM chat", async (t) => {
+	const s = await start(t);
+	await add(s);
+	const file = join(s.home, "loose.txt");
+	writeFileSync(file, "x");
+	const result = await s.rt.imSendFile(s.rt.chatOf("a"), { path: file });
+	assert.equal(result.sent, 0);
+	assert.match(String(result.reason), /not linked to an IM chat/);
+});

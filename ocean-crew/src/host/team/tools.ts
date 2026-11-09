@@ -1341,6 +1341,40 @@ export function install(rt: Runtime): void {
 		}),
 	);
 
+	// A file the user should get where they are talking: an IM chat the current request
+	// came from. The host keeps the bytes and the origin routing; this tool is the way a
+	// Bot hands a result over without waiting for the user to come back to the desktop.
+	rt.teamTools.push(
+		defineTool({
+			name: "send_file",
+			description:
+				"Send a file from your computer to the chat this request came from, after a report, a chart or an archive. It goes to the IM chat the user is writing from, or to the group chat that asked, and only to them; in a conversation that is not linked to IM it returns a note saying so instead of sending anything. Give the path the way your shell sees it (absolute, or relative to the current folder). Optionally add one line of text to send with it.",
+			parameters: {
+				path: {
+					type: "string",
+					description: "The file to send: an absolute path, or one relative to your current folder",
+				},
+				note: { type: "string", description: "Optional one-line message to send with the file" },
+			},
+			execute: async (args, exec) => {
+				await rt.load();
+				const id = exec.agent?.id ?? "";
+				const path = String(args.path ?? "").trim();
+				if (path === "") return "Give the path of the file to send.";
+				const send = (rt as Record<string, any>).imSendFile;
+				if (typeof send !== "function") return "This host cannot send files; attach it in your reply instead.";
+				try {
+					const result = await send(id, { path, note: String(args.note ?? "").trim() });
+					return result.sent > 0
+						? "The file is on its way to the chat that asked."
+						: `Nothing was sent: ${result.reason ?? "this conversation is not linked to an IM chat"}. Attach it in your reply instead.`;
+				} catch (error: any) {
+					return `The file was not sent: ${error?.message ?? error}`;
+				}
+			},
+		}),
+	);
+
 	// The team tools live in each Session's own scope, never in the global layer: a Bot's
 	// chat and a member's group Session get all of them, a group's own Session gets only
 	// its relay, and a Session ocean-crew does not own gets none — so they never appear in
