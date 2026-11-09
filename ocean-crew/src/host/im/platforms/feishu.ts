@@ -408,33 +408,45 @@ const MARKDOWN_HINT =
 	/(^#{1,6}\s)|(^\s*[-*]\s)|(^\s*\d+\.\s)|(^\s*---+\s*$)|(```)|(`[^`\n]+`)|(\*\*[^*\n].+?\*\*)|(~~[^~\n].+?~~)|(<u>.+?<\/u>)|(\*[^*\n]+\*)|(\[[^\]]+\]\([^)]+\))|(^>\s)/m;
 
 // A card is an event, not a paragraph: a coloured header makes an approval read as one
-// at a glance, the way a chat client shows a pending decision.
-const card = (text: string, buttons: any[]): string =>
-	JSON.stringify({
+// at a glance, the way a chat client shows a pending decision. The body and the button
+// row follow the shapes the platform's own client renders as a normal card; a legacy
+// `action` container leaves the card unstyled (a grey block) on current clients.
+const card = (text: string, buttons: any[]): string => {
+	const row =
+		buttons === undefined || buttons.length === 0
+			? []
+			: [
+					{ tag: "hr" },
+					{
+						tag: "column_set",
+						flex_mode: "none",
+						columns: buttons.slice(0, 5).map((button: any) => ({
+							tag: "column",
+							width: "weighted",
+							weight: 1,
+							elements: [
+								{
+									tag: "button",
+									text: { tag: "plain_text", content: String(button.label ?? "").slice(0, 20) },
+									type: "default",
+									width: "fill",
+									behaviors: [{ type: "callback", value: { action: button.data } }],
+								},
+							],
+						})),
+					},
+				];
+	return JSON.stringify({
 		schema: "2.0",
 		header: {
 			title: { tag: "plain_text", content: "Action needed" },
-			template: "orange",
+			template: "blue",
 		},
 		body: {
-			elements: [
-				{ tag: "markdown", content: text },
-				...(buttons?.length > 0
-					? [
-							{
-								tag: "action",
-								actions: buttons.slice(0, 5).map((button: any) => ({
-									tag: "button",
-									type: "primary",
-									text: { tag: "plain_text", content: String(button.label ?? "").slice(0, 20) },
-									value: { v: button.data },
-								})),
-							},
-						]
-					: []),
-			],
+			elements: [{ tag: "div", text: { tag: "lark_md", content: text } }, ...row],
 		},
 	});
+};
 
 /** A quoted message renders to the same text a live one would; cached per message. */
 const quotedCache = new Map<string, string>();
@@ -699,7 +711,8 @@ const feishu = {
 				const messageId = String(context.open_message_id ?? event.open_message_id ?? "");
 				const action = event.action ?? {};
 				const value = action.value;
-				const buttonData = value !== null && typeof value === "object" ? (value.v ?? JSON.stringify(value)) : value;
+				const buttonData =
+					value !== null && typeof value === "object" ? (value.action ?? value.v ?? JSON.stringify(value)) : value;
 				const operator = event.operator ?? {};
 				const operatorId = String(operator.open_id ?? operator.user_id ?? "");
 				const chat = await chatOf(chatId);

@@ -532,7 +532,8 @@ test("a card action reports its button data and chat identity", async () => {
 		"card.action.trigger",
 		{
 			operator: { open_id: "ou_u1", name: "Alice" },
-			action: { value: { v: "q:q1:0" } },
+			// The card's own button shape carries the data under `action`.
+			action: { value: { action: "q:q1:0" } },
 			context: { open_chat_id: "oc_group", open_message_id: "om_card" },
 		},
 		() => actions.length === 1,
@@ -567,10 +568,18 @@ test("send chunks the text and turns the last chunk into a card", async () => {
 	const card = JSON.parse(last.data.content);
 	assert.equal(card.schema, "2.0");
 	// 4001 chars split at the limit leaves the remainder plus the marker.
-	assert.deepEqual(card.body.elements[0], { tag: "markdown", content: `${"a".repeat(9)} (2/2)` });
-	assert.equal(card.body.elements[1].tag, "action");
-	assert.deepEqual(card.body.elements[1].actions[0].value, { v: "q:q1:0" });
-	assert.equal(card.body.elements[1].actions[0].text.content, "yes");
+	assert.deepEqual(card.body.elements[0], {
+		tag: "div",
+		text: { tag: "lark_md", content: `${"a".repeat(9)} (2/2)` },
+	});
+	// The button row is the layout a card renders, not the legacy `action` container.
+	assert.equal(card.body.elements[1].tag, "hr");
+	const row = card.body.elements[2];
+	assert.equal(row.tag, "column_set");
+	const button = row.columns[0].elements[0];
+	assert.equal(button.tag, "button");
+	assert.deepEqual(button.behaviors, [{ type: "callback", value: { action: "q:q1:0" } }]);
+	assert.equal(button.text.content, "yes");
 	assert.equal(messageId, "om_2");
 });
 
@@ -590,8 +599,8 @@ test("send posts text and edit patches the card", async () => {
 	assert.equal(fake.patches.length, 1);
 	assert.deepEqual(fake.patches[0].path, { message_id: "om_9" });
 	const card = JSON.parse(fake.patches[0].data.content);
-	assert.equal(card.body.elements[0].content, "done");
-	assert.deepEqual(card.body.elements[1].actions[0].value, { v: "a:1:allow" });
+	assert.equal(card.body.elements[0].text.content, "done");
+	assert.deepEqual(card.body.elements[2].columns[0].elements[0].behaviors[0].value, { action: "a:1:allow" });
 });
 
 test("a refused send is permanent while a lost response is unknown", async () => {
