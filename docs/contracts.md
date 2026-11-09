@@ -39,7 +39,7 @@
 | --- | --- | --- |
 | `check(fields, env)` | `{ account: { id, name } }` | 在保存连接之前调用，字段改动后再次调用；拒绝会展示给用户。 |
 | `connect(fields, env, handlers)` | 句柄 | 每条运行中的连接调用一次；可以返回带 `stop()` 的句柄。 |
-| `send(chat, { text, buttons, replyTo?, media? })` | `{ messageId? }` | 必需。`chat` 是 `{ key, kind, title }`；`replyTo` 是这一轮提问的消息 id，平台支持时回答挂在该消息下；`media` 是 `{ kind: "image" \| "file", name, mime?, data }[]`，附件在文本之后作为独立消息发出。 |
+| `send(chat, { text, buttons, replyTo?, media? })` | `{ messageId? }` | 必需。`chat` 是 `{ key, kind, title }`；`replyTo` 是这一轮提问的消息 id，平台支持时回答挂在该消息下；`media` 是 `{ kind: "image" \| "file", name, mime?, data }[]`；适配器自行决定形状——飞书把最后一段正文与附件合成一条图文 post（无正文时附件各自成消息，文件按扩展名决定上传类型与消息类型），微信按 iLink 的独立文件消息发送。 |
 | `edit(chat, messageId, { text, buttons })` | — | 可选；没有它，结算后的卡片只能作为文本回答重新发送。有按钮时编辑的是卡片，否则是普通消息，两者在飞书上走不同端点。 |
 | `typing(chat)` | — | 可选；目标有轮次在跑时由 host 调用。 |
 | `stopTyping(chat)` | — | 可选；目标不再忙时由 host 调用，用来结束「正在输入」。没有它就只能等平台自己过期。 |
@@ -51,7 +51,7 @@
 
 `handlers` 是 `{ onMessage, onAction, onStatus }`：
 
-- `onMessage(msg)`，其中 `chat: { key, kind: 'direct' | 'group', title }`、`sender: { id, name }`、`text`、`images: [{ mediaType, data }]`（base64）、`files: [{ name, data }]`（字节）、`mentioned`、`messageId`。必须保持：这些字段名、`kind` 为 `direct` 或 `group`、`mentioned` 只在群里点名本 bot 的消息上为 true。若被破坏：群消息会被当成未提及而丢弃，或者给已经配对过的聊天发配对请求。
+- `onMessage(msg)`，其中 `chat: { key, kind: 'direct' | 'group', title }`、`sender: { id, name }`、`text`、`images: [{ mediaType, data }]`（base64；`mediaType` 必须由**字节**判定，平台声明的类型不可信）、`files: [{ name, data }]`（字节）、`mentioned`、`messageId`。host 只把类型受支持且被 host 接纳的图片作为图片交给模型；被拒（模型不支持看图、超限、类型不符）时图片改为文件附件并告知模型。必须保持：这些字段名、`kind` 为 `direct` 或 `group`、`mentioned` 只在群里点名本 bot 的消息上为 true。若被破坏：群消息会被当成未提及而丢弃，或者给已经配对过的聊天发配对请求。
 - `onAction(action)`，含 `chat`、`sender`、`data`、`messageId`。按钮数据是 host 放进按钮的 `<kind>:<id>:<choice>` 字符串（`q:` 问题、`a:` 审批）；host 解析第一个和最后一个冒号之间的 id。
 - `onStatus(status)`，含 `state: 'connecting' | 'ready' | 'error'`、可选的 `error` 字符串和可选的 `account`。`ready` 重置重试阶梯；`account` 变化会保存到连接上。只有 host 报告 `off`。
 - **平台消息最多只派发一次。** host 不做去重；重连后的重投递和跨重启的重投递是适配器的事。`feishu.ts` 和 `weixin.ts` 把见过的 id 存在 `env.runtime` 里。若被破坏：一条消息跑两轮 Bot。

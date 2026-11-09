@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import { chunkMarkdown, toPlain } from "../format.ts";
+import { imageMediaTypeOf } from "./media-type.ts";
 
 const TEXT_LIMIT = 4000;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
@@ -192,20 +193,6 @@ const messageResource = async (
 		chunks.push(data);
 	}
 	return Buffer.concat(chunks);
-};
-
-const mediaTypeOf = (data: Buffer): string => {
-	if (data.length >= 4 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47)
-		return "image/png";
-	if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return "image/jpeg";
-	if (data.length >= 4 && data.subarray(0, 4).toString("latin1") === "GIF8") return "image/gif";
-	if (
-		data.length >= 12 &&
-		data.subarray(0, 4).toString("latin1") === "RIFF" &&
-		data.subarray(8, 12).toString("latin1") === "WEBP"
-	)
-		return "image/webp";
-	return "application/octet-stream";
 };
 
 // Feishu sends a post (and forwarded history) as paragraphs of typed elements. Rendering
@@ -411,6 +398,31 @@ const MARKDOWN_HINT =
 // at a glance, the way a chat client shows a pending decision. The body and the button
 // row follow the shapes the platform's own client renders as a normal card; a legacy
 // `action` container leaves the card unstyled (a grey block) on current clients.
+const FILE_ROUTES: Record<string, { upload: string; msgType: string }> = {
+	pdf: { upload: "pdf", msgType: "file" },
+	doc: { upload: "doc", msgType: "file" },
+	docx: { upload: "doc", msgType: "file" },
+	xls: { upload: "xls", msgType: "file" },
+	xlsx: { upload: "xls", msgType: "file" },
+	ppt: { upload: "ppt", msgType: "file" },
+	pptx: { upload: "ppt", msgType: "file" },
+	ogg: { upload: "opus", msgType: "audio" },
+	opus: { upload: "opus", msgType: "audio" },
+	mp4: { upload: "mp4", msgType: "media" },
+	mov: { upload: "mp4", msgType: "media" },
+	avi: { upload: "mp4", msgType: "media" },
+	m4v: { upload: "mp4", msgType: "media" },
+};
+const routeOf = (name: string): { upload: string; msgType: string } => {
+	const ext = name.split(".").pop()?.toLowerCase() ?? "";
+	return FILE_ROUTES[ext] ?? { upload: "stream", msgType: "file" };
+};
+const postWith = (text: string, rows: any[]): string => {
+	const content = POST_ROWS(text);
+	for (const row of rows) content.push([row]);
+	return JSON.stringify({ zh_cn: { content } });
+};
+
 const replyCard = (text: string, title: string | undefined): string =>
 	JSON.stringify({
 		schema: "2.0",
@@ -645,7 +657,7 @@ const feishu = {
 					if (type === "image" && typeof content.image_key === "string" && content.image_key !== "") {
 						try {
 							const bytes = await messageResource(client, messageId, content.image_key, "image");
-							images.push({ mediaType: mediaTypeOf(bytes), data: bytes.toString("base64") });
+							images.push({ mediaType: imageMediaTypeOf(bytes), data: bytes.toString("base64") });
 						} catch (error) {
 							warn("ocean-crew im: feishu image download failed: %s", error);
 						}
@@ -796,7 +808,9 @@ const feishu = {
 			// An answer threads under the message that asked for it, which is what makes a
 			// private chat read as a conversation rather than a wall of separate bubbles.
 			send: async (chat: any, { text, buttons, replyTo, media, card: asCard, title }: any = {}) => {
-				const chunks = chunkMarkdown(String(text ?? ""), TEXT_LIMIT);
+				// No text at all means no empty bubble: the attachments go on their own.
+				const raw = String(text ?? "");
+				const chunks = raw.trim() === "" ? [] : chunkMarkdown(raw, TEXT_LIMIT);
 				const createBody = (type: string, body: string) => ({
 					params: { receive_id_type: "chat_id" },
 					data: {
@@ -809,20 +823,79 @@ const feishu = {
 				});
 				let messageId: string | undefined;
 				let replyToId = typeof replyTo === "string" && replyTo !== "" ? replyTo : undefined;
+				// Attachments are uploaded first: a caption and its attachment then leave as
+				// one post message, and the upload failing loses nothing that was already said.
+				const uploaded: Array<{ row: any; msgType: string; content: string }> = [];
+				for (const item of Array.isArray(media) ? media : []) {
+					const bytes = Buffer.from(item.data);
+					const name = String(item.name ?? "file");
+					if (item.kind === "image") {
+						const answer = await call(
+							"Feishu image upload",
+							() => client.im.image.create({ data: { image_type: "message", image: bytes } }),
+							scrub,
+						);
+						const key = String(answer?.data?.image_key ?? "");
+						if (key === "")
+							throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
+						uploaded.push({
+							row: { tag: "img", image_key: key },
+							msgType: "image",
+							content: JSON.stringify({ image_key: key }),
+						});
+						continue;
+					}
+					const route = routeOf(name);
+					const answer = await call(
+						"Feishu file upload",
+						() => client.im.file.create({ data: { file_type: route.upload, file_name: name, file: bytes } }),
+						scrub,
+					);
+					const key = String(answer?.data?.file_key ?? "");
+					if (key === "")
+						throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
+					uploaded.push({
+						row: { tag: "media", file_key: key, file_name: name },
+						msgType: route.msgType,
+						content: JSON.stringify({ file_key: key }),
+					});
+				}
+				// What is left after the caption: no text, a button card, or a plain-text
+				// fallback leaves the attachment as its own message.
+				const sendAttachments = async (): Promise<void> => {
+					for (const held of uploaded.splice(0)) {
+						const sent = await call(
+							"Feishu send",
+							() => client.im.message.create(createBody(held.msgType, held.content)),
+							scrub,
+						);
+						messageId = String(sent?.data?.message_id ?? messageId ?? "");
+					}
+				};
 				for (const [index, chunk] of chunks.entries()) {
 					const interactive = buttons !== undefined && index === chunks.length - 1;
 					// A Bot's answer reads as a card on this platform; only the first part
 					// carries the header, so a split answer is not a stack of headers.
 					const replyCardMode = asCard === true && !interactive;
 					const markup = MARKDOWN_HINT.test(chunk);
-					const msgType = interactive || replyCardMode ? "interactive" : markup ? "post" : "text";
+					// The attachments ride on the last part of the answer, as a caption with its
+					// media, unless a button card has to be that part.
+					const caption =
+						!interactive && index === chunks.length - 1 && uploaded.length > 0 ? uploaded.splice(0) : [];
+					const msgType =
+						interactive || replyCardMode ? "interactive" : caption.length > 0 ? "post" : markup ? "post" : "text";
 					const content = interactive
 						? card(chunk, buttons)
 						: replyCardMode
 							? replyCard(chunk, index === 0 ? title : undefined)
-							: msgType === "post"
-								? post(chunk)
-								: JSON.stringify({ text: toPlain(chunk) });
+							: caption.length > 0
+								? postWith(
+										chunk,
+										caption.map((held: any) => held.row),
+									)
+								: msgType === "post"
+									? post(chunk)
+									: JSON.stringify({ text: toPlain(chunk) });
 					const plain = msgType === "interactive" ? msgType : "text";
 					const plainContent = msgType === "interactive" ? content : JSON.stringify({ text: toPlain(chunk) });
 					const create = () =>
@@ -842,6 +915,8 @@ const feishu = {
 									throw failure;
 								}
 								env.log?.warn?.("ocean-crew im: feishu rejected the post; sending plain text");
+								// The caption could not carry them: they follow as their own messages.
+								if (caption.length > 0) uploaded.unshift(...caption);
 								return call(
 									"Feishu send",
 									() => client.im.message.create(createBody(plain, plainContent)),
@@ -875,36 +950,7 @@ const feishu = {
 					// Only the first bubble threads under the question.
 					replyToId = undefined;
 				}
-				// An attachment is uploaded first and sent as its own message after the
-				// answer, so the text still reads as the reply and the file follows it.
-				for (const item of Array.isArray(media) ? media : []) {
-					const bytes = Buffer.from(item.data);
-					const name = String(item.name ?? "file");
-					let key = "";
-					let kind: "image" | "file" = "file";
-					if (item.kind === "image") {
-						const uploaded = await call(
-							"Feishu image upload",
-							() => client.im.image.create({ data: { image_type: "message", image: bytes } }),
-							scrub,
-						);
-						key = String(uploaded?.data?.image_key ?? "");
-						kind = "image";
-					} else {
-						const uploaded = await call(
-							"Feishu file upload",
-							() => client.im.file.create({ data: { file_type: "stream", file_name: name, file: bytes } }),
-							scrub,
-						);
-						key = String(uploaded?.data?.file_key ?? "");
-					}
-					if (key === "")
-						throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
-					const content =
-						kind === "image" ? JSON.stringify({ image_key: key }) : JSON.stringify({ file_key: key });
-					const sent = await call("Feishu send", () => client.im.message.create(createBody(kind, content)), scrub);
-					messageId = String(sent?.data?.message_id ?? messageId ?? "");
-				}
+				await sendAttachments();
 				return { messageId };
 			},
 			// Which endpoint settles a message depends on how it was sent: a card is patched

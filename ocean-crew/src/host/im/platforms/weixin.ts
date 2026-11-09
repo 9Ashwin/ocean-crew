@@ -11,6 +11,7 @@
 // a send whose outcome is unknown is never retried blindly.
 // from dsh-im (MIT, see NOTICE).
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { imageMediaTypeOf } from "./media-type.ts";
 
 const QR_BASE = "https://ilinkai.weixin.qq.com/";
 const BOT_TYPE = "3";
@@ -371,7 +372,10 @@ const weixin = {
 				else if (item.type === 3 && item.voice_item?.text !== undefined) texts.push(String(item.voice_item.text));
 				else if (item.type === 2 && item.image_item?.media !== undefined) {
 					const bytes = await image(item.image_item.media, env).catch(() => undefined);
-					if (bytes !== undefined) images.push({ mediaType: "image/jpeg", data: bytes.toString("base64") });
+					// WeChat re-encodes what it carries: the declared type has to be the bytes'
+					// own type, or the host refuses the message as IMAGE_TYPE_MISMATCH.
+					if (bytes !== undefined)
+						images.push({ mediaType: imageMediaTypeOf(bytes), data: bytes.toString("base64") });
 				} else if (item.type === 4 && item.file_item !== undefined) {
 					const bytes = await mediaBytes(item.file_item, env).catch(() => undefined);
 					files.push({ name: String(item.file_item.file_name ?? "file"), ...(bytes ? { data: bytes } : {}) });

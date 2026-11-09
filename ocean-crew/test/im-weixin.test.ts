@@ -1227,3 +1227,52 @@ test("typing stops with status 2 and a missing ticket is reported once", async (
 	assert.equal(quietWarns.length, 1, "the missing ticket is said once");
 	assert.match(String(quietWarns[0][0]), /no typing ticket/);
 });
+
+// WeChat re-encodes what it carries: a PNG must not be announced as a JPEG, or the host
+// refuses the prompt as IMAGE_TYPE_MISMATCH before the model ever sees it.
+test("an image is announced with the media type its bytes have", async (t) => {
+	const fake = await fakeIlink();
+	const runtime: any = {};
+	const messages: any[] = [];
+	const keyHex = "00112233445566778899aabbccddeeff";
+	const key = Buffer.from(keyHex, "hex");
+	const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+	const cipher = createCipheriv("aes-128-ecb", key, null);
+	const encrypted = Buffer.concat([cipher.update(png), cipher.final()]);
+	const imageUrl = "https://cdn.example.test/img/png";
+	let polls = 0;
+	fake.replies.updates = () => {
+		polls += 1;
+		if (polls > 1) return { ret: 0, msgs: [] };
+		return {
+			ret: 0,
+			get_updates_buf: "c1",
+			msgs: [
+				{
+					from_user_id: "u1",
+					message_id: "m1",
+					item_list: [
+						{
+							type: 2,
+							image_item: { media: { full_url: imageUrl, aes_key: Buffer.from(keyHex).toString("base64") } },
+						},
+					],
+				},
+			],
+		};
+	};
+	const flaky = {
+		...env(fake, runtime),
+		fetch: (url: any, init: any) => {
+			if (String(url) === imageUrl) return Promise.resolve({ ok: true, arrayBuffer: async () => encrypted });
+			return (globalThis.fetch as any)(url, init);
+		},
+	};
+	const handle = weixin.connect(FIELDS, flaky, noopHandlers([], messages));
+	t.after(() => {
+		handle.stop();
+		return fake.close();
+	});
+	await until(() => messages.length === 1);
+	assert.equal(messages[0].images[0].mediaType, "image/png");
+});

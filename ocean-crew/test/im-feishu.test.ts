@@ -985,15 +985,14 @@ test("an answer can carry an image and a file, uploaded first and sent as messag
 		},
 	);
 	assert.ok(result.messageId, "the last sent message is reported");
-	// One text bubble, then the image, then the file, each as its own message.
-	assert.deepEqual(
-		fake.creates.map((payload: any) => payload.data.msg_type),
-		["text", "image", "file"],
-	);
-	const imageMessage = fake.creates[1].data;
-	assert.deepEqual(JSON.parse(imageMessage.content), { image_key: "img_up_1" });
-	const fileMessage = fake.creates[2].data;
-	assert.deepEqual(JSON.parse(fileMessage.content), { file_key: "file_up_1" });
+	// The caption and its attachments leave as one post message: the reader sees the
+	// sentence and the picture together, not a bubble followed by two bare files.
+	assert.equal(fake.creates.length, 1);
+	assert.equal(fake.creates[0].data.msg_type, "post");
+	const rows = JSON.parse(fake.creates[0].data.content).zh_cn.content;
+	assert.deepEqual(rows[0], [{ tag: "md", text: "Here it is" }]);
+	assert.deepEqual(rows[1], [{ tag: "img", image_key: "img_up_1" }]);
+	assert.deepEqual(rows[2], [{ tag: "media", file_key: "file_up_1", file_name: "report.txt" }]);
 	// The uploads happened before their messages and carried the bytes.
 	assert.deepEqual(
 		fake.uploads.map(([kind]: any) => kind),
@@ -1062,4 +1061,30 @@ test("a card the platform refuses for its content falls back to plain text", asy
 	assert.equal(fake.creates[0].data.msg_type, "interactive");
 	assert.equal(fake.creates[1].data.msg_type, "text");
 	assert.match(fake.creates[1].data.content, /hello/);
+});
+
+// A file's upload and message type follow its extension: a PDF keeps its preview, a
+// video plays in place, and an audio note arrives as audio, not as an opaque file.
+test("a document, a video and an audio note are routed by their extensions", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.send(
+		{ key: "oc_p2p", kind: "direct" },
+		{
+			text: "",
+			media: [
+				{ kind: "file", name: "report.pdf", data: Buffer.from("pdf") },
+				{ kind: "file", name: "clip.mp4", data: Buffer.from("mp4") },
+				{ kind: "file", name: "note.ogg", data: Buffer.from("ogg") },
+			],
+		},
+	);
+	assert.deepEqual(
+		fake.uploads.map(([kind, payload]: any) => (kind === "file" ? payload.data.file_type : kind)),
+		["pdf", "mp4", "opus"],
+	);
+	assert.deepEqual(
+		fake.creates.map((payload: any) => payload.data.msg_type),
+		["file", "media", "audio"],
+	);
 });

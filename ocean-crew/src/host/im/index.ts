@@ -10,6 +10,7 @@ import { viewCardText } from "../chat/parts.ts";
 import { listenGlobal } from "../core/events.ts";
 import { replaceFile } from "../core/files.ts";
 import { adapters as adapterRegistry } from "./platforms/index.ts";
+import { isSupportedImageType } from "./platforms/media-type.ts";
 import { startStatusReaction } from "./reaction.ts";
 import { failClass, nextAction } from "./supervisor.ts";
 
@@ -53,6 +54,22 @@ const MIME_EXT: Record<string, string> = {
 const adapters: Record<string, any> = adapterRegistry as any;
 
 const secretField = (key: any) => key.replace(/[A-Z]/g, (char: any) => `_${char}`).toUpperCase();
+
+// The admission reasons the host uses when it cannot take an image as an image.
+const IMAGE_REFUSAL_REASONS = new Set([
+	"MODEL_DOES_NOT_SUPPORT_IMAGES",
+	"IMAGE_TOO_LARGE",
+	"IMAGES_TOO_LARGE",
+	"IMAGE_TOO_MANY_PIXELS",
+	"TOO_MANY_IMAGES",
+	"IMAGE_TYPE_MISMATCH",
+]);
+const isImageRefusal = (error: any): boolean => {
+	if (error?.code !== "session/attachment-invalid" && error?.code !== "attachment-error") return false;
+	const reason = error?.details?.reason;
+	if (reason === undefined) return true;
+	return IMAGE_REFUSAL_REASONS.has(String(reason));
+};
 
 export function install(rt: any) {
 	const { ctx } = rt;
@@ -100,6 +117,9 @@ export function install(rt: any) {
 					? `${values.bot} 发了一个卡片，点下面的按钮就能回答。`
 					: `${values.bot} shared a card — press a button below to answer.`,
 				answered: zh() ? "已答" : "answered",
+				imageAsFile: zh()
+					? `图片没能直接给模型看（可能是当前模型不支持看图或文件过大），已作为 ${values.count} 个文件附上，可以用工具打开。`
+					: `The image could not be shown to the model (the model may not read images, or the file was too large); it is attached as ${values.count} file(s) for your tools to open.`,
 				numbers: zh() ? "回复编号" : "reply with the number",
 				numbersMulti: zh() ? "回复编号，多选用空格隔开" : "reply with the numbers, separated by spaces",
 				allow: zh() ? "允许一次" : "Allow once",
@@ -686,9 +706,10 @@ export function install(rt: any) {
 						}
 					}
 				}
-				const sent = await withSendTimeout(
-					runner.handle.send(job.chat, media === undefined ? job : { ...job, media }),
-				);
+				// The adapter addresses the chat by `chat.key`; a job restored from the outbox
+				// or built from a stored chat entry may only know the key the queue uses.
+				const chat = job.chat?.key === undefined ? { ...job.chat, key: chatKey } : job.chat;
+				const sent = await withSendTimeout(runner.handle.send(chat, media === undefined ? job : { ...job, media }));
 				for (const held of job.media ?? []) await dropMedia(held);
 				job.after?.(sent);
 				queue.jobs.shift();
@@ -1017,25 +1038,79 @@ export function install(rt: any) {
 			return;
 		}
 		const sessionId = target.botId ?? target.roomId;
-		const content: any[] = [];
-		if (body !== "") content.push({ type: "text", text: body });
-		for (const image of msg.images ?? [])
-			content.push({ type: "image", mediaType: image.mediaType, data: image.data });
 		const env = await envFor(conn);
-		for (const file of msg.files ?? []) {
+		const upload = async (file: any): Promise<string | undefined> => {
 			try {
-				const receiptId = await env.uploadFile(rt.botOf(sessionId) ? rt.chatOf(sessionId) : sessionId, file);
-				content.push({ type: "file", receiptId });
+				return await env.uploadFile(rt.botOf(sessionId) ? rt.chatOf(sessionId) : sessionId, file);
 			} catch {
 				await sendText(conn, msg.chat, text("noFile"));
+				return undefined;
 			}
+		};
+		const content: any[] = [];
+		const labels: string[] = [];
+		if (body !== "") labels.push(body);
+		// An image only reaches the model as an image when its bytes are a type the host
+		// accepts; anything else is a file, with a label saying what it is, so the model
+		// still knows something arrived and can open it with its tools.
+		const inline: any[] = [];
+		const asFiles: any[] = [];
+		const images = Array.isArray(msg.images) ? msg.images : [];
+		for (const [index, image] of images.entries()) {
+			const bytes = Buffer.from(String(image.data ?? ""), "base64");
+			const mediaType = String(image.mediaType ?? "");
+			if (!isSupportedImageType(mediaType) || bytes.byteLength === 0) {
+				asFiles.push({
+					name: `image-${index + 1}.${mediaType.split("/")[1]?.replace("jpeg", "jpg") ?? "bin"}`,
+					data: bytes,
+				});
+				labels.push(`[Image ${index + 1} arrived as a file: ${mediaType || "unknown type"}]`);
+				continue;
+			}
+			labels.push(`[Image ${index + 1} of ${images.length}]`);
+			inline.push({
+				type: "image",
+				mediaType,
+				data: image.data,
+				...(image.name === undefined ? {} : { name: image.name }),
+			});
+		}
+		for (const label of labels) content.push({ type: "text", text: label });
+		content.push(...inline);
+		for (const file of [...(Array.isArray(msg.files) ? msg.files : []), ...asFiles]) {
+			const receiptId = await upload(file);
+			if (receiptId !== undefined) content.push({ type: "file", receiptId });
 		}
 		if (content.length === 0) return;
 		const requestId = `im:${conn.platform}:${randomUUID()}`;
 		noteOrigin(requestId, conn, msg.chat, sessionId, msg.messageId, msg.sender?.id);
 		ownerOrigins.set(sessionId, requestId);
 		sessionOrigins.set(sessionId, requestId);
-		await rt.sendUser({ sessionId, content, requestId });
+		try {
+			await rt.sendUser({ sessionId, content, requestId });
+		} catch (error: any) {
+			if (inline.length === 0 || !isImageRefusal(error)) throw error;
+			// The host refuses the images (a model without vision, a size limit): the turn
+			// still starts without them, and they are handed over as files to read instead.
+			rt.warn("ocean-crew: im image not accepted by the host (%s); passing it as a file", error?.message ?? error);
+			const fallback: any[] = content.filter((part: any) => part.type !== "image");
+			const noted: string[] = [];
+			for (const image of inline) {
+				const receiptId = await upload({
+					name: `image-${noted.length + 1}.${String(image.mediaType).split("/")[1]?.replace("jpeg", "jpg") ?? "png"}`,
+					data: Buffer.from(String(image.data ?? ""), "base64"),
+				});
+				if (receiptId !== undefined) {
+					fallback.push({ type: "file", receiptId });
+					noted.push(receiptId);
+				}
+			}
+			fallback.push({
+				type: "text",
+				text: text("imageAsFile", { count: noted.length }) as string,
+			});
+			await rt.sendUser({ sessionId, content: fallback, requestId });
+		}
 		// The chat sees the Bot working before the model's first token, not on a later tick.
 		kickTyping(conn, msg.chat);
 		// A room message is answered by member Bot turns under their own sessions, so
@@ -2134,7 +2209,9 @@ export function install(rt: any) {
 				await sendMedia(
 					target.conn,
 					target.chatKey,
-					target.chat,
+					// The adapter reads the chat's key from the message it is given; a stored
+					// chat entry is keyed by chatKey and does not carry it back.
+					{ ...target.chat, key: target.chatKey },
 					[{ kind, name, mime, data }],
 					String(file.note ?? ""),
 				)

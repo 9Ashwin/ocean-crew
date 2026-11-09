@@ -45,7 +45,9 @@ function fakeAdapter({ buttons = true, reactions = false }: { buttons?: boolean;
 			handlers.onStatus({ state: "ready", account: { id: "bot1", name: "@fakebot" } });
 			const handle: any = {
 				send: async (chat: any, body: any) => {
-					sent.push({ chat, ...body });
+					// Record the chat the adapter was given, which is what a real platform
+					// addresses; the job's own chat copy is not what it receives.
+					sent.push({ ...body, chat });
 					const next = fails.shift();
 					if (next !== undefined) throw next;
 					return { messageId: sent.length };
@@ -108,6 +110,8 @@ interface Host {
 	emitEvent: (sessionId: string, type: string, data: any) => void;
 	flush: () => Promise<void>;
 	until: (check: () => boolean, ms?: number) => Promise<boolean>;
+	/** Make the host refuse image content with this admission reason. */
+	refuseImage: (reason?: string) => void;
 	stop: () => Promise<void>;
 }
 
@@ -120,6 +124,7 @@ async function start(
 		config,
 		home: reuse,
 		keep = false,
+		services,
 	}: {
 		platform?: string;
 		adapter?: any;
@@ -129,13 +134,15 @@ async function start(
 		home?: string;
 		/** Leave the home on disk for the next start. */
 		keep?: boolean;
+		services?: Record<string, any>;
 	} = {},
 ): Promise<Host> {
 	const home = reuse ?? mkdtempSync(join(tmpdir(), "ocean-crew-im-"));
 	// A restarted runtime reads the state the first one saved, not a fresh seed.
 	if (reuse === undefined) writeFileSync(join(home, "state.json"), JSON.stringify(seed ?? TEAM()));
-	const ctx = fakeContext();
+	const ctx = fakeContext({ services });
 	const prompts: any[] = [];
+	let refuseImages: string | undefined;
 	const agents = new Map<string, any>();
 	const agentOf = (id: string): any => {
 		if (!agents.has(id)) {
@@ -165,6 +172,12 @@ async function start(
 		sessionController: {
 			prompt: async (request: any) => {
 				prompts.push(request);
+				if (refuseImages && (request.content ?? []).some((part: any) => part.type === "image")) {
+					throw Object.assign(new Error("Declared image type does not match its bytes."), {
+						code: "session/attachment-invalid",
+						details: { reason: refuseImages },
+					});
+				}
 				return { ok: true };
 			},
 			resolveAgent: async (sessionId: string) => ({ agent: agentOf(sessionId) }),
@@ -210,7 +223,10 @@ async function start(
 		if (!keep) rmSync(home, { recursive: true, force: true, maxRetries: 5 });
 	};
 	t.after(stop);
-	return { ctx, rt, home, platform, fake, prompts, agents, emitEvent, flush, until, stop };
+	const refuseImage = (reason = "MODEL_DOES_NOT_SUPPORT_IMAGES"): void => {
+		refuseImages = reason;
+	};
+	return { ctx, rt, home, platform, fake, prompts, agents, emitEvent, flush, until, refuseImage, stop };
 }
 
 const FIELDS: Record<string, any> = { fake: { token: "tok-1234" }, feishu: { appId: "cli-1", appSecret: "sec-1234" } };
@@ -1097,6 +1113,9 @@ test("a Bot hands a file to the IM chat its request came from, and the copy is d
 	assert.equal(result.sent, 1);
 	const sent = await lastSent(s);
 	assert.equal(sent.text, "Here is the report");
+	// The platform needs the chat key on the message it sends: a stored chat entry is
+	// keyed by chatKey and has no key field of its own.
+	assert.equal(sent.chat.key, "dm-u1");
 	assert.equal(sent.media.length, 1);
 	assert.equal(sent.media[0].name, "report.txt");
 	assert.equal(Buffer.from(sent.media[0].data).toString(), "the numbers");
@@ -1323,4 +1342,93 @@ test("a view raised in a bound group chat is a card there and nowhere else", asy
 		card.buttons.map((button: any) => button.data),
 		["v:v2:plan:o0", "v:v2:plan:o1"],
 	);
+});
+
+// A record written before the chat key was kept on it (or one built from a stored chat
+// entry) still sends: the queue's own key is what the adapter addresses the chat by.
+test("a queued record whose chat has no key still sends to the queue's chat", async (t) => {
+	const s = await start(t, { seed: TEAM(), keep: true });
+	const conn = await add(s);
+	const home = s.home;
+	await s.stop();
+	mkdirSync(join(home, "im"), { recursive: true });
+	writeFileSync(
+		join(home, "im", `${conn.id}.outbox.json`),
+		JSON.stringify({
+			chats: {
+				"dm-u1": [
+					{
+						id: "rec-key",
+						chat: { kind: "direct", title: "u1" },
+						state: "queued",
+						attempts: 0,
+						body: "no key in the record",
+					},
+				],
+			},
+		}),
+	);
+	const again = await start(t, { home, keep: true });
+	assert.ok(
+		await again.until(() => again.fake.sent.some((entry: any) => entry.text === "no key in the record")),
+		"the record still reaches the platform",
+	);
+	const sent = again.fake.sent.find((entry: any) => entry.text === "no key in the record");
+	assert.equal(sent.chat.key, "dm-u1", "the adapter is given the chat key");
+});
+
+// An image from the chat is handed to the model as an image, labeled and with the media
+// type its bytes actually have: a declared type that disagrees is what the host refuses.
+test("an image message reaches the model as an image with its own media type", async (t) => {
+	const s = await start(t);
+	await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: Object.keys(s.rt.state.im.connections)[0], senderId: "u1", allow: true });
+	const png = Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+		"base64",
+	);
+	await dm(s, "u1", "", { images: [{ mediaType: "image/png", data: png.toString("base64") }] });
+	assert.ok(await s.until(() => s.prompts.length >= 1), "the image starts a turn");
+	const content = s.prompts.at(-1).content as any[];
+	const image = content.find((part: any) => part.type === "image");
+	assert.equal(image?.mediaType, "image/png");
+	assert.equal(image?.data, png.toString("base64"));
+	assert.ok(content.some((part: any) => part.type === "text" && /Image 1 of 1/.test(part.text)));
+});
+
+// A host that refuses the image (a model without vision, a size limit) still gets the
+// turn: the image is attached as a file the model's tools can open, and it is told so.
+test("an image the host refuses is attached as a file instead of losing the turn", async (t) => {
+	const uploads: string[] = [];
+	const s = await start(t, {
+		services: {
+			fileUploads: {
+				uploadStream: async (input: any) => {
+					uploads.push(String(input.name ?? "file"));
+					return { receiptId: `receipt-${uploads.length}` };
+				},
+			},
+		},
+	});
+	await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: Object.keys(s.rt.state.im.connections)[0], senderId: "u1", allow: true });
+	s.refuseImage("MODEL_DOES_NOT_SUPPORT_IMAGES");
+	const png = Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+		"base64",
+	);
+	await dm(s, "u1", "look", { images: [{ mediaType: "image/png", data: png.toString("base64") }] });
+	assert.ok(await s.until(() => s.prompts.length >= 2), "the turn starts on the second attempt");
+	const first = s.prompts[0].content as any[];
+	assert.ok(
+		first.some((part: any) => part.type === "image"),
+		"the first attempt carried the image",
+	);
+	const second = s.prompts[1].content as any[];
+	assert.ok(!second.some((part: any) => part.type === "image"), "the retry carries no image");
+	assert.ok(second.some((part: any) => part.type === "file" && part.receiptId === "receipt-1"));
+	assert.ok(second.some((part: any) => part.type === "text" && /attached as 1 file/.test(part.text)));
+	assert.equal(uploads[0], "image-1.png");
 });
