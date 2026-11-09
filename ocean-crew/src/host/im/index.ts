@@ -740,8 +740,25 @@ export function install(rt: any) {
 	};
 	const sendText = async (conn: any, chat: any, body: any, buttons?: any, after?: any) =>
 		await enqueue(conn, chat.key, { chat, text: body, buttons, after });
-	const sendTo = async (conn: any, chatKey: any, chat: any, body: any, buttons?: any, after?: any, replyTo?: string) =>
-		await enqueue(conn, chatKey, { chat, text: body, buttons, after, ...(replyTo ? { replyTo } : {}) });
+	const sendTo = async (
+		conn: any,
+		chatKey: any,
+		chat: any,
+		body: any,
+		buttons?: any,
+		after?: any,
+		replyTo?: string,
+		look?: { card?: boolean; title?: string },
+	) =>
+		await enqueue(conn, chatKey, {
+			chat,
+			text: body,
+			buttons,
+			after,
+			...(replyTo ? { replyTo } : {}),
+			...(look?.card === true ? { card: true } : {}),
+			...(look?.title === undefined ? {} : { title: look.title }),
+		});
 
 	// Status reactions mark the message that asked for the work while its turn runs
 	// and settle to the outcome when the turn ends (dsh-im's status-reaction
@@ -1835,6 +1852,7 @@ export function install(rt: any) {
 					? item.text
 					: viewCardText({ title: item.title, view: item.view }) || (item.title ?? "");
 			const replyTo = originOf(requestId)?.messageId;
+			const title = rt.botOf(botId)?.name;
 			for (const { conn, chatKey, chat } of targets)
 				sendTo(
 					conn,
@@ -1844,6 +1862,7 @@ export function install(rt: any) {
 					undefined,
 					undefined,
 					replyTo,
+					{ card: true, ...(title === undefined ? {} : { title }) },
 				);
 		}
 	});
@@ -1861,7 +1880,19 @@ export function install(rt: any) {
 		// origin sends nothing, and a stale binding sends nothing either.
 		const targets = replyTargets(ownerOrigins.get(room.id), `room:${room.id}`);
 		for (const { conn, chatKey, chat } of targets)
-			sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body);
+			sendTo(
+				conn,
+				chatKey,
+				{ key: chatKey, kind: chat.kind, title: chat.title },
+				body,
+				undefined,
+				undefined,
+				undefined,
+				{
+					card: true,
+					title: room.name,
+				},
+			);
 	});
 
 	rt.onApproval((kind: any, data: any) => {

@@ -327,6 +327,10 @@ test("outbound: an assistant message goes to the paired chat, hidden turns and u
 	s.emitEvent("a", "assistant/message", { message: { content: [{ type: "text", text: "visible reply" }] } });
 	assert.equal(await s.until(() => s.fake.sent.length === 1), true);
 	assert.equal(s.fake.sent[0].text, "visible reply");
+	// The chat renders a Bot answer the way the platform's own client does: as a card
+	// carrying the Bot's name, not as an anonymous bubble.
+	assert.equal(s.fake.sent[0].card, true);
+	assert.equal(s.fake.sent[0].title, "Chief");
 	// A hidden turn's answer is another Bot's; a user's own line is not repeated.
 	s.rt.state.exchangeTurns.a = [7];
 	s.emitEvent("a", "assistant/message", {

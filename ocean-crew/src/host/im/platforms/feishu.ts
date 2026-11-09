@@ -411,6 +411,13 @@ const MARKDOWN_HINT =
 // at a glance, the way a chat client shows a pending decision. The body and the button
 // row follow the shapes the platform's own client renders as a normal card; a legacy
 // `action` container leaves the card unstyled (a grey block) on current clients.
+const replyCard = (text: string, title: string | undefined): string =>
+	JSON.stringify({
+		schema: "2.0",
+		...(title === undefined ? {} : { header: { title: { tag: "plain_text", content: title }, template: "blue" } }),
+		body: { elements: [{ tag: "markdown", content: text }] },
+	});
+
 const card = (text: string, buttons: any[]): string => {
 	const row =
 		buttons === undefined || buttons.length === 0
@@ -788,7 +795,7 @@ const feishu = {
 		return {
 			// An answer threads under the message that asked for it, which is what makes a
 			// private chat read as a conversation rather than a wall of separate bubbles.
-			send: async (chat: any, { text, buttons, replyTo, media }: any = {}) => {
+			send: async (chat: any, { text, buttons, replyTo, media, card: asCard, title }: any = {}) => {
 				const chunks = chunkMarkdown(String(text ?? ""), TEXT_LIMIT);
 				const createBody = (type: string, body: string) => ({
 					params: { receive_id_type: "chat_id" },
@@ -804,18 +811,33 @@ const feishu = {
 				let replyToId = typeof replyTo === "string" && replyTo !== "" ? replyTo : undefined;
 				for (const [index, chunk] of chunks.entries()) {
 					const interactive = buttons !== undefined && index === chunks.length - 1;
+					// A Bot's answer reads as a card on this platform; only the first part
+					// carries the header, so a split answer is not a stack of headers.
+					const replyCardMode = asCard === true && !interactive;
 					const markup = MARKDOWN_HINT.test(chunk);
-					const msgType = interactive ? "interactive" : markup ? "post" : "text";
+					const msgType = interactive || replyCardMode ? "interactive" : markup ? "post" : "text";
 					const content = interactive
 						? card(chunk, buttons)
-						: msgType === "post"
-							? post(chunk)
-							: JSON.stringify({ text: toPlain(chunk) });
+						: replyCardMode
+							? replyCard(chunk, index === 0 ? title : undefined)
+							: msgType === "post"
+								? post(chunk)
+								: JSON.stringify({ text: toPlain(chunk) });
 					const plain = msgType === "interactive" ? msgType : "text";
 					const plainContent = msgType === "interactive" ? content : JSON.stringify({ text: toPlain(chunk) });
 					const create = () =>
 						call("Feishu send", () => client.im.message.create(createBody(msgType, content)), scrub).catch(
 							async (failure: any) => {
+								if (msgType === "interactive" && !interactive) {
+									// A card refused for its content falls back to plain text below.
+									env.log?.warn?.("ocean-crew im: feishu rejected the reply card; sending plain text");
+									return call(
+										"Feishu send",
+										() =>
+											client.im.message.create(createBody("text", JSON.stringify({ text: toPlain(chunk) }))),
+										scrub,
+									);
+								}
 								if (msgType === "interactive" || !POST_INVALID.test(String(failure?.message ?? ""))) {
 									throw failure;
 								}
@@ -901,6 +923,21 @@ const feishu = {
 						scrub,
 					);
 					return;
+				}
+				try {
+					await call(
+						"Feishu edit",
+						() =>
+							client.im.message.patch({
+								path: { message_id: String(messageId ?? "") },
+								data: { content: card(body, []) },
+							}),
+						scrub,
+					);
+					return;
+				} catch (failure) {
+					// A message sent before replies became cards is updated in place instead.
+					env.log?.warn?.("ocean-crew im: feishu card patch failed; updating the message instead");
 				}
 				const markup = MARKDOWN_HINT.test(body);
 				await call(

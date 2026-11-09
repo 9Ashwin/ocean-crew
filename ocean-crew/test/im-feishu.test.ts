@@ -32,6 +32,7 @@ function fakeSdk(overrides: any = {}) {
 		patches: [] as any[],
 		updates: [] as any[],
 		replies: [] as any[],
+		patchFailures: [] as string[],
 		messageGets: [] as any[],
 		contactGets: [] as any[],
 		uploads: [] as any[],
@@ -113,6 +114,12 @@ function fakeSdk(overrides: any = {}) {
 					},
 					patch: (payload: any) => {
 						fake.patches.push(payload);
+						const failure = fake.patchFailures.shift();
+						if (failure !== undefined) {
+							const rejected: any = new Error(failure);
+							rejected.response = { status: 400, data: { code: 230001, msg: failure } };
+							return Promise.reject(rejected);
+						}
 						return settle(fake.patchResult, { code: 0, data: {} });
 					},
 					update: (payload: any) => {
@@ -743,24 +750,25 @@ test("a reply whose target is gone is sent plainly instead of lost", async () =>
 	assert.equal(sent.messageId, "om_1");
 });
 
-test("edit patches a card and updates a text message, each on its own endpoint", async () => {
+test("edit patches the card a reply was sent as, and falls back to an update", async () => {
 	const fake = fakeSdk();
 	const { handle } = await setup(fake);
+	// Answers are cards now: settling one patches the same message.
 	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_5", { text: "done" });
-	assert.equal(fake.updates.length, 1, "a message is updated in place");
-	assert.equal(fake.patches.length, 0);
-	assert.deepEqual(fake.updates[0].path, { message_id: "om_5" });
-	assert.equal(fake.updates[0].data.msg_type, "text");
-	assert.deepEqual(JSON.parse(fake.updates[0].data.content), { text: "done" });
-	// A markdown answer is still edited as the post the platform renders.
-	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_7", { text: "**done**" });
-	assert.equal(fake.updates[1].data.msg_type, "post");
+	assert.equal(fake.patches.length, 1);
+	assert.equal(fake.updates.length, 0);
+	assert.deepEqual(JSON.parse(fake.patches[0].data.content).body.elements[0].text.content, "done");
 	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_6", {
 		text: "answered",
 		buttons: [{ data: "a:1:allow", label: "Allow" }],
 	});
-	assert.equal(fake.patches.length, 1, "a card is patched");
-	assert.equal(fake.updates.length, 2, "a card is not updated, the two texts were");
+	assert.equal(fake.patches.length, 2);
+	// A message sent before replies became cards cannot be patched: update it instead.
+	fake.patchFailures.push("message type does not support card patch");
+	await handle.edit({ key: "oc_p2p", kind: "direct" }, "om_7", { text: "old answer" });
+	assert.equal(fake.updates.length, 1, "the older message is updated in place");
+	assert.deepEqual(fake.updates[0].path, { message_id: "om_7" });
+	assert.equal(fake.updates[0].data.msg_type, "text");
 });
 
 // A post Feishu refuses is retried as plain text, so the answer still arrives.
@@ -1022,4 +1030,36 @@ test("plain prose goes as text and markdown goes as a post the platform renders"
 	const rows = JSON.parse(fake.creates[1].data.content).zh_cn.content;
 	assert.equal(rows[0][0].tag, "md");
 	assert.match(rows[0][0].text, /## 结果/);
+});
+
+test("a reply card carries the Bot's name as its header and the answer as markdown", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "## 结果\n- 已完成", card: true, title: "阿鱼" });
+	assert.equal(fake.creates[0].data.msg_type, "interactive");
+	const sent = JSON.parse(fake.creates[0].data.content);
+	assert.deepEqual(sent.header, { title: { tag: "plain_text", content: "阿鱼" }, template: "blue" });
+	assert.deepEqual(sent.body.elements, [{ tag: "markdown", content: "## 结果\n- 已完成" }]);
+});
+
+test("a long card reply repeats no header on its later parts", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "a".repeat(4001), card: true, title: "阿鱼" });
+	assert.equal(fake.creates.length, 2);
+	const first = JSON.parse(fake.creates[0].data.content);
+	const second = JSON.parse(fake.creates[1].data.content);
+	assert.equal(first.header.title.content, "阿鱼");
+	assert.equal(second.header, undefined, "the continuation has no header of its own");
+	assert.equal(fake.creates[1].data.msg_type, "interactive");
+});
+
+test("a card the platform refuses for its content falls back to plain text", async () => {
+	const fake = fakeSdk({ createFailures: ["card content is invalid"] });
+	const { handle } = await setup(fake);
+	await handle.send({ key: "oc_p2p", kind: "direct" }, { text: "hello", card: true, title: "阿鱼" });
+	assert.equal(fake.creates.length, 2);
+	assert.equal(fake.creates[0].data.msg_type, "interactive");
+	assert.equal(fake.creates[1].data.msg_type, "text");
+	assert.match(fake.creates[1].data.content, /hello/);
 });

@@ -65,7 +65,10 @@ export interface ImSendResult {
 export interface ImAdapter {
 	check(fields: Record<string, string>, env: ImEnv): Promise<{ account: { id: string; name: string } }>;
 	connect(fields: Record<string, string>, env: ImEnv, handlers: ImHandlers): ImHandle;
-	send(chat: ImChat, message: { text: string; buttons?: ImButton[]; media?: ImMedia[] }): Promise<ImSendResult>;
+	send(
+		chat: ImChat,
+		message: { text: string; buttons?: ImButton[]; media?: ImMedia[]; card?: boolean; title?: string },
+	): Promise<ImSendResult>;
 	edit?(chat: ImChat, messageId: string, message: { text: string; buttons?: ImButton[] }): Promise<void>;
 }
 
