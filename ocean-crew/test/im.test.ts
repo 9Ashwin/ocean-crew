@@ -1750,3 +1750,20 @@ test("autoReply stays quiet unless the settings ask for it", async (t) => {
 	await s.flush();
 	assert.equal(spoken.length, 0);
 });
+
+// /help lists one command per line, and a card platform gets it as a card rather than a
+// paragraph inside one grey bubble.
+test("/help lists the commands one per line, on a card where the platform draws one", async (t) => {
+	const s = await start(t, { platform: "feishu" });
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "/help");
+	await s.flush();
+	const sent = await lastSent(s);
+	assert.equal(sent.card, true, "a card carries the list");
+	assert.match(sent.text, /Commands/);
+	assert.match(sent.text, /- `\/status` · this Bot's state/);
+	assert.match(sent.text, /- `\/help` · this list/);
+	assert.equal(sent.text.split("\n").filter((line: string) => line.startsWith("- ")).length, 5);
+});

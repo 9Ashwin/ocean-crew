@@ -117,9 +117,7 @@ export function install(rt: any) {
 					? `${values.bot} 发了一个卡片，点下面的按钮就能回答。`
 					: `${values.bot} shared a card — press a button below to answer.`,
 				answered: zh() ? "已答" : "answered",
-				cmdHelp: zh()
-					? "可以用的命令：\n/status 查看这个 Bot 的状态\n/stop 停止正在进行的回合\n/new 开一段新会话\n/menu 打开操作卡片\n/help 显示这份帮助"
-					: "Commands:\n/status — this Bot's state\n/stop — stop the running turn\n/new — start a fresh conversation\n/menu — show the actions card\n/help — this list",
+				cmdHelpBody: zh() ? "可以用的命令" : "Commands",
 				cmdStatus: zh()
 					? `${values.bot}：模型 ${values.model}；${values.running ? "正在工作" : "空闲"}；已开 ${values.parts} 段会话。`
 					: `${values.bot}: model ${values.model}; ${values.running ? "working" : "idle"}; ${values.parts} conversation part(s).`,
@@ -1193,6 +1191,22 @@ export function install(rt: any) {
 		const word = (text.split(/\s+/)[0] ?? "").slice(1).toLowerCase();
 		return word === "" ? undefined : word;
 	};
+	// One command per line: a card renders the command name in bold, a plain message
+	// keeps a dot-separated line, so neither reads as a paragraph.
+	const helpBody = (card: boolean): string => {
+		const rows: Array<[string, string]> = [
+			["/status", zh() ? "查看这个 Bot 的状态" : "this Bot's state"],
+			["/stop", zh() ? "停止正在进行的回合" : "stop the running turn"],
+			["/new", zh() ? "开一段新会话" : "start a fresh conversation"],
+			["/menu", zh() ? "打开操作卡片" : "show the actions card"],
+			["/help", zh() ? "显示这份帮助" : "this list"],
+		];
+		const title = text("cmdHelpBody");
+		return card
+			? [`**${title}**`, "", ...rows.map(([name, what]) => `- \`${name}\` · ${what}`)].join("\n")
+			: [title, ...rows.map(([name, what]) => `▸ ${name} · ${what}`)].join("\n");
+	};
+
 	const statusLine = async (bot: any): Promise<string> => {
 		const model = (await rt.desiredModel?.(bot)) ?? bot.model ?? "?";
 		const parts = Array.isArray(bot.segments) ? bot.segments.length : 0;
@@ -1203,7 +1217,7 @@ export function install(rt: any) {
 		const name = commandWord(msg);
 		if (name === undefined) return false;
 		const botId = target?.botId;
-		const reply = async (body: string, buttons?: any[], look?: { title?: string }) =>
+		const reply = async (body: string, buttons?: any[], look?: { title?: string; card?: boolean }) =>
 			await sendTo(
 				conn,
 				msg.chat.key,
@@ -1214,9 +1228,10 @@ export function install(rt: any) {
 				typeof msg.messageId === "string" ? msg.messageId : undefined,
 				look,
 			);
+		const cards = imPlatform(conn.platform)?.buttons === true;
 		if (botId === undefined) {
 			if (name === "help") {
-				await reply(text("cmdHelp"));
+				await reply(helpBody(cards), undefined, cards ? { card: true, title: text("help") } : undefined);
 				return true;
 			}
 			if (name === "menu" || name === "status") {
@@ -1232,7 +1247,7 @@ export function install(rt: any) {
 		const bot = rt.botOf(botId);
 		if (bot === undefined) return true;
 		if (name === "help") {
-			await reply(text("cmdHelp"));
+			await reply(helpBody(cards), undefined, cards ? { card: true, title: bot.name } : undefined);
 			return true;
 		}
 		if (name === "menu") {
@@ -1282,7 +1297,8 @@ export function install(rt: any) {
 			if (name === "status" && bot !== undefined) {
 				await sendCardReply(conn, chat, await statusLine(bot));
 			} else if (name === "help") {
-				await sendCardReply(conn, chat, text("cmdHelp"));
+				// A button press on the actions card: the same list the /help command sends.
+				await sendCardReply(conn, chat, helpBody(true));
 			} else if (name === "stop" && bot !== undefined) {
 				const stopped = await rt.stopChat(bot.id);
 				await sendCardReply(conn, chat, text(stopped ? "stopped" : "idle"));
