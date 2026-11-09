@@ -363,9 +363,13 @@ test("question card: buttons answer it, a stranger press is ignored, settled els
 	s.fake.sent.length = 0;
 	s.rt.state.questions.a = { id: "q1", question: "Which?", options: [{ label: "yes" }, { label: "no" }] };
 	await s.rt.save();
-	await s.flush();
+	// A durable queue sends a tick after the save; wait for the card itself, not a fixed nap.
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => entry.buttons !== undefined)),
+		"question card with buttons",
+	);
 	const card = s.fake.sent.find((entry: any) => entry.buttons !== undefined);
-	assert.ok(card, "question card with buttons");
+	assert.match(card.text, /Which\?/);
 	assert.match(card.text, /Which\?/);
 	await s.fake.handlers.onAction({
 		chat: { key: "dm-u2", kind: "direct", title: "U2" },
@@ -381,16 +385,14 @@ test("question card: buttons answer it, a stranger press is ignored, settled els
 		messageId: card.messageId ?? 1,
 	});
 	assert.ok(s.rt.state.questions.a === undefined, "paired press answers");
-	await s.flush();
-	assert.equal(s.fake.edited.length, 1);
+	assert.ok(await s.until(() => s.fake.edited.length === 1), "the answered card is edited shut");
 	// Answered on the computer: the question leaves the state, the card edits shut.
 	s.rt.state.questions.a = { id: "q2", question: "Again?", options: [{ label: "x" }] };
 	await s.rt.save();
-	await s.flush();
+	assert.ok(await s.until(() => s.fake.sent.length > 1), "the second card goes out");
 	delete s.rt.state.questions.a;
 	await s.rt.save();
-	await s.flush();
-	assert.equal(s.fake.edited.length, 2);
+	assert.ok(await s.until(() => s.fake.edited.length === 2), "the second card is edited shut");
 });
 
 test("numbered reply answers the newest open card on a no-button platform", async (t) => {
@@ -1087,4 +1089,40 @@ test("a file is refused when the request did not come from an IM chat", async (t
 	const result = await s.rt.imSendFile(s.rt.chatOf("a"), { path: file });
 	assert.equal(result.sent, 0);
 	assert.match(String(result.reason), /not linked to an IM chat/);
+});
+
+// Real DSH shapes: the turn is on turn/start, and user/message only carries the rpc id.
+// The reply has to find its request through that start event, not through a turn field
+// the message never had.
+test("a real-DSH turn binds through turn/start and its answer reaches the chat", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hi");
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "turn/start", { turn: 2 });
+	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, content: [] });
+	s.emitEvent("a", "assistant/message", { turn: 2, message: { content: [{ type: "text", text: "real reply" }] } });
+	assert.ok(await s.until(() => s.fake.sent.length === 1), "the answer reaches the chat");
+	assert.equal(s.fake.sent[0].text, "real reply");
+});
+
+test("a window turn in the same session does not inherit the IM route", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hi");
+	s.fake.sent.length = 0;
+	s.emitEvent("a", "turn/start", { turn: 3 });
+	s.emitEvent("a", "user/message", { source: { kind: "user" }, content: [] });
+	s.emitEvent("a", "assistant/message", {
+		turn: 3,
+		message: { content: [{ type: "text", text: "typed at the desk" }] },
+	});
+	await s.flush();
+	assert.deepEqual(s.fake.sent, [], "a turn from the window answers the window");
 });

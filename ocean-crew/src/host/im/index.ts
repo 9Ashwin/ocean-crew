@@ -439,6 +439,11 @@ export function install(rt: any) {
 	// bound to "" so it cannot fall back to an earlier IM request.
 	const turnOrigins = new Map<string, string>();
 	const sessionOrigins = new Map<string, string>();
+	// DSH's user/message carries the message, not the turn it belongs to: the turn is on
+	// the turn/start event that opens it. The current turn is remembered from there, and a
+	// message that arrives before its turn/start is bound when the start lands.
+	const currentTurns = new Map<string, number>();
+	const waitingTurns = new Map<string, string>();
 	// Latest request that addressed each Bot or group, for lines that carry no request.
 	const ownerOrigins = new Map<string, string>();
 	const turnKey = (sessionId: string, turn: number) => `${sessionId}:${turn}`;
@@ -447,9 +452,16 @@ export function install(rt: any) {
 	};
 	// The request an outbound event belongs to. A turn with no binding does not guess:
 	// after a restart an old turn is not something to send to the last chat that spoke.
+	// The turn an event belongs to, when the event names it or when the Session's current
+	// turn was told by turn/start.
+	const turnOf = (sessionId: string, event: any): number | undefined => {
+		const named = event?.data?.turn;
+		if (typeof named === "number" && Number.isInteger(named)) return named;
+		return currentTurns.get(sessionId);
+	};
 	const requestFor = (sessionId: string, event: any): string | undefined => {
-		const turn = event?.data?.turn;
-		if (typeof turn === "number" && Number.isInteger(turn)) {
+		const turn = turnOf(sessionId, event);
+		if (turn !== undefined) {
 			const bound = turnOrigins.get(turnKey(sessionId, turn));
 			return bound === undefined || bound === "" ? undefined : bound;
 		}
@@ -1721,14 +1733,28 @@ export function install(rt: any) {
 		// Which request this turn belongs to: the rpc id DSH echoes on the user message.
 		// A turn from the window clears the session's request so it cannot inherit an
 		// older IM route.
-		if (event.type === "user/message") {
+		if (event.type === "turn/start") {
 			const turn = event.data?.turn;
-			if (typeof rpcId === "string" && rpcId.startsWith("im:")) {
-				sessionOrigins.set(session.id, rpcId);
-				bindTurn(session.id, turn, rpcId);
+			if (typeof turn === "number" && Number.isInteger(turn)) {
+				currentTurns.set(session.id, turn);
+				const waiting = waitingTurns.get(session.id);
+				if (waiting !== undefined) {
+					waitingTurns.delete(session.id);
+					bindTurn(session.id, turn, waiting);
+				}
+			}
+		}
+		if (event.type === "turn/end") currentTurns.delete(session.id);
+		if (event.type === "user/message") {
+			const turn = turnOf(session.id, event);
+			const wanted = typeof rpcId === "string" && rpcId.startsWith("im:") ? rpcId : "";
+			if (typeof rpcId === "string" && rpcId.startsWith("im:")) sessionOrigins.set(session.id, rpcId);
+			else sessionOrigins.delete(session.id);
+			if (turn === undefined) {
+				// The start event has not arrived yet: keep the id and bind it when it does.
+				waitingTurns.set(session.id, wanted);
 			} else {
-				sessionOrigins.delete(session.id);
-				bindTurn(session.id, turn, "");
+				bindTurn(session.id, turn, wanted);
 			}
 		}
 		const requestId = requestFor(session.id, event);
