@@ -792,8 +792,8 @@ test("a mirroring connection still reaches every chat of that Bot", async (t) =>
 	const conn = await add(s);
 	await s.rt.imEndpoint("im-update", { id: conn.id, mirror: "all" });
 	await dm(s, "u1", "hello");
-	await s.flush();
-	assert.ok(s.fake.sent.length > 0, "the message was answered");
+	// A durable queue starts the send a tick later; a fixed nap is too short on CI.
+	assert.ok(await s.until(() => s.fake.sent.length > 0), "the message was answered");
 });
 
 // ---------------------------------------------------------------------------
