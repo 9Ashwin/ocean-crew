@@ -117,6 +117,31 @@ export function install(rt: any) {
 					? `${values.bot} 发了一个卡片，点下面的按钮就能回答。`
 					: `${values.bot} shared a card — press a button below to answer.`,
 				answered: zh() ? "已答" : "answered",
+				cmdHelp: zh()
+					? "可以用的命令：\n/status 查看这个 Bot 的状态\n/stop 停止正在进行的回合\n/new 开一段新会话\n/menu 打开操作卡片\n/help 显示这份帮助"
+					: "Commands:\n/status — this Bot's state\n/stop — stop the running turn\n/new — start a fresh conversation\n/menu — show the actions card\n/help — this list",
+				cmdStatus: zh()
+					? `${values.bot}：模型 ${values.model}；${values.running ? "正在工作" : "空闲"}；已开 ${values.parts} 段会话。`
+					: `${values.bot}: model ${values.model}; ${values.running ? "working" : "idle"}; ${values.parts} conversation part(s).`,
+				cmdStopped: zh() ? "已停止当前回合。" : "Stopped the running turn.",
+				cmdNothingRunning: zh() ? "现在没有在运行的任务。" : "Nothing is running.",
+				cmdNewStarted: zh()
+					? "已开始一段新会话，之前的上下文留在了上一段。"
+					: "Started a fresh conversation; the earlier context stays in the previous part.",
+				cmdNewBusy: zh()
+					? "Bot 正在工作，先 /stop 或等它结束。"
+					: "The Bot is working; /stop first or wait for it to finish.",
+				cmdGroupOnly: zh()
+					? "这个命令只能在和 Bot 的私聊里用。"
+					: "This command only works in a direct chat with the Bot.",
+				menuBody: zh() ? `${values.bot} 的操作：下面是常用动作。` : `${values.bot} actions — pick one below.`,
+				stop: zh() ? "停止" : "Stop",
+				newPart: zh() ? "开新会话" : "New conversation",
+				status: zh() ? "状态" : "Status",
+				help: zh() ? "帮助" : "Help",
+				cmdUnknown: zh()
+					? `没有这个命令：${values.name}。发 /help 看看。`
+					: `No such command: ${values.name}. Send /help.`,
 				imageAsFile: zh()
 					? `图片没能直接给模型看（可能是当前模型不支持看图或文件过大），已作为 ${values.count} 个文件附上，可以用工具打开。`
 					: `The image could not be shown to the model (the model may not read images, or the file was too large); it is attached as ${values.count} file(s) for your tools to open.`,
@@ -1037,6 +1062,9 @@ export function install(rt: any) {
 			await sendText(conn, msg.chat, text(msg.chat.kind === "group" ? "unboundGroup" : "unbound"));
 			return;
 		}
+		// A slash command is answered here, never queued into the Bot's Session: it is a
+		// request about the chat, not work for the model.
+		if (await runCommand(conn, msg, target)) return;
 		const sessionId = target.botId ?? target.roomId;
 		const env = await envFor(conn);
 		const upload = async (file: any): Promise<string | undefined> => {
@@ -1117,6 +1145,86 @@ export function install(rt: any) {
 		if (target.botId !== undefined) beginReaction(conn, msg, sessionId, requestId);
 	};
 
+	const commandWord = (msg: any): string | undefined => {
+		if ((Array.isArray(msg.images) && msg.images.length > 0) || (Array.isArray(msg.files) && msg.files.length > 0))
+			return undefined;
+		const text = String(msg.text ?? "").trim();
+		if (!text.startsWith("/")) return undefined;
+		const word = (text.split(/\s+/)[0] ?? "").slice(1).toLowerCase();
+		return word === "" ? undefined : word;
+	};
+	const statusLine = async (bot: any): Promise<string> => {
+		const model = (await rt.desiredModel?.(bot)) ?? bot.model ?? "?";
+		const parts = Array.isArray(bot.segments) ? bot.segments.length : 0;
+		const running = rt.live.get(rt.chatOf(bot.id))?.turn !== undefined;
+		return text("cmdStatus", { bot: bot.name, model, running, parts });
+	};
+	const runCommand = async (conn: any, msg: any, target: any): Promise<boolean> => {
+		const name = commandWord(msg);
+		if (name === undefined) return false;
+		const botId = target?.botId;
+		const reply = async (body: string, buttons?: any[], look?: { title?: string }) =>
+			await sendTo(
+				conn,
+				msg.chat.key,
+				msg.chat,
+				body,
+				buttons,
+				undefined,
+				typeof msg.messageId === "string" ? msg.messageId : undefined,
+				look,
+			);
+		if (botId === undefined) {
+			if (name === "help") {
+				await reply(text("cmdHelp"));
+				return true;
+			}
+			if (name === "menu" || name === "status") {
+				await reply(text("cmdGroupOnly"));
+				return true;
+			}
+			if (name === "stop" || name === "new") {
+				await reply(text("cmdGroupOnly"));
+				return true;
+			}
+			return true;
+		}
+		const bot = rt.botOf(botId);
+		if (bot === undefined) return true;
+		if (name === "help") {
+			await reply(text("cmdHelp"));
+			return true;
+		}
+		if (name === "menu") {
+			const buttons =
+				imPlatform(conn.platform)?.buttons === true
+					? [
+							{ data: "c:stop", label: text("stop") },
+							{ data: "c:new", label: text("newPart") },
+							{ data: "c:status", label: text("status") },
+							{ data: "c:help", label: text("help") },
+						]
+					: undefined;
+			await reply(text("menuBody", { bot: bot.name }), buttons, { title: bot.name });
+			return true;
+		}
+		if (name === "status") {
+			await reply(await statusLine(bot));
+			return true;
+		}
+		if (name === "new") {
+			try {
+				await rt.newPart?.(rt.chatOf(bot.id));
+				await reply(text("cmdNewStarted"));
+			} catch (error: any) {
+				await reply(error?.code === "bot/busy" ? text("cmdNewBusy") : text("cmdNewBusy"));
+			}
+			return true;
+		}
+		await reply(text("cmdUnknown", { name }));
+		return true;
+	};
+
 	const onAction = (conn: any) => async (action: any) => {
 		if (!paired(conn, action.sender.id)) return;
 		const data = String(action.data ?? "");
@@ -1126,6 +1234,30 @@ export function install(rt: any) {
 		const cut = data.lastIndexOf(":");
 		const cardKey = data.slice(0, cut);
 		const choice = data.slice(cut + 1);
+		if (data.startsWith("c:") && data.length > 2) {
+			const name = data.slice(2);
+			const chat = { key: action.chat.key, kind: action.chat.kind, title: action.chat.title };
+			const held = resolveTarget(conn, conn.chats?.[action.chat.key]);
+			const bot = held?.botId === undefined ? undefined : rt.botOf(held.botId);
+			if (name === "status" && bot !== undefined) {
+				await sendCardReply(conn, chat, await statusLine(bot));
+			} else if (name === "help") {
+				await sendCardReply(conn, chat, text("cmdHelp"));
+			} else if (name === "stop" && bot !== undefined) {
+				const stopped = await rt.stopChat(bot.id);
+				await sendCardReply(conn, chat, text(stopped ? "stopped" : "idle"));
+			} else if (name === "new" && bot !== undefined) {
+				try {
+					await rt.newPart?.(rt.chatOf(bot.id));
+					await sendCardReply(conn, chat, text("cmdNewStarted"));
+				} catch {
+					await sendCardReply(conn, chat, text("cmdNewBusy"));
+				}
+			} else {
+				await sendCardReply(conn, chat, text("cmdGroupOnly"));
+			}
+			return;
+		}
 		if (data.startsWith("q:") && cut > 2) {
 			const found = questionById(cardKey.slice(2));
 			const label = found?.question.options?.[Number(choice)]?.label;

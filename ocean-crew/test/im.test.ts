@@ -1433,3 +1433,75 @@ test("an image the host refuses is attached as a file instead of losing the turn
 	assert.ok(second.some((part: any) => part.type === "text" && /attached as 1 file/.test(part.text)));
 	assert.equal(uploads[0], "image-1.png");
 });
+
+// Slash commands answer in the chat instead of starting a turn: they are controls, and a
+// Bot Session must not be billed for them.
+test("/help and /status answer the chat without a turn", async (t) => {
+	const s = await start(t);
+	await add(s);
+	await s.rt.state.im.connections[Object.keys(s.rt.state.im.connections)[0]].paired.push({
+		id: "u1",
+		name: "U1",
+		at: 1,
+	});
+	await s.rt.save();
+	await dm(s, "u1", "/help");
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => /\/status/.test(String(entry.text)))));
+	assert.equal(s.prompts.length, 0, "a command starts no turn");
+	await dm(s, "u1", "/status");
+	assert.ok(
+		await s.until(() =>
+			s.fake.sent.some((entry: any) => /Chief/.test(String(entry.text)) && /idle/.test(String(entry.text))),
+		),
+	);
+	assert.equal(s.prompts.length, 0);
+	// An unknown command says so rather than reaching the model.
+	await dm(s, "u1", "/nonsense");
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => /No such command/.test(String(entry.text)))));
+	assert.equal(s.prompts.length, 0);
+});
+
+test("/stop cancels the running turn and /menu sends a card with its actions", async (t) => {
+	const s = await start(t);
+	await add(s);
+	await s.rt.state.im.connections[Object.keys(s.rt.state.im.connections)[0]].paired.push({
+		id: "u1",
+		name: "U1",
+		at: 1,
+	});
+	await s.rt.save();
+	await dm(s, "u1", "do something");
+	s.emitEvent("a", "turn/start", { turn: 1 });
+	assert.equal(s.rt.live.get("a")?.turn, 1);
+	await dm(s, "u1", "/stop");
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => /Stopped/.test(String(entry.text)))));
+	assert.equal(s.agents.get("a")?.cancelled, true, "the turn was cancelled");
+	await dm(s, "u1", "/menu");
+	assert.ok(
+		await s.until(() =>
+			s.fake.sent.some(
+				(entry: any) => Array.isArray(entry.buttons) && entry.buttons.some((b: any) => b.data === "c:stop"),
+			),
+		),
+		"the menu card carries its actions",
+	);
+});
+
+test("a slash command in a group chat is refused with a pointer to the direct chat", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	// The group has to be heard once before it can be bound.
+	await gm(s, "u1", "@fakebot hello");
+	await s.flush();
+	await s.rt.imEndpoint("im-chat", { id: conn.id, chatKey: "g1", target: { roomId: "r1" } });
+	await s.flush();
+	s.fake.sent.length = 0;
+	const prompts = s.prompts.length;
+	await gm(s, "u1", "/status");
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => /only works in a direct chat/.test(String(entry.text)))),
+	);
+	assert.equal(s.prompts.length, prompts, "a group command starts no turn");
+});

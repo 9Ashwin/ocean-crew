@@ -1159,3 +1159,37 @@ test("a document with a caption leaves as a text answer and its own file message
 	);
 	assert.deepEqual(JSON.parse(fake.creates[1].data.content), { file_key: "file_up_1" });
 });
+
+// A forwarded conversation's images are attachments too: the entry names the message it
+// came from, and the image is fetched from there like a plain image message.
+test("an image inside a forwarded conversation is downloaded", async () => {
+	const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 9]);
+	const fake = fakeSdk({ resources: { img_fwd: jpeg } });
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_id: "om_merge",
+			message_type: "merge_forward",
+			content: JSON.stringify({
+				title: "Earlier chat",
+				messages: [
+					{
+						message_id: "om_child",
+						message_type: "image",
+						content: JSON.stringify({ image_key: "img_fwd" }),
+						sender_name: "Alice",
+					},
+				],
+			}),
+		}),
+		() => messages.length === 1,
+	);
+	assert.equal(messages.length, 1);
+	assert.equal(messages[0].images.length, 1);
+	assert.equal(messages[0].images[0].mediaType, "image/jpeg");
+	assert.equal(messages[0].images[0].data, jpeg.toString("base64"));
+	assert.doesNotMatch(String(messages[0].text), /\[Image\]/);
+	assert.match(String(messages[0].text), /Earlier chat/);
+});

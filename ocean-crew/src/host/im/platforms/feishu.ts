@@ -337,6 +337,31 @@ const mergeForwardText = (content: any): string => {
 	return lines.join("\n");
 };
 
+const mergeForwardImages = (content: any): Array<{ messageId: string; imageKey: string }> => {
+	const entries: any[] = [];
+	for (const key of ["messages", "items", "message_list", "records", "content"]) {
+		const value = content?.[key];
+		if (Array.isArray(value)) entries.push(...value);
+	}
+	const parts: Array<{ messageId: string; imageKey: string }> = [];
+	for (const entry of entries.slice(0, 8)) {
+		if (entry === null || typeof entry !== "object") continue;
+		const messageId = String(entry.message_id ?? entry.messageId ?? "");
+		if (messageId === "") continue;
+		const type = String(entry.message_type ?? entry.msg_type ?? "");
+		const parsed = typeof entry.content === "string" ? parseJson(entry.content) : (entry.content ?? {});
+		if (type === "image") {
+			const key = String(parsed?.image_key ?? "");
+			if (key !== "") parts.push({ messageId, imageKey: key });
+			continue;
+		}
+		if (type === "post") {
+			for (const key of postImageKeys(parsed)) parts.push({ messageId, imageKey: key });
+		}
+	}
+	return parts.slice(0, 4);
+};
+
 const shareChatText = (content: any): string => {
 	const name = firstText(content, ["chat_name", "name", "title"]);
 	const id = String(content?.chat_id ?? content?.open_chat_id ?? content?.share_chat_id ?? "");
@@ -446,7 +471,7 @@ const replyCard = (text: string, title: string | undefined): string =>
 		body: { elements: [{ tag: "markdown", content: text }] },
 	});
 
-const card = (text: string, buttons: any[]): string => {
+const card = (text: string, buttons: any[], title?: string): string => {
 	const row =
 		buttons === undefined || buttons.length === 0
 			? []
@@ -474,7 +499,7 @@ const card = (text: string, buttons: any[]): string => {
 	return JSON.stringify({
 		schema: "2.0",
 		header: {
-			title: { tag: "plain_text", content: "Action needed" },
+			title: { tag: "plain_text", content: title ?? "Action needed" },
 			template: "blue",
 		},
 		body: {
@@ -666,6 +691,18 @@ const feishu = {
 					const images: Array<{ mediaType: string; data: string }> = [];
 					const files: Array<{ name: string; data: Buffer }> = [];
 					let renderedText = rendered;
+					if (type === "merge_forward") {
+						for (const part of mergeForwardImages(content)) {
+							try {
+								const bytes = await messageResource(client, part.messageId, part.imageKey, "image");
+								images.push({ mediaType: imageMediaTypeOf(bytes), data: bytes.toString("base64") });
+								renderedText = renderedText.replace(/\[Image\]/, "");
+							} catch (error) {
+								warn("ocean-crew im: feishu forwarded image download failed: %s", error);
+							}
+						}
+						renderedText = renderedText.replace(/\n{3,}/g, "\n\n").trim();
+					}
 					if (type === "post") {
 						const keys = postImageKeys(content);
 						let read = 0;
@@ -926,7 +963,7 @@ const feishu = {
 					const msgType =
 						interactive || replyCardMode ? "interactive" : caption.length > 0 ? "post" : markup ? "post" : "text";
 					const content = interactive
-						? card(chunk, buttons)
+						? card(chunk, buttons, title)
 						: replyCardMode
 							? replyCard(chunk, index === 0 ? title : undefined)
 							: caption.length > 0
