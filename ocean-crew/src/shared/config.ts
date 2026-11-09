@@ -21,6 +21,8 @@ export interface PluginConfig {
 		language?: string;
 		format?: string;
 		instructions?: string;
+		/** Try a native voice bubble on WeChat; default sends the audio as a file. */
+		voiceItem?: boolean;
 	};
 	im?: Record<string, unknown>;
 	checkRatio?: number;

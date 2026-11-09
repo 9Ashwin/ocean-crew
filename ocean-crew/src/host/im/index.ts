@@ -794,6 +794,7 @@ export function install(rt: any) {
 			saved.push({
 				...(await saveMedia(item.kind, item.name, item.data)),
 				...(item.mime === undefined ? {} : { mime: item.mime }),
+				...(item.voice === true ? { voice: true } : {}),
 			});
 		// The record is written before the queue is touched, like a text: a body that
 		// cannot be queued is refused instead of silently lost.
@@ -2432,7 +2433,7 @@ export function install(rt: any) {
 	// origin record of the turn decides the targets, exactly as a text answer does.
 	const imSendFile = async (
 		sessionId: string,
-		file: { path: string; note?: string; name?: string },
+		file: { path: string; note?: string; name?: string; voice?: boolean },
 	): Promise<{ sent: number; reason?: string }> => {
 		const owner = ownerOfSession(sessionId);
 		if (owner === undefined) return { sent: 0, reason: "this conversation is not linked to an IM chat" };
@@ -2463,7 +2464,7 @@ export function install(rt: any) {
 					// The adapter reads the chat's key from the message it is given; a stored
 					// chat entry is keyed by chatKey and does not carry it back.
 					{ ...target.chat, key: target.chatKey },
-					[{ kind, name, mime, data }],
+					[{ kind, name, mime, data, ...(file.voice === true ? { voice: true } : {}) }],
 					String(file.note ?? ""),
 				)
 			)
@@ -2472,5 +2473,19 @@ export function install(rt: any) {
 		return { sent };
 	};
 
-	Object.assign(rt, { imView, imStatusView, imViaView, imEndpoint, imSendFile });
+	// Which audio container the chat behind this request can draw a voice message from:
+	// Feishu only from opus, WeChat's own bubble from mp3 (and its client ignores bot
+	// voice bubbles, so plain audio is a file there). Unknown chats get no preference.
+	const imVoicePlan = (sessionId: string): { platform?: string; format?: string } => {
+		const owner = ownerOfSession(sessionId);
+		if (owner === undefined) return {};
+		const requestId = ownerOrigins.get(owner);
+		const targets = replyTargets(requestId, rt.roomOf(owner) !== undefined ? `room:${owner}` : `bot:${owner}`);
+		const platform = targets[0]?.conn?.platform;
+		if (platform === "feishu") return { platform, format: "opus" };
+		if (platform === "weixin") return { platform, format: "mp3" };
+		return { platform };
+	};
+
+	Object.assign(rt, { imView, imStatusView, imViaView, imEndpoint, imSendFile, imVoicePlan });
 }

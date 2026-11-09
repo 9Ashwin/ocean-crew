@@ -110,3 +110,21 @@ test("long text is spoken in sentence-sized requests and joined", async (t) => {
 	for (const body of bodies) assert.ok(body.text.length <= 1000);
 	assert.equal(audio.bytes.byteLength, bodies.length, "the parts are joined in order");
 });
+
+test("a caller can ask for the container the chat can play", async (t) => {
+	const dir = home();
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const urls: string[] = [];
+	const original = globalThis.fetch;
+	globalThis.fetch = (async (url: any) => {
+		urls.push(String(url));
+		return new Response(Buffer.from("opus-bytes"), { status: 200 });
+	}) as any;
+	t.after(() => {
+		globalThis.fetch = original;
+	});
+	const rt = runtime(dir, { voice: "voc_1", format: "mp3" }, { BREEZE_API_KEY: "brz_test" });
+	const audio = await rt.speak("hello", "opus");
+	assert.equal(audio.name, "voice.opus");
+	assert.match(urls[0], /output_format=opus$/);
+});

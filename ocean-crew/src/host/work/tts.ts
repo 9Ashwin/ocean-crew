@@ -56,7 +56,11 @@ export function install(rt: Runtime): void {
 	const enabled = (): boolean => config().enabled !== false && rt.secretValue?.(secretName()) !== undefined;
 	const secretName = (): string => String(config().secret ?? DEFAULT_SECRET);
 	const base = (): string => String(config().baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
-	const format = (): string => String(config().format ?? "mp3").replace(/[^a-z0-9_]/gi, "");
+	// The provider names the output container; a caller may override it (Feishu draws a
+	// voice bubble only from opus, while a plain audio file plays as-is on any platform).
+	const format = (override?: string): string =>
+		String(override ?? config().format ?? "mp3").replace(/[^a-z0-9_]/gi, "");
+
 	let voices: { at: number; first: string | undefined } | undefined;
 
 	// Without a configured voice, the account's first saved voice is used; the lookup is
@@ -86,7 +90,7 @@ export function install(rt: Runtime): void {
 		return voices.first;
 	};
 
-	const speak = async (text: string): Promise<{ bytes: Buffer; name: string }> => {
+	const speak = async (text: string, formatOverride?: string): Promise<{ bytes: Buffer; name: string }> => {
 		const raw = String(text ?? "").trim();
 		if (raw === "") throw refusals.invalid("Nothing to speak");
 		const key = rt.secretValue?.(secretName());
@@ -96,7 +100,7 @@ export function install(rt: Runtime): void {
 		const chunks = splitSpeech(raw);
 		const parts: Buffer[] = [];
 		for (const chunk of chunks) {
-			const url = `${base()}/v1/text-to-speech/${encodeURIComponent(chosen)}?output_format=${encodeURIComponent(format())}`;
+			const url = `${base()}/v1/text-to-speech/${encodeURIComponent(chosen)}?output_format=${encodeURIComponent(format(formatOverride))}`;
 			const body: Record<string, unknown> = { text: chunk };
 			if (typeof config().model === "string" && config().model !== "") body.model_id = config().model;
 			if (typeof config().language === "string" && config().language !== "") body.language_code = config().language;
@@ -126,7 +130,7 @@ export function install(rt: Runtime): void {
 		const audio = Buffer.concat(parts);
 		if (audio.byteLength > MAX_VOICE_BYTES)
 			throw refusals.invalid("The spoken answer is too long to send as one voice message");
-		return { bytes: audio, name: `voice.${format()}` };
+		return { bytes: audio, name: `voice.${format(formatOverride)}` };
 	};
 
 	Object.assign(rt, { speak, speakEnabled: enabled });

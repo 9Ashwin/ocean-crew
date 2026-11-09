@@ -216,9 +216,18 @@ async function start(
 		}
 		return check();
 	};
+	let finished = false;
 	const stop = async (): Promise<void> => {
+		// A test may stop its runtime itself and the after-hook then calls this again; the
+		// second call must not touch the shared platform list, where a missing index would
+		// splice away a real platform.
+		if (finished) return;
+		finished = true;
 		(adapters as Record<string, any>)[platform] = real;
-		if (addedPlatform) IM_PLATFORMS.splice(IM_PLATFORMS.indexOf(addedPlatform as any), 1);
+		if (addedPlatform) {
+			const at = IM_PLATFORMS.indexOf(addedPlatform as any);
+			if (at !== -1) IM_PLATFORMS.splice(at, 1);
+		}
 		await ctx.dispose?.();
 		if (!keep) rmSync(home, { recursive: true, force: true, maxRetries: 5 });
 	};
@@ -1664,4 +1673,16 @@ test("imNotify: false keeps a scheduled answer out of IM", async (t) => {
 	s.emitEvent("a", "turn/end", { turn: 1, reason: { kind: "completed" } });
 	await s.flush();
 	assert.equal(s.fake.sent.length, 0, "nothing is pushed");
+});
+
+// The chat decides the audio container for a spoken answer: a Feishu voice bubble is
+// drawn only from opus, and a platform without a known voice message gets no preference.
+test("the voice plan names the container the chat can draw", async (t) => {
+	const s = await start(t, { platform: "feishu" });
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "hello");
+	await s.flush();
+	assert.deepEqual(s.rt.imVoicePlan(s.rt.chatOf("a")), { platform: "feishu", format: "opus" });
 });

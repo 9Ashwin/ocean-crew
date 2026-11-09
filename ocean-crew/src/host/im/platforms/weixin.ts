@@ -654,7 +654,7 @@ const weixin = {
 							.split(".")
 							.pop()
 							?.toLowerCase() ?? "";
-					const voiceCodec = item.kind === "image" ? undefined : VOICE_CODECS[ext];
+					const voiceCodec = item.kind === "image" || item.voice !== true ? undefined : VOICE_CODECS[ext];
 					const uploadType = image ? 1 : voiceCodec === undefined ? 3 : 4;
 					const answer = await request(
 						env,
@@ -783,8 +783,9 @@ const weixin = {
 	},
 };
 
-// The voice codecs iLink names in a voice item; an audio file with one of these
-// extensions is sent as a voice message instead of a generic file.
+// The voice codecs iLink names in a voice item. A media item is sent as a voice message
+// only when its sender asks for one: the WeChat client does not render bot voice bubbles
+// reliably, so the default for spoken audio is a playable file.
 const VOICE_CODECS: Record<string, number> = { mp3: 7, amr: 5, silk: 6, ogg: 8, opus: 8 };
 
 // Visible length: a limit counts what the reader sees, so an emoji costs one, not two.

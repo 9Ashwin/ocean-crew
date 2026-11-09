@@ -114,6 +114,9 @@
 - 文字转语音：`speak` 工具把一段短文本交给配置的语音模型（Breeze Blue HTTP API），拿到音频后按
   「发文件」的同一条链路送到这一轮请求的来源聊天；微信侧因此是一条语音消息，飞书侧是音频文件。
   密钥只从 secret 读取，不进配置、状态或工具结果；没有配置时工具直接说明而不是静默失败。
+- 语音容器按聊天平台选择：飞书的「语音条」只认 opus，所以 `speak` 在飞书请求 **opus** 输出（`voice.opus` → 上传
+  `opus` + `audio` 消息）；微信默认发 `.mp3` 音频文件（客户端不渲染机器人语音条），`tts.voiceItem: true` 时才尝试
+  原生 voice item（带 `playtime` 等时长字段）。
 
 ## IM 投递与 outbox
 
@@ -187,7 +190,8 @@ host 拥有 `home` 下的所有东西（默认 `$DSH_HOME/bot`）。这些文件
 | `tts.model` | 服务端默认（`breeze-tts-2` / `breeze-tts-2-multilingual`） | 语音模型 id。 |
 | `tts.voice` | 账号里的第一个声音 | 声音 id；未配置时自动取 `/v1/voices` 的第一个并缓存 10 分钟。 |
 | `tts.language` | 不传 | ISO 639-1 语言代码，如 `zh`、`en`。 |
-| `tts.format` | `mp3` | 输出格式（`mp3`、`opus` 等，按服务端枚举）。 |
+| `tts.format` | 按平台：飞书 `opus`、微信 `mp3` | 输出格式（`mp3`、`opus` 等，按服务端枚举）；已知平台按能画语音条的容器覆盖。 |
+| `tts.voiceItem` | `false` | `true` 时微信尝试原生语音气泡（部分客户端不渲染机器人语音）；默认发 `.mp3` 音频文件，可直接播放。 |
 | `tts.instructions` | 不传 | 表演/语气指令，与文本同语言。 |
 | `textOnlyModels` | 无 | `provider/model` 引用，这些模型必须收到文本，绝不收到图片。 |
 | `handoffListTokens`、`handoffRecentTokens` | `4096`、`16384` | 交接包中列表段与最近消息段的大小。 |

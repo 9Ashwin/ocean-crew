@@ -30,6 +30,8 @@ export interface ImMedia {
 	name: string;
 	mime?: string;
 	data: Uint8Array;
+	/** Ask the platform for a voice message; a platform that cannot draw one sends a file. */
+	voice?: boolean;
 }
 
 export interface ImAction {

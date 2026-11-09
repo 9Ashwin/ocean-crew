@@ -1365,9 +1365,12 @@ export function install(rt: Runtime): void {
 				if (typeof (rt as Record<string, any>).speak !== "function")
 					return "Text to speech is not configured; answer in text instead.";
 				const id = exec.agent?.id ?? "";
+				// The chat's platform decides the container: Feishu draws a voice bubble only
+				// from opus, while a plain audio file plays anywhere.
+				const plan: any = (rt as Record<string, any>).imVoicePlan?.(id);
 				let audio: { bytes: Buffer; name: string };
 				try {
-					audio = await (rt as Record<string, any>).speak(words);
+					audio = await (rt as Record<string, any>).speak(words, plan?.format);
 				} catch (error: any) {
 					return `Nothing was spoken: ${error?.message ?? error}`;
 				}
@@ -1378,9 +1381,12 @@ export function install(rt: Runtime): void {
 				const path = join(dir, `${randomUUID()}-${audio.name}`);
 				await writeFile(path, audio.bytes, { mode: 0o600 });
 				try {
-					const result = await rt.imSendFile(id, { path, name: audio.name });
+					const voiceItem = (rt.config as Record<string, any>)?.tts?.voiceItem === true;
+					const result = await rt.imSendFile(id, { path, name: audio.name, voice: voiceItem });
 					return result.sent > 0
-						? "The voice message is on its way to the chat that asked."
+						? voiceItem
+							? "The voice message is on its way to the chat that asked."
+							: "The spoken audio is on its way to the chat that asked, as an audio file."
 						: `Nothing was sent: ${result.reason ?? "this conversation is not linked to an IM chat"}.`;
 				} catch (error: any) {
 					return `The voice message was not sent: ${error?.message ?? error}`;

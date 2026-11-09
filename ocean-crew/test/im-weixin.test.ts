@@ -1307,7 +1307,7 @@ test("an mp3 is sent as a voice item, and an unnamed audio container as a file",
 	});
 	await handle.send(
 		{ key: "u1", kind: "direct" },
-		{ text: "", media: [{ kind: "file", name: "note.mp3", data: mp3 }] },
+		{ text: "", media: [{ kind: "file", name: "note.mp3", data: mp3, voice: true }] },
 	);
 	await handle.send(
 		{ key: "u1", kind: "direct" },
