@@ -1067,7 +1067,6 @@ export function install(rt: any) {
 				labels.push(`[Image ${index + 1} arrived as a file: ${mediaType || "unknown type"}]`);
 				continue;
 			}
-			labels.push(`[Image ${index + 1} of ${images.length}]`);
 			inline.push({
 				type: "image",
 				mediaType,

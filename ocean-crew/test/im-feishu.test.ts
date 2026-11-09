@@ -56,6 +56,9 @@ function fakeSdk(overrides: any = {}) {
 		reactionCreateResult: overrides.reactionCreateResult,
 		reactionDeleteResult: overrides.reactionDeleteResult,
 		resources: overrides.resources ?? {},
+		// The real SDK resolves the upload wrappers to the API's inner data ({image_key}),
+		// not to the whole body; a test can ask for that shape.
+		unwrapUploads: overrides.unwrapUploads === true,
 		chatInfo: overrides.chatInfo ?? (() => ({ name: "Fake Group", chat_mode: "group" })),
 		sent: 0,
 	};
@@ -92,13 +95,17 @@ function fakeSdk(overrides: any = {}) {
 				image: {
 					create: (payload: any) => {
 						fake.uploads.push(["image", payload]);
-						return settle(undefined, { code: 0, data: { image_key: "img_up_1" } });
+						return settle(undefined, {
+							...(fake.unwrapUploads ? { image_key: "img_up_1" } : { code: 0, data: { image_key: "img_up_1" } }),
+						});
 					},
 				},
 				file: {
 					create: (payload: any) => {
 						fake.uploads.push(["file", payload]);
-						return settle(undefined, { code: 0, data: { file_key: "file_up_1" } });
+						return settle(undefined, {
+							...(fake.unwrapUploads ? { file_key: "file_up_1" } : { code: 0, data: { file_key: "file_up_1" } }),
+						});
 					},
 				},
 				message: {
@@ -1087,4 +1094,46 @@ test("a document, a video and an audio note are routed by their extensions", asy
 		fake.creates.map((payload: any) => payload.data.msg_type),
 		["file", "media", "audio"],
 	);
+});
+
+// A forwarded or rich-text post carries its image as an element; the image is fetched
+// like a plain image message, so it reaches the model and the chat, not an [Image] marker.
+test("an image inside a post is downloaded and the placeholder is dropped", async () => {
+	const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 8]);
+	const fake = fakeSdk({ resources: { img_post: png } });
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_id: "om_post",
+			message_type: "post",
+			content: JSON.stringify({
+				zh_cn: {
+					title: "Look",
+					content: [[{ tag: "text", text: "this screenshot" }], [{ tag: "img", image_key: "img_post" }]],
+				},
+			}),
+		}),
+		() => messages.length === 1,
+	);
+	assert.equal(messages.length, 1);
+	assert.equal(messages[0].images.length, 1);
+	assert.equal(messages[0].images[0].mediaType, "image/png");
+	assert.equal(messages[0].images[0].data, png.toString("base64"));
+	assert.doesNotMatch(String(messages[0].text), /\[Image\]/);
+});
+
+// The SDK's upload wrappers return the API's inner data, while its message calls return
+// the whole body: a file send must read the key correctly in the shape it really gets.
+test("an upload key is read from the SDK's inner data shape", async () => {
+	const fake = fakeSdk({ unwrapUploads: true });
+	const { handle } = await setup(fake);
+	await handle.send(
+		{ key: "oc_p2p", kind: "direct" },
+		{ text: "file below", media: [{ kind: "file", name: "notes.txt", data: Buffer.from("x") }] },
+	);
+	assert.equal(fake.creates.length, 1, "the caption and the file left as one message");
+	const rows = JSON.parse(fake.creates[0].data.content).zh_cn.content;
+	assert.deepEqual(rows[1], [{ tag: "media", file_key: "file_up_1", file_name: "notes.txt" }]);
 });

@@ -1394,7 +1394,8 @@ test("an image message reaches the model as an image with its own media type", a
 	const image = content.find((part: any) => part.type === "image");
 	assert.equal(image?.mediaType, "image/png");
 	assert.equal(image?.data, png.toString("base64"));
-	assert.ok(content.some((part: any) => part.type === "text" && /Image 1 of 1/.test(part.text)));
+	// No placeholder text: the chat shows the image itself, and the model gets it as one.
+	assert.ok(!content.some((part: any) => part.type === "text"), "the image needs no label");
 });
 
 // A host that refuses the image (a model without vision, a size limit) still gets the

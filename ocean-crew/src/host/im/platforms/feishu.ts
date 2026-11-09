@@ -274,6 +274,22 @@ const postText = (content: any): string => {
 	return lines.join("\n");
 };
 
+// Every image inside a post, in reading order, so the files can be fetched.
+const postImageKeys = (content: any): string[] => {
+	const payload = postPayload(content);
+	const keys: string[] = [];
+	for (const paragraph of Array.isArray(payload?.content) ? payload.content : []) {
+		if (!Array.isArray(paragraph)) continue;
+		for (const element of paragraph) {
+			const tag = String(element?.tag ?? element?.type ?? "");
+			if (tag !== "img" && tag !== "image") continue;
+			const key = String(element?.image_key ?? element?.imageKey ?? "");
+			if (key !== "") keys.push(key);
+		}
+	}
+	return keys;
+};
+
 const firstText = (payload: any, keys: string[], depth = 0): string => {
 	if (payload === null || typeof payload !== "object" || depth > 4) return "";
 	for (const key of keys) {
@@ -647,13 +663,28 @@ const feishu = {
 										: type === "interactive"
 											? interactiveText(content)
 											: "";
-					// A reply quotes the message it answers; without it the model cannot tell
-					// which earlier message this one refers to.
-					const quotedId = String(message.parent_id ?? message.upper_message_id ?? "");
-					const quoted = quotedId === "" ? "" : await quotedText(client, quotedId, scrub, warn);
-					const text = quoted === "" ? rendered : `[Replying to: "${quoted.slice(0, 500)}"]\n\n${rendered}`.trim();
 					const images: Array<{ mediaType: string; data: string }> = [];
 					const files: Array<{ name: string; data: Buffer }> = [];
+					let renderedText = rendered;
+					if (type === "post") {
+						const keys = postImageKeys(content);
+						let read = 0;
+						for (const key of keys.slice(0, 4)) {
+							try {
+								const bytes = await messageResource(client, messageId, key, "image");
+								images.push({ mediaType: imageMediaTypeOf(bytes), data: bytes.toString("base64") });
+								read += 1;
+							} catch (error) {
+								warn("ocean-crew im: feishu post image download failed: %s", error);
+							}
+						}
+						// The placeholder only stays for an image whose bytes could not be read.
+						if (read === keys.length)
+							renderedText = renderedText
+								.replace(/\[Image\]/g, "")
+								.replace(/\n{3,}/g, "\n\n")
+								.trim();
+					}
 					if (type === "image" && typeof content.image_key === "string" && content.image_key !== "") {
 						try {
 							const bytes = await messageResource(client, messageId, content.image_key, "image");
@@ -693,6 +724,12 @@ const feishu = {
 						}
 						attachment = read ? `[${kind}${length}]` : `[${kind}${length}: could not be read]`;
 					}
+					// A reply quotes the message it answers; without it the model cannot tell
+					// which earlier message this one refers to.
+					const quotedId = String(message.parent_id ?? message.upper_message_id ?? "");
+					const quoted = quotedId === "" ? "" : await quotedText(client, quotedId, scrub, warn);
+					const text =
+						quoted === "" ? renderedText : `[Replying to: "${quoted.slice(0, 500)}"]\n\n${renderedText}`.trim();
 					const body = attachment === "" ? text : [text, attachment].filter(Boolean).join("\n\n").trim();
 					// A text that was nothing but a mention still matters: the host turns
 					// it into a pairing request. Other types without readable content are
@@ -835,7 +872,7 @@ const feishu = {
 							() => client.im.image.create({ data: { image_type: "message", image: bytes } }),
 							scrub,
 						);
-						const key = String(answer?.data?.image_key ?? "");
+						const key = String(answer?.data?.image_key ?? answer?.image_key ?? "");
 						if (key === "")
 							throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
 						uploaded.push({
@@ -851,7 +888,7 @@ const feishu = {
 						() => client.im.file.create({ data: { file_type: route.upload, file_name: name, file: bytes } }),
 						scrub,
 					);
-					const key = String(answer?.data?.file_key ?? "");
+					const key = String(answer?.data?.file_key ?? answer?.file_key ?? "");
 					if (key === "")
 						throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
 					uploaded.push({
