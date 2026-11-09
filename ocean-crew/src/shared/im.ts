@@ -37,6 +37,8 @@ export interface ImAction {
 	sender: ImSender;
 	data: string;
 	messageId?: string;
+	/** Values a card form collected for the pressed button, by component name. */
+	form?: Record<string, unknown>;
 }
 
 export type ImStatusState = "connecting" | "ready" | "error";
@@ -58,6 +60,23 @@ export interface ImButton {
 	data: string;
 }
 
+/** One input a card form shows; its name is how the answer names it. */
+export interface ImCardField {
+	kind: "text" | "multi" | "select";
+	name: string;
+	label: string;
+	options?: string[];
+	initial?: string | string[];
+	multiline?: boolean;
+}
+
+/** A card form: what to collect, and the button that submits or cancels it. */
+export interface ImCardForm {
+	fields: ImCardField[];
+	submit: ImButton;
+	cancel?: ImButton;
+}
+
 export interface ImSendResult {
 	messageId?: string;
 }
@@ -67,7 +86,14 @@ export interface ImAdapter {
 	connect(fields: Record<string, string>, env: ImEnv, handlers: ImHandlers): ImHandle;
 	send(
 		chat: ImChat,
-		message: { text: string; buttons?: ImButton[]; media?: ImMedia[]; card?: boolean; title?: string },
+		message: {
+			text: string;
+			buttons?: ImButton[];
+			media?: ImMedia[];
+			card?: boolean;
+			title?: string;
+			form?: ImCardForm;
+		},
 	): Promise<ImSendResult>;
 	edit?(chat: ImChat, messageId: string, message: { text: string; buttons?: ImButton[] }): Promise<void>;
 }

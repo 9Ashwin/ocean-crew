@@ -471,7 +471,57 @@ const replyCard = (text: string, title: string | undefined): string =>
 		body: { elements: [{ tag: "markdown", content: text }] },
 	});
 
-const card = (text: string, buttons: any[], title?: string): string => {
+const cardForm = (form: any): any => ({
+	tag: "form",
+	name: "oc_form",
+	elements: [
+		...form.fields.map((field: any) =>
+			field.kind === "multi" || field.kind === "select"
+				? {
+						tag: field.kind === "multi" ? "multi_select_static" : "select_static",
+						name: field.name,
+						placeholder: { tag: "plain_text", content: field.label },
+						options: (field.options ?? []).map((option: string) => ({
+							text: { tag: "plain_text", content: option },
+							value: option,
+						})),
+						...(Array.isArray(field.initial)
+							? {}
+							: field.initial === undefined
+								? {}
+								: { initial_option: field.initial }),
+					}
+				: {
+						tag: "input",
+						name: field.name,
+						label: { tag: "plain_text", content: field.label },
+						placeholder: { tag: "plain_text", content: field.label },
+						...(field.multiline === true ? { input_type: "multiline_text" } : {}),
+						...(typeof field.initial === "string" ? { default_value: field.initial } : {}),
+					},
+		),
+		{
+			tag: "button",
+			name: "oc_submit",
+			text: { tag: "plain_text", content: form.submit.label },
+			type: "primary",
+			form_action_type: "submit",
+		},
+		...(form.cancel === undefined
+			? []
+			: [
+					{
+						tag: "button",
+						name: "oc_cancel",
+						text: { tag: "plain_text", content: form.cancel.label },
+						type: "default",
+						behaviors: [{ type: "callback", value: { action: form.cancel.data } }],
+					},
+				]),
+	],
+});
+
+const card = (text: string, buttons: any[], title?: string, form?: any): string => {
 	const row =
 		buttons === undefined || buttons.length === 0
 			? []
@@ -503,7 +553,10 @@ const card = (text: string, buttons: any[], title?: string): string => {
 			template: "blue",
 		},
 		body: {
-			elements: [{ tag: "div", text: { tag: "lark_md", content: text } }, ...row],
+			elements: [
+				{ tag: "div", text: { tag: "lark_md", content: text } },
+				...(form === undefined ? row : [cardForm(form)]),
+			],
 		},
 	});
 };
@@ -806,6 +859,11 @@ const feishu = {
 				const value = action.value;
 				const buttonData =
 					value !== null && typeof value === "object" ? (value.action ?? value.v ?? JSON.stringify(value)) : value;
+				const collected = action.form_value ?? action.formValue;
+				const form =
+					collected !== null && typeof collected === "object" && !Array.isArray(collected)
+						? (collected as Record<string, unknown>)
+						: undefined;
 				const operator = event.operator ?? {};
 				const operatorId = String(operator.open_id ?? operator.user_id ?? "");
 				const chat = await chatOf(chatId);
@@ -815,6 +873,7 @@ const feishu = {
 					sender: { id: operatorId, name: String(operator.name ?? operatorId) },
 					data: String(buttonData ?? ""),
 					messageId,
+					...(form === undefined ? {} : { form }),
 				});
 			} catch (error) {
 				warn("ocean-crew im: feishu card action failed: %s", error);
@@ -881,7 +940,7 @@ const feishu = {
 		return {
 			// An answer threads under the message that asked for it, which is what makes a
 			// private chat read as a conversation rather than a wall of separate bubbles.
-			send: async (chat: any, { text, buttons, replyTo, media, card: asCard, title }: any = {}) => {
+			send: async (chat: any, { text, buttons, replyTo, media, card: asCard, title, form }: any = {}) => {
 				// No text at all means no empty bubble: the attachments go on their own.
 				const raw = String(text ?? "");
 				const chunks = raw.trim() === "" ? [] : chunkMarkdown(raw, TEXT_LIMIT);
@@ -948,7 +1007,8 @@ const feishu = {
 					}
 				};
 				for (const [index, chunk] of chunks.entries()) {
-					const interactive = buttons !== undefined && index === chunks.length - 1;
+					// A form is an interactive card as well: its submit button reports the answer.
+					const interactive = (buttons !== undefined || form !== undefined) && index === chunks.length - 1;
 					// A Bot's answer reads as a card on this platform; only the first part
 					// carries the header, so a split answer is not a stack of headers.
 					const replyCardMode = asCard === true && !interactive;
@@ -963,7 +1023,7 @@ const feishu = {
 					const msgType =
 						interactive || replyCardMode ? "interactive" : caption.length > 0 ? "post" : markup ? "post" : "text";
 					const content = interactive
-						? card(chunk, buttons, title)
+						? card(chunk, buttons, title, form)
 						: replyCardMode
 							? replyCard(chunk, index === 0 ? title : undefined)
 							: caption.length > 0

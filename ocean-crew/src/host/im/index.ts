@@ -134,6 +134,11 @@ export function install(rt: any) {
 				cmdGroupOnly: zh()
 					? "这个命令只能在和 Bot 的私聊里用。"
 					: "This command only works in a direct chat with the Bot.",
+				submit: zh() ? "提交" : "Send",
+				cancel: zh() ? "取消" : "Cancel",
+				yes: zh() ? "是" : "Yes",
+				no: zh() ? "否" : "No",
+				pickMany: zh() ? "可多选" : "Choose one or more",
 				menuBody: zh() ? `${values.bot} 的操作：下面是常用动作。` : `${values.bot} actions — pick one below.`,
 				stop: zh() ? "停止" : "Stop",
 				newPart: zh() ? "开新会话" : "New conversation",
@@ -797,7 +802,7 @@ export function install(rt: any) {
 		buttons?: any,
 		after?: any,
 		replyTo?: string,
-		look?: { card?: boolean; title?: string },
+		look?: { card?: boolean; title?: string; form?: any },
 	) =>
 		await enqueue(conn, chatKey, {
 			chat,
@@ -807,6 +812,7 @@ export function install(rt: any) {
 			...(replyTo ? { replyTo } : {}),
 			...(look?.card === true ? { card: true } : {}),
 			...(look?.title === undefined ? {} : { title: look.title }),
+			...(look?.form === undefined ? {} : { form: look.form }),
 		});
 
 	// Status reactions mark the message that asked for the work while its turn runs
@@ -905,7 +911,36 @@ export function install(rt: any) {
 		}
 		return true;
 	};
-	const answerViewCard = async (conn: any, chat: any, cardKey: any, nodeId: any, choice: any) => {
+	const viewValues = (node: any, choice: any, form: any): any => {
+		if (node === undefined) return undefined;
+		if (choice === "cancel") return node.type === "form" ? { canceled: true } : undefined;
+		if (form !== undefined && typeof form === "object") {
+			if (node.type === "options") {
+				const key = Object.keys(form).find((name) => name.startsWith("sel:"));
+				const raw = key === undefined ? undefined : (form as any)[key];
+				const picked = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).filter(
+					(label: unknown): label is string => typeof label === "string" && label !== "",
+				);
+				return picked.length === 0 ? undefined : { selected: picked };
+			}
+			if (node.type === "form") {
+				const fields: Record<string, string> = {};
+				for (const [name, raw] of Object.entries(form)) {
+					const match = /^f:([^:]+):(.+)$/.exec(name);
+					if (match === null || match[1] !== node.id) continue;
+					fields[match[2]] = String(raw ?? "");
+				}
+				return Object.keys(fields).length === 0 ? undefined : { fields };
+			}
+		}
+		if (node.type === "confirm" && (choice === "yes" || choice === "no")) return { confirmed: choice === "yes" };
+		if (node.type === "options" && /^o\d+$/.test(String(choice))) {
+			const label = node.options?.[Number(String(choice).slice(1))]?.label;
+			return typeof label === "string" ? { selected: [label] } : undefined;
+		}
+		return undefined;
+	};
+	const answerViewCard = async (conn: any, chat: any, cardKey: any, nodeId: any, choice: any, form?: any) => {
 		const held = openCard(conn, chat.key, cardKey);
 		if (held === undefined) return false;
 		const viewId = held.cardKey.slice(2);
@@ -924,21 +959,13 @@ export function install(rt: any) {
 				for (const child of value) walk(child);
 				return;
 			}
-			if (value.type === "options" || value.type === "confirm") nodes.push(value);
+			if (["options", "confirm", "form"].includes(String(value.type))) nodes.push(value);
 			for (const child of Object.values(value)) walk(child);
 		};
 		walk(pending.view);
 		const node = nodes.find((entry: any) => entry.id === nodeId);
-		let values: any;
-		if (node?.type === "confirm" && (choice === "yes" || choice === "no")) {
-			values = { confirmed: choice === "yes" };
-		} else if (node?.type === "options" && /^o\d+$/.test(String(choice))) {
-			const label = node.options?.[Number(String(choice).slice(1))]?.label;
-			if (typeof label !== "string") return false;
-			values = { selected: [label] };
-		} else {
-			return false;
-		}
+		const values = viewValues(node, choice, form);
+		if (values === undefined) return false;
 		try {
 			await rt.answerView(sessionId, viewId, nodeId, values);
 			await settleCard(conn.id, held.cardKey, text("answered"));
@@ -1280,7 +1307,7 @@ export function install(rt: any) {
 			const inner = rest.lastIndexOf(":");
 			const viewId = rest.slice(0, inner).split(":")[0];
 			const nodeId = rest.slice(viewId.length + 1, inner);
-			if (!(await answerViewCard(conn, chat, `v:${viewId}`, nodeId, choice)))
+			if (!(await answerViewCard(conn, chat, `v:${viewId}`, nodeId, choice, action.form)))
 				await sendCardReply(conn, chat, text("stale"));
 		}
 	};
@@ -1314,7 +1341,10 @@ export function install(rt: any) {
 		],
 	};
 
-	const viewButtons = (viewId: string, view: any): any[] | undefined => {
+	// What a view's card offers: buttons for one choice, a form when several answers or
+	// typed fields are needed. The submit button carries the same `v:<view>:<node>:<choice>`
+	// data the buttons use, so the action handler stays one path.
+	const viewCardSpec = (viewId: string, view: any): { buttons?: any[]; form?: any } => {
 		const nodes: any[] = [];
 		const walk = (value: any) => {
 			if (value === null || typeof value !== "object") return;
@@ -1322,32 +1352,70 @@ export function install(rt: any) {
 				for (const child of value) walk(child);
 				return;
 			}
-			if ((value.type === "options" || value.type === "confirm") && typeof value.id === "string") nodes.push(value);
+			if ((["options", "confirm", "form"] as string[]).includes(String(value.type)) && typeof value.id === "string")
+				nodes.push(value);
 			for (const child of Object.values(value)) walk(child);
 		};
 		walk(view);
 		const node = nodes.find((entry: any) =>
 			entry.type === "options"
-				? entry.multi !== true && Array.isArray(entry.options) && entry.options.length > 0
-				: true,
+				? Array.isArray(entry.options) && entry.options.length > 0
+				: entry.type === "form"
+					? Array.isArray(entry.fields) && entry.fields.some((field: any) => typeof field?.id === "string")
+					: true,
 		);
-		if (node === undefined) return undefined;
-		const choices =
-			node.type === "options"
-				? (node.options ?? []).slice(0, 4).map((option: any, index: number) => ({
-						choice: `o${index}`,
-						label: String(option?.label ?? ""),
-					}))
-				: [
-						{ choice: "yes", label: String(node.confirmLabel ?? "Yes") },
-						{ choice: "no", label: String(node.cancelLabel ?? "No") },
-					];
-		return choices
-			.filter((choice: any) => choice.label !== "")
-			.map((choice: any) => ({
-				data: `v:${viewId}:${node.id}:${choice.choice}`,
-				label: choice.label.slice(0, 20),
+		if (node === undefined) return {};
+		if (node.type === "confirm")
+			return {
+				buttons: [
+					{ data: `v:${viewId}:${node.id}:yes`, label: String(node.confirmLabel ?? text("yes")) },
+					{ data: `v:${viewId}:${node.id}:no`, label: String(node.cancelLabel ?? text("no")) },
+				],
+			};
+		if (node.type === "options") {
+			const labels = (node.options ?? [])
+				.slice(0, 8)
+				.map((option: any) => String(option?.label ?? ""))
+				.filter((label: string) => label !== "");
+			if (node.multi !== true)
+				return {
+					buttons: labels.slice(0, 4).map((label: string, index: number) => ({
+						data: `v:${viewId}:${node.id}:o${index}`,
+						label: label.slice(0, 20),
+					})),
+				};
+			if (labels.length === 0) return {};
+			return {
+				form: {
+					fields: [{ kind: "multi", name: `sel:${node.id}`, label: text("pickMany"), options: labels }],
+					submit: { data: `v:${viewId}:${node.id}:submit`, label: text("submit") },
+				},
+			};
+		}
+		const fields = (node.fields ?? [])
+			.filter((field: any) => typeof field?.id === "string" && field.readOnly !== true)
+			.slice(0, 8)
+			.map((field: any) => ({
+				kind: "text",
+				name: `f:${node.id}:${field.id}`,
+				label: String(field.label ?? field.id),
+				multiline: field.multiline === true,
+				...(typeof field.value === "string" ? { initial: field.value } : {}),
 			}));
+		if (fields.length === 0) return {};
+		return {
+			form: {
+				fields,
+				submit: {
+					data: `v:${viewId}:${node.id}:submit`,
+					label: String(node.submitLabel ?? text("submit")),
+				},
+				cancel: {
+					data: `v:${viewId}:${node.id}:cancel`,
+					label: String(node.cancelLabel ?? text("cancel")),
+				},
+			},
+		};
 	};
 	const sendCard = async (conn: any, cardKey: any, targets: any, body: any, buttons?: any, look?: any) => {
 		for (const { chatKey, chat } of targets) {
@@ -1431,8 +1499,12 @@ export function install(rt: any) {
 				if (data.cards[cardKey] !== undefined) continue;
 				const botId = rt.chatOwners.get(sessionId);
 				const bot = rt.botOf(botId);
-				const form = viewCardText({ title: view.title, view: view.view });
-				const buttons = imPlatform(conn.platform)?.buttons === true ? viewButtons(view.id, view.view) : undefined;
+				const rendered = viewCardText({ title: view.title, view: view.view });
+				const spec = imPlatform(conn.platform)?.buttons === true ? viewCardSpec(view.id, view.view) : {};
+				const buttons = spec.buttons;
+				const look = { card: true, ...(spec.form === undefined ? {} : { form: spec.form }) };
+				const body = (name: string) =>
+					`${text(buttons === undefined && spec.form === undefined ? "viewShow" : "viewPick", { bot: name })}${rendered !== "" ? `\n${rendered}` : view.title ? `\n${view.title}` : ""}`;
 				if (bot === undefined) {
 					const room = roomOfSession(sessionId);
 					if (room === undefined) continue;
@@ -1440,9 +1512,9 @@ export function install(rt: any) {
 						conn,
 						cardKey,
 						replyTargets(ownerOrigins.get(room.id), `room:${room.id}`),
-						`${text(buttons === undefined ? "viewShow" : "viewPick", { bot: room.name ?? "this group chat" })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
+						body(room.name ?? "this group chat"),
 						buttons,
-						{ card: true, title: room.name },
+						{ ...look, title: room.name },
 					);
 					continue;
 				}
@@ -1450,9 +1522,12 @@ export function install(rt: any) {
 					conn,
 					cardKey,
 					replyTargets(sessionOrigins.get(sessionId), `bot:${botId}`),
-					`${text(buttons === undefined ? "viewShow" : "viewPick", { bot: bot.name })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
+					body(bot.name),
 					buttons,
-					{ card: true, title: bot.name },
+					{
+						...look,
+						title: bot.name,
+					},
 				);
 			}
 		}

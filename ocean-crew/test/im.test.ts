@@ -1505,3 +1505,120 @@ test("a slash command in a group chat is refused with a pointer to the direct ch
 	);
 	assert.equal(s.prompts.length, prompts, "a group command starts no turn");
 });
+
+// A multiple-choice view needs more than one press, so its card is a form: the choices
+// are a multi-select and the answer carries every chosen label at once.
+test("a multiple-choice view is a form card whose submit answers it", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "show me");
+	s.emitEvent("a", "user/message", {
+		source: { kind: "user", rpcId: s.prompts.at(-1)?.requestId },
+		turn: 4,
+		content: [],
+	});
+	const asked: any[] = [];
+	s.rt.validateViewAnswer = () => ({});
+	s.rt.viewReply = (record: any, action: any, values: any) => {
+		asked.push({ action, values });
+		return { text: "{}", source: { kind: "deep-view-reply", callId: record.id } };
+	};
+	s.rt.state.views.a = {
+		id: "v3",
+		title: "Pick some",
+		view: { type: "options", id: "choice", multi: true, options: [{ label: "A" }, { label: "B" }, { label: "C" }] },
+	};
+	await s.rt.save();
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => entry.form?.fields?.length === 1)),
+		"the form card is sent",
+	);
+	const card = s.fake.sent.find((entry: any) => entry.form?.fields?.length === 1);
+	assert.equal(card.form.fields[0].kind, "multi");
+	assert.deepEqual(card.form.fields[0].options, ["A", "B", "C"]);
+	assert.equal(card.form.submit.data, "v:v3:choice:submit");
+	assert.ok(!Array.isArray(card.buttons) || card.buttons.length === 0, "a form card shows no option buttons");
+	await s.fake.handlers.onAction({
+		chat: { key: "dm-u1", kind: "direct", title: "U1" },
+		sender: { id: "u1" },
+		data: "v:v3:choice:submit",
+		messageId: 1,
+		form: { "sel:choice": ["A", "C"] },
+	});
+	assert.deepEqual(asked, [{ action: "choice", values: { selected: ["A", "C"] } }]);
+	assert.equal(s.rt.state.views.a, undefined, "the view is claimed");
+});
+
+// A free-text form node arrives as inputs on the card; submitting answers with the fields.
+test("a form view is a card with inputs, and its submit carries the fields", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "fill");
+	s.emitEvent("a", "user/message", {
+		source: { kind: "user", rpcId: s.prompts.at(-1)?.requestId },
+		turn: 4,
+		content: [],
+	});
+	const asked: any[] = [];
+	s.rt.validateViewAnswer = () => ({});
+	s.rt.viewReply = (record: any, action: any, values: any) => {
+		asked.push({ action, values });
+		return { text: "{}", source: { kind: "deep-view-reply", callId: record.id } };
+	};
+	s.rt.state.views.a = {
+		id: "v4",
+		title: "Your details",
+		view: { type: "form", id: "details", fields: [{ id: "name", label: "Name" }], submitLabel: "Done" },
+	};
+	await s.rt.save();
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => entry.form?.fields?.[0]?.name === "f:details:name")));
+	const card = s.fake.sent.find((entry: any) => entry.form?.fields?.[0]?.name === "f:details:name");
+	assert.equal(card.form.fields[0].label, "Name");
+	assert.equal(card.form.submit.label, "Done");
+	await s.fake.handlers.onAction({
+		chat: { key: "dm-u1", kind: "direct", title: "U1" },
+		sender: { id: "u1" },
+		data: "v:v4:details:submit",
+		messageId: 1,
+		form: { "f:details:name": "Alice" },
+	});
+	assert.deepEqual(asked, [{ action: "details", values: { fields: { name: "Alice" } } }]);
+});
+
+test("cancelling a form view answers it as cancelled", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await dm(s, "u1", "hello");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u1", allow: true });
+	await dm(s, "u1", "fill");
+	s.emitEvent("a", "user/message", {
+		source: { kind: "user", rpcId: s.prompts.at(-1)?.requestId },
+		turn: 4,
+		content: [],
+	});
+	const asked: any[] = [];
+	s.rt.validateViewAnswer = () => ({});
+	s.rt.viewReply = (record: any, action: any, values: any) => {
+		asked.push({ action, values });
+		return { text: "{}", source: { kind: "deep-view-reply", callId: record.id } };
+	};
+	s.rt.state.views.a = {
+		id: "v5",
+		title: "Your details",
+		view: { type: "form", id: "details", fields: [{ id: "name", label: "Name" }] },
+	};
+	await s.rt.save();
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => entry.form?.cancel?.data === "v:v5:details:cancel")));
+	await s.fake.handlers.onAction({
+		chat: { key: "dm-u1", kind: "direct", title: "U1" },
+		sender: { id: "u1" },
+		data: "v:v5:details:cancel",
+		messageId: 1,
+		form: {},
+	});
+	assert.deepEqual(asked, [{ action: "details", values: { canceled: true } }]);
+});

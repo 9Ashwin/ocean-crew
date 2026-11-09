@@ -1193,3 +1193,48 @@ test("an image inside a forwarded conversation is downloaded", async () => {
 	assert.doesNotMatch(String(messages[0].text), /\[Image\]/);
 	assert.match(String(messages[0].text), /Earlier chat/);
 });
+
+// A card that carries a form renders the inputs and its buttons, and the pressed form's
+// values come back with the action so the host can answer the view with them.
+test("a card form renders its inputs and reports the collected values", async () => {
+	const fake = fakeSdk();
+	const { handle, actions } = await setup(fake);
+	await handle.send(
+		{ key: "oc_p2p", kind: "direct" },
+		{
+			text: "fill this in",
+			form: {
+				fields: [
+					{ kind: "text", name: "f:details:name", label: "Name" },
+					{ kind: "multi", name: "sel:choice", label: "Choose one or more", options: ["A", "B"] },
+				],
+				submit: { data: "v:v1:details:submit", label: "Send" },
+				cancel: { data: "v:v1:details:cancel", label: "Cancel" },
+			},
+		},
+	);
+	assert.equal(fake.creates[0].data.msg_type, "interactive");
+	const card = JSON.parse(fake.creates[0].data.content);
+	const form = card.body.elements[1];
+	assert.equal(form.tag, "form");
+	assert.equal(form.elements[0].tag, "input");
+	assert.equal(form.elements[0].name, "f:details:name");
+	assert.equal(form.elements[1].tag, "multi_select_static");
+	assert.deepEqual(form.elements[1].options[0], { text: { tag: "plain_text", content: "A" }, value: "A" });
+	const submit = form.elements[2];
+	assert.equal(submit.form_action_type, "submit");
+	assert.equal(submit.text.content, "Send");
+	assert.deepEqual(form.elements[3].behaviors, [{ type: "callback", value: { action: "v:v1:details:cancel" } }]);
+	await dispatch(
+		fake,
+		"card.action.trigger",
+		{
+			operator: { open_id: "ou_u1", name: "Alice" },
+			action: { value: { action: "v:v1:details:submit" }, form_value: { "f:details:name": "Alice" } },
+			context: { open_chat_id: "oc_p2p", open_message_id: "om_form" },
+		},
+		() => actions.length === 1,
+	);
+	assert.equal(actions[0].data, "v:v1:details:submit");
+	assert.deepEqual(actions[0].form, { "f:details:name": "Alice" });
+});
