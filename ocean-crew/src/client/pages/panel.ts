@@ -1,11 +1,13 @@
 // The right-hand Bot panel: a Bot's details or one of its side chats. Browser pages are
 // gone; a Bot that needs a page uses the local Playwright CLI through its shell tools.
-import { createElement as h, useEffect, useRef, useState } from "react";
+import { createElement as h, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SideChatView } from "../chat/side-chat.ts";
 import { sideChatsOf } from "../chat/side-model.ts";
 import { t } from "../core/i18n.ts";
 import { DotsIcon, FolderIcon, SideIcon, TerminalIcon } from "../look/icons.ts";
 import { SPRING_SHAPE, stepMenuFocus, useLinger } from "../look/motion.ts";
+import { panelWidth as widthIn } from "../shell/frame-layout.ts";
+import { chatRoom } from "../shell/frame-watch.ts";
 import { DetailsDrawer } from "./details-drawer.ts";
 
 export const PANEL_LINGER_MS = 300;
@@ -121,6 +123,7 @@ export function BotPanel({
 	pane,
 	leaving,
 	overlay,
+	room,
 	roster,
 	actions,
 	useSessions,
@@ -132,13 +135,25 @@ export function BotPanel({
 	const sideChats = bot ? sideChatsOf(roster, bot.id) : [];
 	const sideChat = sideChats.find((chat: any) => chat?.id === pane.side);
 	const view = pane.view === "side" && sideChat !== undefined ? "side" : "details";
+	const width = widthIn(typeof room === "number" && room > 0 ? room : 0);
+	// The chat column keeps its margin while the panel shares the window with it, and
+	// gets it back when the panel leaves or has to cover the conversation.
+	useLayoutEffect(() => {
+		chatRoom.setRight(leaving || overlay ? null : width);
+	}, [width, leaving, overlay]);
+	useEffect(
+		() => () => {
+			chatRoom.setRight(null);
+		},
+		[],
+	);
 	return h(
 		"aside",
 		{
 			className: "bt-panel",
 			"data-leaving": leaving || undefined,
 			"data-overlay": overlay || undefined,
-			style: { "--bt-panel-w": "520px" },
+			style: { "--bt-panel-w": `${width}px` },
 		},
 		view === "side" && sideChat
 			? h(
@@ -166,7 +181,7 @@ export function BotPanel({
 }
 
 export const PANEL_CSS = `
-.bt-panel{position:fixed;inset-block:0;inset-inline-end:0;z-index:40;display:flex;flex-direction:column;width:var(--bt-panel-w,520px);max-width:calc(100vw - 320px);background:var(--bt-bg);border-inline-start:1px solid var(--bt-line);box-shadow:var(--bt-shadow-panel,0 0 32px rgba(0,0,0,.12));overflow:hidden}
+.bt-panel{position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;z-index:40;display:flex;flex-direction:column;width:var(--bt-panel-w,320px);max-width:calc(100vw - 320px);background:var(--bt-main);border-left:1px solid var(--bt-line-2);box-shadow:var(--bt-glass-shadow,0 0 32px rgba(0,0,0,.12));overflow:hidden}
 .bt-panel[data-leaving]{pointer-events:none}
 .bt-panel-view{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
 `;

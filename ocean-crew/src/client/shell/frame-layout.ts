@@ -7,7 +7,11 @@ import { STORAGE } from "../core/storage.ts";
 
 export const MIN_CHAT = 420;
 export const RAIL_WIDTH = 88;
-export const PANEL_MIN: Record<string, number> = { details: 320, browser: 360, side: 320 };
+export const PANEL_MIN: Record<string, number> = { details: 320, side: 320 };
+// The Bot panel's own range: it opens at the details width and grows into the room it
+// shares with the conversation, never taking the last MIN_CHAT px of it.
+export const PANEL_DETAILS_WIDTH = 320;
+export const PANEL_DETAILS_MAX = 520;
 // The shell collapses its own sidebar below this width.
 export const DSH_NARROW = 1024;
 // The open column's width range; a drag released short of RAIL_SNAP lands on the rail.
@@ -27,6 +31,14 @@ export interface FrameLayoutInput {
 	drawer?: boolean;
 	panel?: null | { view: string; yielded: boolean };
 }
+
+/**
+ * The width the panel actually takes, from the room it shares with the conversation: it
+ * keeps MIN_CHAT for the chat and stays between the details width and its maximum. Under
+ * that range the room is too small to share, so the panel covers the conversation instead.
+ */
+export const panelWidth = (room: number): number =>
+	Math.round(Math.max(PANEL_DETAILS_WIDTH, Math.min(PANEL_DETAILS_MAX, room - MIN_CHAT)));
 
 export interface FrameLayout {
 	left: LeftColumn;

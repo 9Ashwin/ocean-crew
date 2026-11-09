@@ -16,6 +16,9 @@ import {
 	dragColumn,
 	FALLBACK_SIDEBAR_WIDTH,
 	frameLayout,
+	PANEL_DETAILS_MAX,
+	PANEL_DETAILS_WIDTH,
+	panelWidth,
 	RAIL_SNAP,
 	RESIZE_SETTLE_MS,
 	readSidebar,
@@ -569,4 +572,15 @@ test("the two at-sources answer from the roster, and chats only when launched", 
 	assert.equal(picked?.insert?.label, "Chat with Dev");
 	assert.equal(picked?.insert?.appearance, "session");
 	assert.equal(sources[1].codec?.clipboardText?.("ref"), "ref");
+});
+
+// The panel takes its width from the room it shares with the conversation: the chat keeps
+// MIN_CHAT, the panel stays between the details width and its maximum, and a panel that
+// has to cover the conversation keeps its details width.
+test("the panel width follows the room it shares with the chat", () => {
+	assert.equal(panelWidth(1198), PANEL_DETAILS_MAX);
+	assert.equal(panelWidth(900), 480);
+	assert.equal(panelWidth(740), PANEL_DETAILS_WIDTH);
+	assert.equal(panelWidth(600), PANEL_DETAILS_WIDTH);
+	assert.equal(panelWidth(0), PANEL_DETAILS_WIDTH);
 });

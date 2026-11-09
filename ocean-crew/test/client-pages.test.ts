@@ -3,6 +3,7 @@
 // the test process does not carry, so the modules that import it are loaded under a stub:
 // registration happens at the top of this file, before any of those modules load.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { test } from "node:test";
 import { sameVersion, showsDshRow } from "../src/client/pages/dsh-offer.ts";
@@ -340,4 +341,16 @@ test("the memory panel states the last forget's real range", async () => {
 		forgetLine({ removed: 2, layers: { chats: "untouched", journal: "kept-without-restore" } }),
 		"Last forget: 2 entries · the change log cannot restore them · chats untouched",
 	);
+});
+
+// The panel draws over the conversation, so it must be opaque: it started as a copy of a
+// stylesheet with its own tokens, and a variable this shell never defines made the panel
+// transparent. The rule now names the shell's own token, under the frame's chrome.
+test("the panel stylesheet is opaque and starts under the frame chrome", () => {
+	// Read as source: the panel's module pulls the client UI primitives, which this test
+	// process does not load. The stylesheet is a plain string in that file.
+	const source = readFileSync(new URL("../src/client/pages/panel.ts", import.meta.url), "utf8");
+	assert.ok(!source.includes("--bt-bg"), "the panel uses the shell's background token");
+	assert.match(source, /background:var\(--bt-main\)/);
+	assert.match(source, /top:var\(--dsh-frame-chrome-top/);
 });
