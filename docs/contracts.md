@@ -11,6 +11,13 @@
 - **`inject` 列出 DSH 服务。** 列表是 `llm`、`tools`、`systemPrompt`、`sessionController`、`sessions`、`sessionTitle`、`workspaceRegistry`、`connection`。可选服务用 `ctx.get(...)` 读取；每个定时器、监听器和 socket 都在 `ctx.effect(...)` 或 `ctx.on(...)` 里注册，以便卸载时释放。必须保持：这些都是 DSH 自己的服务 id，并且 effect 之外没有留下运行中的东西。若被破坏：插件挂不上，或 host 已经消失而工作还在继续。
 - **client 入口是声明出来的，不靠发现。** `ocean-crew/package.json` 带有 `dsh.client.platform: "web"`、`exports["./client"]: "./client.js"` 和 `dsh.bundle.patch: "./cordis.patch.yml"`；`exports` 里 `"."` 指向 `./dist/index.js`。`cordis.patch.yml` 只插入 `bot`（`name: ocean-crew`）一行；网页搜索与抓取由 DSH 自己的 provider 提供，不在插件里配置。必须保持：这些字段、export 路径和 patch 插入项。若被破坏：某个 profile 只挂上 host 半边而没有 client。
 
+## 分发
+
+插件以 npm 包 `ocean-crew` 发布（tarball 里是构建好的 `dist/`、`client.js`、`cordis.patch.yml`），
+DSH 的 Plugins → Add plugin 填包名即可安装。推 `v<版本>` tag 触发 `.github/workflows/publish.yml`：
+构建 → 核对构建产物与源码 → 校验 tag 与 `package.json` 版本一致 → 发布；token 只存在仓库 secret。
+GitHub 安装方式保留给开发版（安装时由 `prepare` 现场构建）。
+
 ## `api/bot` 通道
 
 `channel.ts` 通过 `ctx.connection.fetch.register` 注册 `POST /api/bot`：带缓冲的 JSON，用浏览器的会话 cookie 认证。`feed.ts` 注册插件的另一条路由 `GET /api/bot/feed`：一条 Server-Sent Events 流，报告 `revision`、`live`、`message` 和 `stream` 事件。
