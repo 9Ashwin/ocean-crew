@@ -9,6 +9,7 @@ import { t } from "../core/i18n.ts";
 import { currentPart, latestMemoryChange } from "../core/text.ts";
 import { ArrowDownIcon, ArrowUpIcon, CloseIcon, GoalIcon, MemoryIcon } from "../look/icons.ts";
 import { BotAvatar, botState, RoomAvatar } from "../look/mark.ts";
+import { moodEmoji, moodLabelKey } from "../look/mood.ts";
 import { viewBottom } from "../look/motion.ts";
 import { GoalIsland, goalView } from "../pages/goal.ts";
 
@@ -218,6 +219,19 @@ export function HeaderPill({
 						h("span", { className: "bt-pill-title" }, view?.title ?? ""),
 					),
 					h("span", { className: "bt-pill-name" }, name),
+					bot?.companion?.mood === undefined
+						? null
+						: h(
+								"span",
+								{
+									className: "bt-pill-mood",
+									title:
+										bot.companion.affection === undefined
+											? t(moodLabelKey(bot.companion.mood))
+											: `${t(moodLabelKey(bot.companion.mood))} · ${bot.companion.affection}/100`,
+								},
+								`${moodEmoji(bot.companion.mood)}${t(moodLabelKey(bot.companion.mood))}`,
+							),
 				)
 			: h(
 					"span",

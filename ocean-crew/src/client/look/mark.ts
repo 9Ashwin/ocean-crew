@@ -2,6 +2,7 @@
 import { createElement as h, useEffect, useRef, useState } from "react";
 import { t } from "../core/i18n.ts";
 import { characterMarkup, fnv1a, lookOf, MASK_ID, nextMarkSerial, shapeId, shapeOf } from "./characters.ts";
+import { moodEmoji, moodLabelKey } from "./mood.ts";
 import { reducedMotion } from "./motion.ts";
 
 export { colorOf, lookOf } from "./characters.ts";
@@ -229,6 +230,7 @@ export function BotAvatar({
 }) {
 	const settled = useSettled(state);
 	if (bot === undefined) return h(BotMark, { size });
+	const companion = bot.companion ?? undefined;
 	const badgeKind = !badge
 		? null
 		: state === "alert"
@@ -244,6 +246,23 @@ export function BotAvatar({
 		"span",
 		{ className: "bt-mark", style: { width: size, height: size, "--bt-size": `${size}px` } },
 		h(BotMark, { bot, size, state: settled ? "done" : state, live, gaze, pokeable }),
+		// A companion's feeling is legible without watching the eyes: one emoji in the corner.
+		companion?.mood !== undefined && badge && size >= 22
+			? h(
+					"span",
+					{
+						className: "bt-mood-badge",
+						"data-mood": companion.mood,
+						title:
+							companion.affection === undefined
+								? t(moodLabelKey(companion.mood))
+								: `${t(moodLabelKey(companion.mood))} · ${companion.affection}/100`,
+						role: "img",
+						"aria-label": t(moodLabelKey(companion.mood)),
+					},
+					moodEmoji(companion.mood),
+				)
+			: null,
 		badgeKind === "working"
 			? h("span", { className: "bt-badge bt-badge-working", "aria-label": t("Working"), role: "img" })
 			: null,

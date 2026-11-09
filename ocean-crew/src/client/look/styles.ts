@@ -123,6 +123,7 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 @keyframes bt-blink-idle{0%,29.6%,35%,69.2%,74.6%,100%{transform:scaleY(1)}32.2%,71.8%{transform:scaleY(.03)}33.8%,73.4%{transform:scaleY(1.06)}}
 @keyframes bt-blink{0%,42%,50%,100%{transform:scaleY(1)}46%{transform:scaleY(.03)}48%{transform:scaleY(1.06)}}
 @media (prefers-reduced-motion:reduce){.bt-mark *{animation:none!important;transition:none!important}}
+.bt-mood-badge{position:absolute;left:calc(var(--bt-size,36px) * -.06);bottom:calc(var(--bt-size,36px) * -.06);font-size:clamp(9px,calc(var(--bt-size,36px) * .3),15px);line-height:1;filter:drop-shadow(0 0 2px var(--bt-sidebar))}
 .bt-badge{position:absolute;right:0;bottom:0;width:12px;height:12px;border-radius:50%;corner-shape:round;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1.5px var(--bt-sidebar)}
 .bt-badge-admin{background:color-mix(in srgb,var(--bt-star) 82%,var(--bt-sidebar))}
 .bt-badge-admin svg{width:7px;height:7px}
@@ -222,6 +223,7 @@ html[data-bt-collapsing] [class*="_frame"]:has(>[class*="_sidebarCol"]){transiti
 .bt-pill:hover{background:color-mix(in srgb,var(--bt-main),#777 9%)}
 .bt-pill:active{transform:scale(.965)}
 .bt-pill-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.bt-pill-mood{flex:none;display:inline-flex;align-items:center;gap:2px;padding:1px 6px;border-radius:999px;background:color-mix(in srgb,var(--bt-mood,var(--bt-accent)) 14%,transparent);color:color-mix(in srgb,var(--bt-ink) 78%,var(--bt-ink-2));font-size:12px;line-height:16px;white-space:nowrap}
 .bt-pill-mem{flex:none;display:inline-flex;width:0;margin-left:-8px;overflow:hidden;transition:${spring(SPRING_SHAPE, "width", "margin-left")}}
 .bt-pill[data-memory=updated] .bt-pill-mem{width:var(--bt-mem-w);margin-left:0;transition:${spring(SPRING_STRETCH, "width", "margin-left")}}
 .bt-pill-mem-in{flex:none;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;color:var(--bt-ink-2);font-size:13px;font-weight:500;opacity:0;filter:blur(6px);transform:translateX(-8px);transition:opacity .14s ease,filter .18s ease,${spring(SPRING_SHAPE, "transform")}}
