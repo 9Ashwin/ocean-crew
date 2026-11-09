@@ -202,11 +202,6 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 
 // Endpoint families whose module answers the whole group through one `*Endpoint` member.
 const SECRET_ENDPOINTS: readonly string[] = [
-	"tts-settings",
-	"tts-set",
-	"tts-voices",
-	"tts-test",
-
 	"secret-set",
 	"secret-allow",
 	"secret-cancel",

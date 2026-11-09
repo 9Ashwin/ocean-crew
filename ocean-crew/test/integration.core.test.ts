@@ -257,6 +257,10 @@ function moduleMembers(calls: Array<[string, ...unknown[]]>): Record<string, Mem
 			rec("setGroupBudget")(roomId, body);
 			return { available: true, members: { spent: 0 }, summary: { spent: 0 }, idle: { streak: 0, paused: false } };
 		},
+		ttsSettingsView: async () => ({ enabled: true, model: "breeze-tts-2", hasSecret: true }),
+		ttsSettingsSet: async (patch: unknown) => ({ saved: true, patch }),
+		ttsVoices: async () => [{ id: "voc_1", name: "Narrator" }],
+		ttsTest: async () => ({ ms: 12, name: "voice.mp3" }),
 		secretEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),
 		connectorEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),
 		capabilityEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),

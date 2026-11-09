@@ -508,6 +508,30 @@ test("module endpoints are wired dynamically: unavailable without the module, se
 	assert.equal(read.error.code, "bot/unavailable");
 });
 
+// The speech settings have their own members; a name left in the secret family would be
+// answered by the secret endpoint instead, which is how "endpoints[endpoint] is not a
+// function" reached the window.
+test("the speech endpoints answer from their own members", async (t) => {
+	const rig = makeRig();
+	t.after(async () => {
+		await rig.dispose();
+	});
+	(rig.rt as Record<string, any>).ttsSettingsView = () => ({ model: "breeze-tts-2", hasSecret: true });
+	(rig.rt as Record<string, any>).ttsSettingsSet = async (patch: any) => ({ ...patch, saved: true });
+	(rig.rt as Record<string, any>).ttsVoices = async () => [{ id: "voc_1", name: "Narrator" }];
+	(rig.rt as Record<string, any>).ttsTest = async () => ({ ms: 12, name: "voice.mp3" });
+	const view = await rig.calls("tts-settings", {});
+	assert.equal(view.ok, true);
+	assert.equal(view.value.model, "breeze-tts-2");
+	const saved = await rig.calls("tts-set", { model: "breeze-tts-2-multilingual" });
+	assert.equal(saved.value.model, "breeze-tts-2-multilingual");
+	assert.equal(saved.value.saved, true);
+	const voices = await rig.calls("tts-voices", {});
+	assert.deepEqual(voices.value, [{ id: "voc_1", name: "Narrator" }]);
+	const tested = await rig.calls("tts-test", {});
+	assert.equal(tested.value.name, "voice.mp3");
+});
+
 test("IM endpoints are wired dynamically: unavailable until their module loads", async (t) => {
 	const rig = makeRig();
 	t.after(async () => {
