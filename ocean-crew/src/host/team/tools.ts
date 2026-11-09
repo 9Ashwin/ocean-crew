@@ -20,6 +20,7 @@ import { defineTool as defineDshTool } from "@deepseek-ai/dsh-tools";
 import { mentionSpans } from "../../shared/mentions.ts";
 import type { Bot, Room } from "../../shared/state.ts";
 import { COLORS, EXTRA_COLORS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import { within } from "../core/folders.ts";
 import { absoluteLinks } from "../core/links.ts";
 import type { Runtime, TeamTool } from "../core/runtime.ts";
@@ -1649,7 +1650,7 @@ export function install(rt: Runtime): void {
 		return DELEGATION_TOOLS.includes(exec.name ?? "") ? DELEGATION_REFUSAL : undefined;
 	});
 	// Creation waits for this listener, so the Agent's first step already lacks the tool.
-	ctx.on("agent/created", async ({ agent }: { agent?: AgentLike }) => {
+	listenGlobal(ctx, "agent/created", async ({ agent }: { agent?: AgentLike }) => {
 		try {
 			await rt.load();
 			hideBotUnusedTools(agent);

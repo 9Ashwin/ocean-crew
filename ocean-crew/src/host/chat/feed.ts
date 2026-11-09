@@ -10,6 +10,7 @@
 // owns. Until that module is installed the feed carries hello/revision/live/stream, which
 // is what a window needs when nothing but the route is wired yet.
 import { ROUTE } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import type { Runtime } from "../core/runtime.ts";
 
 export const FEED_ROUTE = `${ROUTE}/feed`;
@@ -92,11 +93,11 @@ export function install(rt: Runtime): void {
 			publish("live", {});
 		}, LIVE_DELAY_MS);
 	};
-	ctx.on("agent/status", ({ agent }: { agent: AgentRef }) => {
+	listenGlobal(ctx, "agent/status", ({ agent }: { agent: AgentRef }) => {
 		if (rt.selfOf(agent.id) !== undefined) live();
 	});
 
-	ctx.on("session/event", (session: { id: string }, event: { type?: string }) => {
+	listenGlobal(ctx, "session/event", (session: { id: string }, event: { type?: string }) => {
 		if (clients.size === 0) return;
 		const botId = rt.chatOwners.get(session.id);
 		if (botId === undefined) return;
@@ -111,7 +112,7 @@ export function install(rt: Runtime): void {
 	// A turn that answers another Bot is hidden; its frames never start a stream.
 	const hiddenTurn = (sessionId: string, turn: number | undefined): boolean =>
 		turn !== undefined && (state.exchangeTurns[sessionId] ?? []).includes(turn);
-	ctx.on("agent/assistant-stream", ({ agent, frame }: { agent: AgentRef; frame: AssistantFrame }) => {
+	listenGlobal(ctx, "agent/assistant-stream", ({ agent, frame }: { agent: AgentRef; frame: AssistantFrame }) => {
 		if (frame.type === "start") {
 			const botId = rt.chatOwners.get(agent.id);
 			if (clients.size === 0 || botId === undefined || hiddenTurn(agent.id, frame.turn)) return;

@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Bot } from "../../shared/state.ts";
+import { listenGlobal } from "../core/events.ts";
 import { replaceFile } from "../core/files.ts";
 import type { Runtime } from "../core/runtime.ts";
 import type { CapabilityItem } from "./capabilities.ts";
@@ -578,7 +579,7 @@ export function install(rt: Runtime): void {
 	const started = new Map<string, number>();
 	const noted = new Map<string, number>();
 	let lastActivity = Date.now();
-	ctx.on("agent/status", ({ agent, status }: { agent?: { id?: string }; status?: string }) => {
+	listenGlobal(ctx, "agent/status", ({ agent, status }: { agent?: { id?: string }; status?: string }) => {
 		if (stopped) return;
 		const id = agent?.id;
 		if (id === undefined || !rt.isBotSession(id)) return;

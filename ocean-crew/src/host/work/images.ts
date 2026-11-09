@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BlockAssembler } from "@deepseek-ai/dsh-llm";
 import { OCR_CACHE_MAX, OCR_PROMPT, OCR_RETRY_MS, OCR_TIMEOUT_MS } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import { replaceFile } from "../core/files.ts";
 import type { Runtime } from "../core/runtime.ts";
 import { splitRef } from "../core/text.ts";
@@ -331,7 +332,7 @@ export function install(rt: Runtime): void {
 		);
 	}
 
-	ctx.on("llm/stream", (options: Record<string, any>, next: () => AsyncIterable<unknown>) => {
+	listenGlobal(ctx, "llm/stream", (options: Record<string, any>, next: () => AsyncIterable<unknown>) => {
 		if (
 			options.sessionId === undefined ||
 			rt.ownRequest?.(options) === true ||

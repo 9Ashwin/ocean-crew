@@ -7,6 +7,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { boundContextSummary, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { STEER_CUT } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import type { Runtime } from "../core/runtime.ts";
 
 const SHELL_TOOLS = ["pwsh", "bash"];
@@ -309,7 +310,7 @@ export function install(rt: Runtime): void {
 		return disposers;
 	};
 
-	ctx.on("session/event", (session: any, event: any) => {
+	listenGlobal(ctx, "session/event", (session: any, event: any) => {
 		const id = session?.id;
 		if (id === undefined || !privateOf(id)) return;
 		const track = stateOf(id);

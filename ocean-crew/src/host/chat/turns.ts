@@ -13,6 +13,7 @@ import {
 	SOURCE_KIND,
 	STEER_CUT,
 } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import type { Runtime } from "../core/runtime.ts";
 import { splitRef, textOf } from "../core/text.ts";
 import type { LongMessage } from "./delivery.ts";
@@ -958,7 +959,7 @@ export function install(rt: Runtime): void {
 				?.catch((error: unknown) => rt.warn("ocean-crew: goal settle failed: %s", error));
 	});
 
-	ctx.on("session/event", (session: any, event: any) => {
+	listenGlobal(ctx, "session/event", (session: any, event: any) => {
 		const id: string | undefined = session?.id;
 		if (id === undefined) return;
 		if (!rt.isBotSession(id) && !rt.roomOf(id)) {

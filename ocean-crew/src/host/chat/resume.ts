@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SOURCE_KIND } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import type { Runtime } from "../core/runtime.ts";
 
 // Long enough for DSH to finish opening its workspaces after a start.
@@ -170,7 +171,7 @@ export function install(rt: Runtime): void {
 
 	// A message is done with once a turn takes it up, or once it leaves the inbox untaken
 	// while Ocean Crew runs: the user stopped the Bot, or Ocean Crew moved or withdrew it.
-	ctx.on("agent/inbox/discarded", ({ message }: any = {}) => {
+	listenGlobal(ctx, "agent/inbox/discarded", ({ message }: any = {}) => {
 		if (message?.source?.kind === SOURCE_KIND && message.source.exchangeId) forgetQueued(message.source.exchangeId);
 	});
 	// Exchanges a turn took up since this start, until the resends are done, so a resend
@@ -181,7 +182,7 @@ export function install(rt: Runtime): void {
 	// last run: only Ocean Crew restarted (the plugin reloaded) and DSH went on.
 	let firstTurn: Map<string, { type: string; turn?: number; reason?: any }> | undefined =
 		Object.keys(interrupted.turns).length > 0 ? new Map() : undefined;
-	ctx.on("session/event", (session: any, event: any) => {
+	listenGlobal(ctx, "session/event", (session: any, event: any) => {
 		const id = session?.id;
 		if (id === undefined) return;
 		if ((event.type === "turn/start" || event.type === "turn/end") && firstTurn?.has(id) === false) {

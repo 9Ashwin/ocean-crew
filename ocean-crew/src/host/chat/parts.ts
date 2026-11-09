@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { parseReplies, type StackedReply, stackReplies } from "../../shared/group-replies.ts";
 import { HANDOFF_ACK, HISTORY_TIMEOUT_MS, REPLY_KIND, SOURCE_KIND } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import type { Runtime } from "../core/runtime.ts";
 import { clip, createClock, escapeRegExp, estimateTokens, splitRef, textOf } from "../core/text.ts";
 import {
@@ -1128,7 +1129,7 @@ export function install(rt: Runtime): void {
 		},
 		"ocean-crew: Bot compaction",
 	);
-	ctx.on("agent/created", ({ agent }: any) => {
+	listenGlobal(ctx, "agent/created", ({ agent }: any) => {
 		adoptCompaction(agent);
 	});
 
@@ -1966,7 +1967,7 @@ export function install(rt: Runtime): void {
 		return next();
 	});
 
-	ctx.on("agent/status", ({ agent, status }: any) => {
+	listenGlobal(ctx, "agent/status", ({ agent, status }: any) => {
 		if (status === "idle" && rt.isBotSession(agent.id)) {
 			releaseRescued(agent);
 			void checkContext(agent).catch((error: unknown) =>
@@ -1977,7 +1978,7 @@ export function install(rt: Runtime): void {
 
 	// The handoff package opens a part as a turn of its own; when nothing is left to do,
 	// that turn's reply is a fixed line instead of a model call.
-	ctx.on("llm/stream", (options: any, next: () => AsyncIterable<any>) => {
+	listenGlobal(ctx, "llm/stream", (options: any, next: () => AsyncIterable<any>) => {
 		if (options.sessionId === undefined || options.purpose !== undefined || rt.ownRequest?.(options) === true)
 			return next();
 		const messages: any[] = options.messages ?? [];

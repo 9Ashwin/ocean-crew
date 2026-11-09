@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { failureLine } from "../chat/turns.ts";
 import { SOURCE_KIND } from "../core/constants.ts";
+import { listenGlobal } from "../core/events.ts";
 import { fileLine, goalFields, isIdleRelayText, isPass, mentionsIn, mentionsOf, stripOwnName } from "./log.ts";
 import type { BotLike, CallGoal, GroupHost, InboxPost, Round, TurnFailure } from "./types.ts";
 import { asRoom, savedRoom } from "./types.ts";
@@ -447,7 +448,7 @@ export function installRelay(host: GroupHost): void {
 	// group_relay" (they message one member directly when the user names it), so the
 	// relay step is synthesized here. Auxiliary calls such as titles, and Ocean Crew's own
 	// calls for the room such as image readings, still reach the model.
-	ctx.on("llm/stream", (options: Record<string, unknown>, next: () => AsyncIterable<unknown>) => {
+	listenGlobal(ctx, "llm/stream", (options: Record<string, unknown>, next: () => AsyncIterable<unknown>) => {
 		if (options.sessionId === undefined || options.purpose !== undefined || rt.ownRequest?.(options) === true)
 			return next();
 		return (async function* relayOrPass(): AsyncGenerator<unknown> {

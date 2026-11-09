@@ -7,6 +7,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path";
 import { IM_PLATFORMS, imPlatform } from "../../shared/im-platforms.ts";
 import { viewCardText } from "../chat/parts.ts";
+import { listenGlobal } from "../core/events.ts";
 import { replaceFile } from "../core/files.ts";
 import { adapters as adapterRegistry } from "./platforms/index.ts";
 import { startStatusReaction } from "./reaction.ts";
@@ -444,6 +445,7 @@ export function install(rt: any) {
 	// message that arrives before its turn/start is bound when the start lands.
 	const currentTurns = new Map<string, number>();
 	const waitingTurns = new Map<string, string>();
+	const sawSessionEvent = false;
 	// Latest request that addressed each Bot or group, for lines that carry no request.
 	const ownerOrigins = new Map<string, string>();
 	const turnKey = (sessionId: string, turn: number) => `${sessionId}:${turn}`;
@@ -1687,7 +1689,7 @@ export function install(rt: any) {
 	};
 
 	// ----------------------------------------------------------------- outbound
-	ctx.on("session/event", (session: any, event: any) => {
+	listenGlobal(ctx, "session/event", (session: any, event: any) => {
 		if (event.type === "user/message") {
 			// The turn that carries this message has started; a queued message must not
 			// be settled by the end of the turn it waited behind.
@@ -1760,6 +1762,14 @@ export function install(rt: any) {
 		const requestId = requestFor(session.id, event);
 		const targets = replyTargets(requestId, `bot:${botId}`);
 		if (targets.length === 0) {
+			// A Bot that owes IM an answer and has no route for this turn is a routing
+			// failure, not a window turn: record why, without the answer's text.
+			if (event.type === "assistant/message" && ownerOrigins.has(botId))
+				rt.warn(
+					"ocean-crew: im answer for %s not routed (%s)",
+					session.id,
+					requestId === undefined ? "no turn binding" : "origin no longer resolves",
+				);
 			// A turn that started in the window answers the window. It reaches IM only when
 			// the user asked for that (`imDeliverAnswers`), and then as one final answer
 			// rather than every step, so a chat is not filled with a turn's working notes.
