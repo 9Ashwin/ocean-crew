@@ -229,7 +229,19 @@ async function start(
 			if (at !== -1) IM_PLATFORMS.splice(at, 1);
 		}
 		await ctx.dispose?.();
-		if (!keep) rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+		if (!keep) {
+			// A drained queue may still be writing a media copy: the removal retries a few
+			// times rather than failing the test on a directory that is empty a moment later.
+			for (let attempt = 0; ; attempt += 1) {
+				try {
+					rmSync(home, { recursive: true, force: true, maxRetries: 10 });
+					break;
+				} catch (error: any) {
+					if (error?.code !== "ENOTEMPTY" || attempt >= 20) throw error;
+					await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+				}
+			}
+		}
 	};
 	t.after(stop);
 	const refuseImage = (reason = "MODEL_DOES_NOT_SUPPORT_IMAGES"): void => {
