@@ -862,7 +862,8 @@ const feishu = {
 				let replyToId = typeof replyTo === "string" && replyTo !== "" ? replyTo : undefined;
 				// Attachments are uploaded first: a caption and its attachment then leave as
 				// one post message, and the upload failing loses nothing that was already said.
-				const uploaded: Array<{ row: any; msgType: string; content: string }> = [];
+				const uploadedImages: Array<{ row: any; msgType: string; content: string }> = [];
+				const uploadedFiles: Array<{ row: any; msgType: string; content: string }> = [];
 				for (const item of Array.isArray(media) ? media : []) {
 					const bytes = Buffer.from(item.data);
 					const name = String(item.name ?? "file");
@@ -875,7 +876,7 @@ const feishu = {
 						const key = String(answer?.data?.image_key ?? answer?.image_key ?? "");
 						if (key === "")
 							throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
-						uploaded.push({
+						uploadedImages.push({
 							row: { tag: "img", image_key: key },
 							msgType: "image",
 							content: JSON.stringify({ image_key: key }),
@@ -891,7 +892,7 @@ const feishu = {
 					const key = String(answer?.data?.file_key ?? answer?.file_key ?? "");
 					if (key === "")
 						throw Object.assign(new Error(`Feishu returned no key for ${name}`), { permanent: true });
-					uploaded.push({
+					uploadedFiles.push({
 						row: { tag: "media", file_key: key, file_name: name },
 						msgType: route.msgType,
 						content: JSON.stringify({ file_key: key }),
@@ -900,7 +901,7 @@ const feishu = {
 				// What is left after the caption: no text, a button card, or a plain-text
 				// fallback leaves the attachment as its own message.
 				const sendAttachments = async (): Promise<void> => {
-					for (const held of uploaded.splice(0)) {
+					for (const held of [...uploadedImages.splice(0), ...uploadedFiles.splice(0)]) {
 						const sent = await call(
 							"Feishu send",
 							() => client.im.message.create(createBody(held.msgType, held.content)),
@@ -915,10 +916,13 @@ const feishu = {
 					// carries the header, so a split answer is not a stack of headers.
 					const replyCardMode = asCard === true && !interactive;
 					const markup = MARKDOWN_HINT.test(chunk);
-					// The attachments ride on the last part of the answer, as a caption with its
-					// media, unless a button card has to be that part.
+					// Images ride on the last part of the answer, as a caption with its media,
+					// unless a button card has to be that part. Other files are their own
+					// message: a post's media element does not accept every upload type.
 					const caption =
-						!interactive && index === chunks.length - 1 && uploaded.length > 0 ? uploaded.splice(0) : [];
+						!interactive && index === chunks.length - 1 && uploadedImages.length > 0
+							? uploadedImages.splice(0)
+							: [];
 					const msgType =
 						interactive || replyCardMode ? "interactive" : caption.length > 0 ? "post" : markup ? "post" : "text";
 					const content = interactive
@@ -953,7 +957,7 @@ const feishu = {
 								}
 								env.log?.warn?.("ocean-crew im: feishu rejected the post; sending plain text");
 								// The caption could not carry them: they follow as their own messages.
-								if (caption.length > 0) uploaded.unshift(...caption);
+								if (caption.length > 0) uploadedImages.unshift(...caption);
 								return call(
 									"Feishu send",
 									() => client.im.message.create(createBody(plain, plainContent)),

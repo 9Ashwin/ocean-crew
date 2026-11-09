@@ -1349,7 +1349,7 @@ export function install(rt: Runtime): void {
 		defineTool({
 			name: "send_file",
 			description:
-				"Send a file from your computer to the chat this request came from, after a report, a chart or an archive. It goes to the IM chat the user is writing from, or to the group chat that asked, and only to them; in a conversation that is not linked to IM it returns a note saying so instead of sending anything. Give the path the way your shell sees it (absolute, or relative to the current folder). Optionally add one line of text to send with it.",
+				"Send a file from your computer to the chat this request came from, after a report, a chart or an archive. It goes to the IM chat the user is writing from, or to the group chat that asked, and only to them; in a conversation that is not linked to IM it returns a note saying so instead of sending anything. Give the path the way your shell sees it (absolute, or relative to the current folder). Optionally add one line of text to send with it. The chat receives the file itself, so never paste the local path into your reply — the user cannot open a path on this computer from their phone.",
 			parameters: {
 				path: {
 					type: "string",
@@ -1367,7 +1367,7 @@ export function install(rt: Runtime): void {
 				try {
 					const result = await send(id, { path, note: String(args.note ?? "").trim() });
 					return result.sent > 0
-						? "The file is on its way to the chat that asked."
+						? "The file is on its way to the chat that asked. Do not print its local path in your reply: the file arrives as an attachment."
 						: `Nothing was sent: ${result.reason ?? "this conversation is not linked to an IM chat"}. Attach it in your reply instead.`;
 				} catch (error: any) {
 					return `The file was not sent: ${error?.message ?? error}`;

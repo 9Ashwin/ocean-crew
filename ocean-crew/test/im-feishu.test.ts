@@ -992,14 +992,16 @@ test("an answer can carry an image and a file, uploaded first and sent as messag
 		},
 	);
 	assert.ok(result.messageId, "the last sent message is reported");
-	// The caption and its attachments leave as one post message: the reader sees the
-	// sentence and the picture together, not a bubble followed by two bare files.
-	assert.equal(fake.creates.length, 1);
-	assert.equal(fake.creates[0].data.msg_type, "post");
+	// The picture rides on the caption as one post message, so the reader sees the
+	// sentence and the picture together; a plain file follows as its own message.
+	assert.deepEqual(
+		fake.creates.map((payload: any) => payload.data.msg_type),
+		["post", "file"],
+	);
 	const rows = JSON.parse(fake.creates[0].data.content).zh_cn.content;
 	assert.deepEqual(rows[0], [{ tag: "md", text: "Here it is" }]);
 	assert.deepEqual(rows[1], [{ tag: "img", image_key: "img_up_1" }]);
-	assert.deepEqual(rows[2], [{ tag: "media", file_key: "file_up_1", file_name: "report.txt" }]);
+	assert.deepEqual(JSON.parse(fake.creates[1].data.content), { file_key: "file_up_1" });
 	// The uploads happened before their messages and carried the bytes.
 	assert.deepEqual(
 		fake.uploads.map(([kind]: any) => kind),
@@ -1133,7 +1135,27 @@ test("an upload key is read from the SDK's inner data shape", async () => {
 		{ key: "oc_p2p", kind: "direct" },
 		{ text: "file below", media: [{ kind: "file", name: "notes.txt", data: Buffer.from("x") }] },
 	);
-	assert.equal(fake.creates.length, 1, "the caption and the file left as one message");
-	const rows = JSON.parse(fake.creates[0].data.content).zh_cn.content;
-	assert.deepEqual(rows[1], [{ tag: "media", file_key: "file_up_1", file_name: "notes.txt" }]);
+	// A file is not part of a caption post: the post's media element does not accept a
+	// stream upload, and the platform refuses that as a type mismatch.
+	assert.deepEqual(
+		fake.creates.map((payload: any) => payload.data.msg_type),
+		["text", "file"],
+	);
+	assert.deepEqual(JSON.parse(fake.creates[1].data.content), { file_key: "file_up_1" });
+});
+
+// A PDF with a caption is not sent as a caption post: the post's media element does not
+// accept a document upload, and the platform refuses that with a type mismatch.
+test("a document with a caption leaves as a text answer and its own file message", async () => {
+	const fake = fakeSdk();
+	const { handle } = await setup(fake);
+	await handle.send(
+		{ key: "oc_p2p", kind: "direct" },
+		{ text: "the report", media: [{ kind: "file", name: "report.pdf", data: Buffer.from("pdf") }] },
+	);
+	assert.deepEqual(
+		fake.creates.map((payload: any) => payload.data.msg_type),
+		["text", "file"],
+	);
+	assert.deepEqual(JSON.parse(fake.creates[1].data.content), { file_key: "file_up_1" });
 });
