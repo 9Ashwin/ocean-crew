@@ -24,6 +24,8 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 | **团队锁**（Team lock） | `state.lock`：唯一允许写团队的那个 dsh 进程的 pid、host 和 token。其他 host 只读。 |
 | **Supervisor** | `im/supervisor.ts`：每次健康检查对每条连接给出一个纯决策（start、stop、restart 或 none）。 |
 | **Steward**（上下文管家） | `steward.ts`：到达检查线时，要么就地压缩当前分段，要么把聊天换到一个新分段。 |
+| **伙伴模式**（Companion） | 让一个 Bot 在自己聊天里以角色身份相处：角色卡、心情、好感度、选择性 emoji 回应、可选每日关心（见 `work/companion.ts`）。 |
+| **语音**（Voice） | 可配置的语音模型（`work/tts.ts`）：`speak` 工具把文字合成音频发到来源聊天，应用内也能按条播放。 |
 
 ## Bot 团队
 
@@ -58,6 +60,7 @@ DSH Desktop 的 Web UI 里。它只有一种受支持的形态——装进 DSH D
 | `ocean-crew/src/host/work/secrets.ts`，`team/providers.ts`、`team/models.ts` | `secrets.json`、保存值的脱敏，以及模型提供方与每个 Bot 的模型选择。 |
 | `ocean-crew/src/host/connectors/` | GitHub 和邮箱，通过本机 MCP 网关挂载。 |
 | `ocean-crew/src/host/work/schedules.ts`、`usage.ts`、`update.ts`、`dsh-update.ts`、`diagnostics.ts` | 定时任务、从 DSH token-meter 读取的 token 用量、插件与 DSH 更新，以及错误日志。 |
+| `ocean-crew/src/host/work/companion.ts`、`tts.ts`，`src/shared/companion.ts` | 伙伴模式：角色卡、心情与好感度的记录和每回合注入、选择性 emoji 回应、每日关心对应的 DSH 日程；语音模型的调用与设置（`speak` 工具与按条播放）。 |
 | `ocean-crew/src/client/` | client 半边，每个界面一个模块；构建成 `client.js`。 |
 | `ocean-crew/src/shared/` | 两边共用的代码与类型：配置、状态、api、IM 平台表、@提及解析、群回复解析。 |
 | `ocean-crew/test/`、`ocean-crew/dev/` | 单元测试与假 DSH context；本地安装、冒烟测试和构建检查。 |
@@ -85,6 +88,13 @@ DSH 的槽位（`conversation.*`、`sidebar.*`、`settings.*`、`shell.overlay`�
 `modelsKey` 和 `liveKey`，因此没变化的回答只是一个小对象，有变化的回答会被索引进各界面订阅的本地数据
 源。轮次内容是 DSH 自己的对话；插件在它周围提供单元和停靠面板，并通过 `ctx.sessions` 读取会话状态。
 `GET api/bot/feed` 是同一份数据的 SSE 流，用来推送新消息和流式文本。
+
+**伙伴 Bot 的一轮。** 开启伙伴模式的 Bot 在自己的聊天里仍是同一个 Session，只是多了三处变化：身份提示
+多一段角色卡（`team/prompt.ts` 读 `companionOf`）；每回合第一步追加一条关系快照（`agent/pre-step`，来源
+`ocean-crew-companion`，每回合只一次，系统提示前缀不变）；用户消息到达后按措辞小幅更新心情与好感度，
+并按需贴一个 emoji（存在 `companionReactions`，随 roster 一次下发）。回答默认自动语音：`work/tts.ts` 调
+配置的语音模型，飞书请求 opus 走语音条、微信按 mp3 音频文件发出；应用内的「播放语音」走
+`companion-audio` 端点，播放期间给该 Bot 的所有头像加说话动画。
 
 **磁盘上的状态。** host 把团队保存在内存里，整份原子写入 `state.json`（先写临时文件，再替换），并递增
 `revision`。只有持锁者能写；同一份数据上的另一个 host 只回答读，拒绝写。密钥单独放在

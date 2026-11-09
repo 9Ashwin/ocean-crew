@@ -5,7 +5,52 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
-## [0.4.0] - 2026-11-08
+## [0.4.6] - 2026-11-10
+
+### Fixed
+
+- A marine Bot now smiles and follows the pointer when hovered: its eyes carry a happy arc
+  and a gaze group of their own, so the whole cast answers the cursor, not only the
+  geometric shapes.
+
+## [0.4.5] - 2026-11-10
+
+### Fixed
+
+- A companion's reaction emoji is stored under the event seq the window numbers a message
+  with (and the durable id), so the mark is found instead of saved and lost.
+
+## [0.4.4] - 2026-11-10
+
+### Added
+
+- A companion reacts to some of what the user says with one emoji under the user's bubble
+  (love, thanks, laughing, goodnight, tired, food, cute, cheering, questions, surprise),
+  at most every other message and never the same emoji twice in a row.
+
+## [0.4.3] - 2026-11-10
+
+### Added
+
+- The mood is legible where the eye lands: one mood emoji on the avatar's corner with the
+  mood and closeness on hover, and the mood named next to the Bot's name in the header.
+
+## [0.4.2] - 2026-11-09
+
+### Fixed
+
+- A companion's closeness and mood move on the words the user actually sent: the host's
+  user message carries its parts on `data.content`, and reading a nested message skipped
+  every message silently.
+
+## [0.4.1] - 2026-11-09
+
+### Fixed
+
+- Settings → Companion renders its page instead of an empty column, and a source check keeps
+  every listed settings page and its render branch together.
+
+## [0.4.0] - 2026-11-09
 
 ### Added
 
@@ -16,9 +61,23 @@ breaking changes.
 - The Bot browser (one Chrome profile per Bot), Feishu and WeChat private chats, mail and
   the GitHub connector, computer use, and the web search provider.
 - 12 sea characters with picker, colors and moods, plus the Ocean Crew marks and themes.
+- Companion mode: a Bot can be a character with its own card (who they are, how they talk,
+  what they like), a mood and a growing closeness. The card joins the identity prompt; the
+  mood and closeness are injected once at the head of a turn, and the closeness moves a
+  little after each message, cooling after days away. Companions speak their answers in
+  their own voice, can be heard from the message menu, and may carry a daily check-in that
+  creates a real scheduled task.
+- Voice: a configurable speech model turns a short line into audio and sends it through the
+  attachment path — a Feishu voice bubble (opus) or a WeChat audio file — with a Voice
+  settings page (model, voice, language, format, delivery notes, test button) and optional
+  spoken copies of every answer.
 
 ### Changed
 
+- The plugin is published to npm, so installing it takes the package name `ocean-crew` in
+  DSH's plugin dialog: no checkout and no local build. A `v<version>` tag builds, checks and
+  publishes it; the token lives in the repository secret. A GitHub spec still works for
+  development builds.
 - The plugin ships from `ocean-crew/`; `dist/` and `client.js` are build products and
   stay out of git, so an install builds the checkout first.
 - The DSH profile patch, host prompts, client module id, i18n namespace and CSS tokens all
@@ -28,4 +87,3 @@ breaking changes.
 
 - Platform adapters other than Feishu and WeChat, and the optional browser plugin folder;
   the browser backends ship in the plugin.
-
