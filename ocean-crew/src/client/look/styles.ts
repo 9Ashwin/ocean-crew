@@ -26,18 +26,19 @@ ${Object.entries(INKS)
 .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
 .bt-mark svg{width:100%;height:100%;overflow:visible}
 .bt-mark-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;box-shadow:inset 0 0 0 1px var(--bt-line)}
-.bt-mark .bt-b,.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .bt-gaze{transform-box:fill-box}
+.bt-mark .bt-b,.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .bt-gaze,.bt-mark .mb-eye,.bt-mark .mb-eyes{transform-box:fill-box}
 .bt-mark .bt-b{transform-origin:50% 100%}
-.bt-mark .bt-eye,.bt-mark .bt-eyes{transform-origin:center}
+.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .mb-eye,.bt-mark .mb-eyes{transform-origin:center}
 /* Motion levels (Settings → Bots → Animation) set body[data-bt-motion]: quiet moves a
-   mark only for its state; normal, the default, adds petting, pokes and eyes that follow
-   the pointer; lively adds blinks and fidgets at rest and a question riding on the head. */
-body[data-bt-motion=lively] .bt-mark[data-live]:is([data-state=idle],[data-state=alert]) .bt-eye{animation:bt-blink-idle 5s linear infinite;animation-delay:var(--bt-delay,0s)}
+   mark only for its state; normal, the default, adds petting, pokes, eyes that follow the
+   pointer and the companion's own expression; lively adds blinks and fidgets at rest, plays
+   the companion motions quicker, and rides a question on the head. */
+body[data-bt-motion=lively] .bt-mark[data-live]:is([data-state=idle],[data-state=alert]) :is(.bt-eye,.mb-eye){animation:bt-blink-idle 5s linear infinite;animation-delay:var(--bt-delay,0s)}
 body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle]:is([data-fidget=hop],[data-fidget=sway],[data-fidget=stretch]) :is(.bt-b,.bt-mark-img){animation:var(--bt-fidget) 9s ease-in-out var(--bt-fidget-delay,0s) infinite}
 body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=hop]{--bt-fidget:bt-fidget-hop}
 body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=sway]{--bt-fidget:bt-fidget-sway}
 body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=stretch]{--bt-fidget:bt-fidget-stretch}
-body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=look] .bt-eyes{animation:bt-fidget-look 9s ease-in-out var(--bt-fidget-delay,0s) infinite}
+body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=look] :is(.bt-eyes,.mb-eyes){animation:bt-fidget-look 9s ease-in-out var(--bt-fidget-delay,0s) infinite}
 @keyframes bt-fidget-hop{0%,8%,100%{transform:none}3%{transform:translateY(-10%) scale(.97,1.04)}5.5%{transform:translateY(0) scale(1.05,.95)}}
 @keyframes bt-fidget-sway{0%,10%,100%{transform:none}2.5%{transform:rotate(-8deg)}5%{transform:rotate(7deg)}7.5%{transform:rotate(-3deg)}}
 @keyframes bt-fidget-stretch{0%,9%,100%{transform:none}4%{transform:scale(.94,1.08)}7%{transform:scale(1.03,.97)}}
@@ -61,7 +62,9 @@ body:not([data-bt-motion=quiet]) :is(.bt-row,.bt-tile)>:is(.bt-mark,.bt-cluster)
 body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-b{translate:none}
 body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-gaze{transform:none}
 /* Companion moods: the mark wears its character's current feeling. The glow stays behind
-   the body; the eyes squint or widen on their own layer. */
+   the body; the eyes squint or widen on their own layer. The expression moves at the
+   default level too — the glow breathes, an excited mark hops — because a companion the
+   user asked for should read as alive; quiet keeps the same face and holds it still. */
 .bt-mark[data-mood]{--bt-mood:#8fc7ff}
 .bt-mark[data-mood=warm]{--bt-mood:#ffb7c9}
 .bt-mark[data-mood=playful]{--bt-mood:#ffd27a}
@@ -77,21 +80,24 @@ body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-gaze{transform:none}
 .bt-mark[data-mood=pout] :is(.mb-eye,.bt-eyes){scale:1 .62}
 .bt-mark[data-mood=excited] :is(.mb-eye,.bt-eyes){scale:1 1.12}
 .bt-mark[data-mood=pout] .bt-b{translate:0 1%}
-.bt-mark[data-mood=excited] .bt-b{animation:bt-companion-hop 3.4s ease-in-out infinite}
-@keyframes bt-companion-hop{0%,86%,100%{translate:0 0}90%{translate:0 -4%}94%{translate:0 0}}
-.bt-mark[data-mood].bt-speaking .bt-b{animation:bt-companion-talk .4s ease-in-out infinite}
-.bt-mark[data-mood].bt-speaking :is(.mb-eye,.bt-eyes){scale:1 .86}
-@keyframes bt-companion-talk{0%,100%{translate:0 0;scale:1 1}50%{translate:0 1.5%;scale:1.015 .985}}
+.bt-mark[data-mood=excited] :is(.bt-b,.bt-mark-img){animation:bt-companion-hop 2.8s ease-in-out infinite}
+@keyframes bt-companion-hop{0%,84%,100%{translate:0 0}88%{translate:0 -9%}92%{translate:0 0}96%{translate:0 -3%}}
+/* Lively plays the same companion motions quicker. */
+body[data-bt-motion=lively] .bt-mark[data-mood]::after{animation-duration:3.4s}
+body[data-bt-motion=lively] .bt-mark[data-mood=excited] :is(.bt-b,.bt-mark-img){animation-duration:2s}
+/* Quiet keeps the expression but holds every pose still. */
+body[data-bt-motion=quiet] .bt-mark[data-mood]::after{animation:none;opacity:.55;scale:1}
+body[data-bt-motion=quiet] .bt-mark[data-mood=excited] :is(.bt-b,.bt-mark-img){animation:none}
 .bt-mark[data-state=thinking] .bt-b{animation:bt-ponder 2.2s ease-in-out infinite}
-.bt-mark[data-state=thinking] .bt-eyes{animation:bt-squint 2.2s ease-in-out infinite}
+.bt-mark[data-state=thinking] :is(.bt-eyes,.mb-eyes){animation:bt-squint 2.2s ease-in-out infinite}
 .bt-mark[data-state=searching] .bt-b{animation:bt-seek 1s ease-in-out infinite}
-.bt-mark[data-state=searching] .bt-eyes{animation:bt-scan 1.6s ease-in-out infinite}
+.bt-mark[data-state=searching] :is(.bt-eyes,.mb-eyes){animation:bt-scan 1.6s ease-in-out infinite}
 .bt-mark[data-state=working] .bt-b{animation:bt-bob 1.6s ease-in-out infinite}
-.bt-mark[data-state=working] .bt-eye{animation:bt-blink 2.4s ease-in-out infinite}
+.bt-mark[data-state=working] :is(.bt-eye,.mb-eye){animation:bt-blink 2.4s ease-in-out infinite}
 .bt-mark[data-state=sending] .bt-b{animation:bt-dash 1.1s cubic-bezier(.4,0,.2,1) infinite}
 /* Waiting for teammates to hand back work circles like coordinating them. */
 .bt-mark:is([data-state=orbit],[data-state=waiting]) .bt-b{animation:bt-sway 2.6s ease-in-out infinite;transform-origin:50% 50%}
-.bt-mark:is([data-state=orbit],[data-state=waiting]) .bt-eyes{animation:bt-roll 2.6s linear infinite}
+.bt-mark:is([data-state=orbit],[data-state=waiting]) :is(.bt-eyes,.mb-eyes){animation:bt-roll 2.6s linear infinite}
 /* A question for you hops twice when it arrives and the badge keeps it in view after;
    a lively mark keeps hopping. */
 .bt-mark[data-state=alert] .bt-b{animation:bt-hop 1.3s cubic-bezier(.3,.7,.4,1) 2}
@@ -100,6 +106,15 @@ body[data-bt-motion=quiet] .bt-mark[data-gaze] .bt-gaze{transform:none}
 body[data-bt-motion=lively] .bt-mark[data-state=alert] :is(.bt-b,.bt-mark-img){animation-iteration-count:infinite}
 .bt-mark[data-state=done] .bt-b{animation:bt-done 1.8s linear 1}
 .bt-mark[data-shape=image][data-state=done] .bt-mark-img{animation:bt-done 1.8s linear 1;transform-origin:50% 100%}
+/* A speaking companion moves while it works: the voice is the story, not the state. It
+   talks at normal and lively, with or without a mood (the mood only shapes the eyes);
+   quiet keeps the pose still. */
+body:not([data-bt-motion=quiet]) .bt-mark.bt-speaking :is(.bt-b,.bt-mark-img){animation:bt-companion-talk .34s ease-in-out infinite}
+.bt-mark.bt-speaking :is(.mb-eye,.bt-eyes){scale:1 .86}
+@keyframes bt-companion-talk{0%,100%{translate:0 0;scale:1 1}50%{translate:0 3%;scale:1.03 .97}}
+body[data-bt-motion=lively] .bt-mark.bt-speaking :is(.bt-b,.bt-mark-img){animation-duration:.24s}
+body[data-bt-motion=quiet] .bt-mark.bt-speaking :is(.bt-b,.bt-mark-img){animation:none}
+body[data-bt-motion=quiet] .bt-mark.bt-speaking :is(.mb-eye,.bt-eyes){scale:1 1}
 @keyframes bt-done{0%{transform:none;animation-timing-function:cubic-bezier(.4,0,.2,1)}13.3%{transform:scale(1.12,.88);animation-timing-function:cubic-bezier(.4,0,.2,1)}25.6%{transform:scale(.93,1.09);animation-timing-function:cubic-bezier(.4,0,.2,1)}37.8%{transform:scale(1.04,.97);animation-timing-function:cubic-bezier(.4,0,.2,1)}51.1%,100%{transform:none}}
 .bt-mark-poke .bt-b{animation:bt-poke .8s cubic-bezier(.3,.7,.4,1) 1!important;transform-origin:50% 60%!important}
 .bt-mark-poke .bt-mark-img{animation:bt-poke-img .6s ease-out 1!important}
@@ -830,7 +845,7 @@ button:hover .bt-you{background:color-mix(in srgb,var(--bt-ink) 9%,var(--bt-side
 .bt-pick:hover{background:var(--bt-hover)}
 .bt-pick[aria-pressed=true]{border-color:var(--bt-line-2);background:var(--bt-hover)}
 .bt-pick>span:last-child:not(.bt-mark){max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bt-pick:hover .bt-mark[data-state=idle] .bt-eye{animation:bt-blink .5s linear 1}
+.bt-pick:hover .bt-mark[data-state=idle] :is(.bt-eye,.mb-eye){animation:bt-blink .5s linear 1}
 .bt-select{width:100%;height:34px;box-sizing:border-box;border-radius:8px;border:1px solid var(--bt-line);background:var(--bt-card);color:var(--bt-ink);padding:0 8px;font:inherit;font-size:13px;outline:none}
 :is(.bt-input,.bt-select,.bt-textarea):focus-visible{border-color:var(--bt-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--bt-accent) 22%,transparent)}
 :is(.bt-round,.bt-icon-btn,.bt-soft,.bt-send,.bt-mini,.bt-pill,.bt-plus,.bt-mic,.bt-voice,.bt-account,.bt-title-toggle,.bt-settings-close,.bt-avatar-trigger,.bt-shape,.bt-color,.bt-swatch,.bt-pick,.bt-more,.bt-mem-row,.bt-mem-send):focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px}

@@ -156,14 +156,19 @@ export function BotMark({
 			h("img", { className: "bt-mark-img", src: image, alt: "", draggable: false, onError: () => setBroken(image) }),
 		);
 	const box = shapeOf(look.shape).size;
+	// Marine characters draw themselves as mb-* layers. Wrap them in the body group every
+	// motion rule animates, so the default shapes bob, hop and talk like the geometric ones.
+	const markup = characterMarkup(look.shape, look.color);
+	const html = (shapeOf(look.shape).marine ? `<g class="bt-b">${markup}</g>` : markup).replaceAll(
+		MASK_ID,
+		maskId.current,
+	);
 	return h(
 		"span",
 		common,
 		h("svg", {
 			viewBox: `0 0 ${box} ${box}`,
-			dangerouslySetInnerHTML: {
-				__html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current),
-			},
+			dangerouslySetInnerHTML: { __html: html },
 		}),
 	);
 }
