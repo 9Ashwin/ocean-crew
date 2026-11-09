@@ -5,6 +5,20 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.5.0] - 2026-11-10
+
+### Added
+
+- A scheduled task that ran and failed now says so: every firing leaves a run record (task,
+  chat, start, finish, outcome, reason), the settings page shows the last run of each task and
+  marks a failure, and a failed scheduled turn sends one notice per failure code — cleared by
+  the next success, so a recurrence is news again.
+- An answer of `[PASS]` to a routine is silence by agreement: nothing is pushed, and the run is
+  recorded as `silent`.
+- One gate for every unsolicited message (`work/notice-gate.ts`): the pure policy decides
+  dedupe, quiet hours and preferences, and a receipt is written only after the platform
+  accepted the notice, so a failed send is retried as news.
+
 ## [0.4.9] - 2026-11-10
 
 ### Fixed
