@@ -60,7 +60,7 @@ export const IM_PLATFORMS: readonly ImPlatform[] = [
 			{ key: "appSecret", label: "App Secret", secret: true },
 		],
 		buttons: true,
-		groups: false,
+		groups: true,
 	},
 ];
 

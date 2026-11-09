@@ -452,7 +452,8 @@ export function install(rt: any) {
 		ownerKey: string,
 	): Array<{ conn: any; chatKey: string; chat: any }> => {
 		const record = originOf(requestId);
-		if (record === undefined || `bot:${record.ownerKey}` !== ownerKey) return [];
+		const keyOf = (owner: string) => (rt.roomOf(owner) !== undefined ? `room:${owner}` : `bot:${owner}`);
+		if (record === undefined || keyOf(record.ownerKey) !== ownerKey) return [];
 		const conn = connections()[record.connId];
 		if (conn === undefined || !runners.has(conn.id)) return [];
 		// A binding change (new target, unpair, removal) invalidates the older route: a
@@ -947,20 +948,39 @@ export function install(rt: any) {
 		for (const { chatKey } of targets) await markCard(conn.id, cardKey, chatKey, undefined, body);
 	};
 
+	const roomOfSession = (sessionId: string): any => {
+		const own = rt.roomOf(sessionId);
+		if (own !== undefined) return own;
+		const owner = rt.groupOwners.get(sessionId);
+		return owner === undefined ? undefined : rt.roomOf(owner.roomId);
+	};
+
 	const diffCards = async () => {
 		if (rt.readOnly() !== undefined) return;
 		for (const conn of Object.values(connections())) {
 			const runner = runners.get(conn.id);
 			if (runner === undefined) continue;
 			const data = await cardsOf(conn.id);
-			// Questions: one card per open question id, sent to the Bot's chats.
+			// Questions: one card per open question id, sent to the Bot's chats, or to the
+			// group chat when the question was raised in one.
 			for (const [sessionId, question] of Object.entries((state.questions ?? {}) as Record<string, any>)) {
 				const cardKey = `q:${question.id}`;
 				if (data.cards[cardKey] !== undefined) continue;
 				const botId = rt.chatOwners.get(sessionId) ?? rt.pastOwners.get(sessionId)?.botId;
 				const bot = rt.botOf(botId);
-				if (bot === undefined) continue;
 				const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.question(question) : undefined;
+				if (bot === undefined) {
+					const room = roomOfSession(sessionId);
+					if (room === undefined) continue;
+					await sendCard(
+						conn,
+						cardKey,
+						replyTargets(ownerOrigins.get(room.id), `room:${room.id}`),
+						cardText.question(room.name ?? "this group chat", question),
+						buttons,
+					);
+					continue;
+				}
 				await sendCard(
 					conn,
 					cardKey,
@@ -984,14 +1004,24 @@ export function install(rt: any) {
 					);
 				}
 			}
-			// Views awaiting a reply: text form only.
+			// Views awaiting a reply: text form only. A view from a group chat goes there.
 			for (const [sessionId, view] of Object.entries((state.views ?? {}) as Record<string, any>)) {
 				const cardKey = `v:${view.id}`;
 				if (data.cards[cardKey] !== undefined) continue;
 				const botId = rt.chatOwners.get(sessionId);
 				const bot = rt.botOf(botId);
-				if (bot === undefined) continue;
 				const form = viewCardText({ title: view.title, view: view.view });
+				if (bot === undefined) {
+					const room = roomOfSession(sessionId);
+					if (room === undefined) continue;
+					await sendCard(
+						conn,
+						cardKey,
+						replyTargets(ownerOrigins.get(room.id), `room:${room.id}`),
+						`${text("viewShow", { bot: room.name ?? "this group chat" })}${form !== "" ? `\n${form}` : view.title ? `\n${view.title}` : ""}`,
+					);
+					continue;
+				}
 				await sendCard(
 					conn,
 					cardKey,

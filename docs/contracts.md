@@ -30,6 +30,9 @@
 
 ## IM 适配器
 
+平台表（`shared/im-platforms.ts`）的 `groups` 说明该平台能否接入群聊：飞书为 `true`（群聊可绑定到内部群聊），
+微信为 `false`（iLink 群语义未确认前只做私聊）。群消息只在点名本 bot 时进入，群里的发言按来源回到该群。
+
 适配器是 `ocean-crew/src/host/im/platforms/` 下的一个模块，默认导出注册在 `platforms/index.ts` 里，键是 `ocean-crew/src/shared/im-platforms.ts` 列出的 `id`。配对、路由、卡片、队列和重试归 host；线上协议归适配器。
 
 | 成员 | 形状 | 说明 |

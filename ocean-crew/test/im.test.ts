@@ -990,3 +990,64 @@ test("a question raised in the window sends no card to IM", async (t) => {
 	await s.flush();
 	assert.deepEqual(s.fake.sent, [], "a window question stays in the window");
 });
+
+// ---------------------------------------------------------------------------
+// Group chats: a platform group bound to an in-app group chat.
+
+test("a group line reaches the bound group chat and no other chat", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	one.chats ??= {};
+	one.chats["dm-u1"] = { kind: "direct", title: "U1", at: 1 };
+	await s.rt.save();
+	// The work came from the group: this request is the group chat's origin.
+	await gm(s, "u1", "hello group");
+	await s.rt.imEndpoint("im-chat", { id: conn.id, chatKey: "g1", target: { roomId: "r1" } });
+	await gm(s, "u1", "@fakebot do the thing");
+	await s.flush();
+	s.fake.sent.length = 0;
+	// A member's line is posted back into the group chat, never into a direct chat.
+	s.rt.logRoom(s.rt.state.rooms.r1, { botId: "b", who: "Writer", text: "the draft is ready" });
+	assert.ok(await s.until(() => s.fake.sent.length > 0), "the line is posted");
+	assert.ok(
+		s.fake.sent.every((entry: any) => entry.chat.key === "g1"),
+		"only the group chat got it",
+	);
+	assert.match(s.fake.sent[0].text, /draft is ready/);
+});
+
+test("a question raised in a bound group chat sends its card there", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	const one = s.rt.state.im.connections[conn.id];
+	one.paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await gm(s, "u1", "@fakebot ask the team");
+	await s.rt.imEndpoint("im-chat", { id: conn.id, chatKey: "g1", target: { roomId: "r1" } });
+	await gm(s, "u1", "@fakebot a question");
+	await s.flush();
+	s.fake.sent.length = 0;
+	s.rt.state.questions.r1 = { id: "q1", question: "Which provider?", options: [{ label: "A" }, { label: "B" }] };
+	await s.rt.save();
+	await s.flush();
+	assert.ok(await s.until(() => s.fake.sent.length > 0), "the card is sent");
+	assert.ok(
+		s.fake.sent.every((entry: any) => entry.chat.key === "g1"),
+		"the card stays in the group chat",
+	);
+});
+
+test("an unpaired sender in a group asks once, and pairing lets the mention through", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	await gm(s, "u9", "@fakebot hello group");
+	assert.ok(await s.until(() => s.fake.sent.some((entry: any) => /connection request/.test(String(entry.text)))));
+	assert.equal(s.prompts.length, 0, "nothing reaches a Bot before pairing");
+	await s.rt.imEndpoint("im-pair", { id: conn.id, senderId: "u9", allow: true });
+	await s.rt.imEndpoint("im-chat", { id: conn.id, chatKey: "g1", target: { roomId: "r1" } });
+	await gm(s, "u9", "@fakebot now do it");
+	assert.equal(s.prompts.length, 1, "the paired mention starts a turn in the group chat");
+	assert.equal(s.prompts[0].sessionId, "r1");
+});

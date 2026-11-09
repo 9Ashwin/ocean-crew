@@ -1,5 +1,6 @@
-// The IM platforms Ocean Crew can connect to. Two private-chat connectors only: Feishu
-// and WeChat. External group chats are out of scope; the in-app Bot team owns groups.
+// The IM platforms Ocean Crew can connect to: Feishu (private chats and groups) and
+// WeChat (private chats only until iLink's group semantics are confirmed). A group chat
+// bound to an in-app group chat is how the Bot team talks to people where they already are.
 // The settings page draws the add form from `fields`; `secret` fields are kept as
 // Ocean Crew secrets and never leave the host. `buttons`: the platform can show card
 // buttons; `login: 'qr'`: the connection starts by scanning a code.
@@ -44,7 +45,7 @@ export const IM_PLATFORMS: ImPlatform[] = [
 			{ key: "appSecret", label: "App Secret", secret: true },
 		],
 		buttons: true,
-		groups: false,
+		groups: true,
 	},
 ];
 
