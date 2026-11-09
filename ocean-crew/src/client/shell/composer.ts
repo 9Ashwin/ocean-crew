@@ -35,6 +35,11 @@ export function ComposerPlus({ sessionId, inputActions, useInput, useRoster, act
 	const button = useRef<any>(null);
 	const menu = useRef<any>(null);
 	const tick = useViewport();
+	// The reply arrow reaches the caret through these while this composer is mounted.
+	useEffect(() => {
+		actions.registerComposer?.(sessionId, inputActions);
+		return () => actions.registerComposer?.(sessionId, undefined);
+	}, [sessionId, inputActions]);
 	// The selector runs on every input change, so inputNow stays live for the key handler
 	// while `ready` re-renders only when steerability flips.
 	const inputNow = useRef<any>(undefined);

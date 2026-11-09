@@ -285,6 +285,10 @@ function useDismiss(open: any, close: any, refs: any) {
 
 // The hover toolbar beside a reply bubble: Add reaction, Reply, More. `open` is
 // the touch fallback: a tap on the bubble toggles it (see Bubble).
+// The reply arrow must not take focus or the caret away from the composer: the quote is
+// inserted where the user was typing, so a click keeps that selection instead of clearing it.
+const keepComposerFocus = (event: any) => event.preventDefault();
+
 function MessageTools({ text, name, sessionId, react, actions, botId, companion, open: tapped }: any) {
 	// The anchor element is kept, not its rect: the visible viewport can move
 	// (on-screen keyboard) while the popover is open.
@@ -406,6 +410,7 @@ function MessageTools({ text, name, sessionId, react, actions, botId, companion,
 						className: "bt-tool",
 						"aria-label": t("Reply"),
 						title: t("Reply"),
+						onMouseDown: keepComposerFocus,
 						onClick: () => actions.quote(sessionId, text),
 					},
 					h(ReplyIcon),

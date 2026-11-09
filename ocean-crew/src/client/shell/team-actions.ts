@@ -28,6 +28,28 @@ export interface TeamActionsInput {
 	panelFolded?: (view: string) => boolean;
 }
 
+/** The draft a replied message inserts: up to three quoted lines and a blank line under them. */
+export function quoteDraft(text: unknown): string {
+	const lines = String(text ?? "")
+		.replace(/\r\n?/g, "\n")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line !== "")
+		.slice(0, 3)
+		.map((line) => `> ${line}`);
+	return lines.length === 0 ? "" : `${lines.join("\n")}\n\n`;
+}
+
+// Keyboard-triggered arrows (or a click that still moved focus) find the composer's text box
+// so a second attempt lands somewhere the user can see.
+function focusComposer(): void {
+	try {
+		(globalThis as any).document?.querySelector?.('[data-composer-card] [role="textbox"]')?.focus?.();
+	} catch {
+		/* an unfocusable text box simply keeps the pending quote */
+	}
+}
+
 export function teamActions({
 	call,
 	after,
@@ -40,6 +62,48 @@ export function teamActions({
 	turnClock,
 	panelFolded,
 }: TeamActionsInput) {
+	// The composer's own insertion actions, per Session: the reply arrow needs them to put a
+	// quote where the user was typing, and they exist only while that composer is mounted.
+	const composers = new Map<string, any>();
+	// A quote pressed before its composer mounted (a session switch, a panel briefly covering
+	// the chat): registerComposer flushes it, so the press does not vanish.
+	const pendingQuotes = new Map<string, string>();
+	// Where a Session id sits in the chat it belongs to: the roster indexes every part of a
+	// Bot's or room's chat, and its `sessionId` is the part the composer is typing in now.
+	const keyOf = (sessionId: any): string => {
+		const id = String(sessionId ?? "");
+		if (id === "") return "";
+		const snapshot = roster.getSnapshot();
+		const bot = snapshot.byId?.[id];
+		if (bot !== undefined) return String(bot.sessionId ?? bot.id ?? id);
+		const room = snapshot.roomsById?.[id];
+		if (room !== undefined) return String(room.sessionId ?? room.id ?? id);
+		return id;
+	};
+	const composerFor = (sessionId: string): any => {
+		const direct = composers.get(sessionId);
+		if (direct !== undefined) return direct;
+		const key = keyOf(sessionId);
+		const current = composers.get(key);
+		if (current !== undefined) return current;
+		for (const [registered, input] of composers) if (keyOf(registered) === key) return input;
+		return undefined;
+	};
+	// A quote lands at the caret the user left: capture and insert happen in one synchronous
+	// step, and a failed insertion stays pending instead of disappearing.
+	const insertQuote = (input: any, quoted: string): boolean => {
+		if (typeof input?.captureInsertion !== "function" || typeof input?.insertText !== "function") return false;
+		try {
+			input.insertText(quoted, input.captureInsertion());
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	const showError = (error: any, where: string): void => {
+		noteClientError(where, error);
+		ui.set((state) => ({ ...state, toast: { text: error?.message ?? String(error), token: Date.now() } }));
+	};
 	// A memory is a Bot's or a group chat's; both are opened by id.
 	const memoryOf = (id: string) => (roster.getSnapshot().roomsById[id] ? { roomId: id } : { botId: id });
 	// An action that shows the panel lands the yield with it: when a folded panel's explicit
@@ -188,8 +252,38 @@ export function teamActions({
 					: state,
 			);
 		},
+		registerComposer: (sessionId: string, inputActions: any) => {
+			const id = String(sessionId ?? "");
+			if (id === "") return;
+			if (inputActions === undefined) {
+				composers.delete(id);
+				return;
+			}
+			composers.set(id, inputActions);
+			const key = keyOf(id);
+			const pending = pendingQuotes.get(key);
+			if (pending !== undefined && insertQuote(inputActions, pending)) pendingQuotes.delete(key);
+		},
+		// The arrow quotes the message into the draft: the model cannot resolve "this one"
+		// otherwise, and a quote is what the user sees while typing the answer. The record in
+		// `ui.state.quote` keeps the last quote for panels; the composer above is what shows it.
 		quote: (sessionId: string, text: string) => {
+			const quoted = quoteDraft(text);
+			if (quoted === "") return;
+			const key = keyOf(sessionId);
+			const input = composerFor(sessionId);
+			let inserted = insertQuote(input, quoted);
+			if (!inserted && input !== undefined) {
+				focusComposer();
+				inserted = insertQuote(input, quoted);
+			}
 			ui.set((state) => ({ ...state, quote: { sessionId, text, token: Date.now() } }));
+			if (inserted) {
+				pendingQuotes.delete(key);
+				return;
+			}
+			pendingQuotes.set(key, quoted);
+			showError(new Error("Could not add the quote to the message box."), "quote");
 		},
 		clearQuote: (token: number) => {
 			ui.set((state) => (state.quote?.token === token ? { ...state, quote: null } : state));
@@ -346,10 +440,7 @@ export function teamActions({
 		diagnosticsClear: () => call("diagnostics-clear"),
 		repoStars: () => call("repo-stars"),
 		// A failed action away from any form (a menu, the palette) shows as a toast.
-		reportError: (error: any, where = "action") => {
-			noteClientError(where, error);
-			ui.set((state) => ({ ...state, toast: { text: error?.message ?? String(error), token: Date.now() } }));
-		},
+		reportError: (error: any, where = "action") => showError(error, where),
 		dismissToast: (token?: number) => {
 			ui.set((state) =>
 				state.toast && (token === undefined || state.toast.token === token) ? { ...state, toast: null } : state,

@@ -3,6 +3,7 @@
 // rules and the "@" menu rows. The h() components are covered by tsc and the bundle; this
 // file needs no DOM.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
 	atSources,
@@ -46,6 +47,7 @@ import {
 	isMainOf,
 } from "../src/client/shell/sources.ts";
 import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from "../src/client/shell/surface.ts";
+import { quoteDraft, teamActions } from "../src/client/shell/team-actions.ts";
 
 interface FakeStorage {
 	map: Map<string, string>;
@@ -583,4 +585,116 @@ test("the panel width follows the room it shares with the chat", () => {
 	assert.equal(panelWidth(740), PANEL_DETAILS_WIDTH);
 	assert.equal(panelWidth(600), PANEL_DETAILS_WIDTH);
 	assert.equal(panelWidth(0), PANEL_DETAILS_WIDTH);
+});
+
+// The reply arrow: the quote goes into the draft through the composer's own insertion
+// actions, at the caret the user left, across a Bot's chat parts, and it never disappears
+// silently when no composer can take it.
+function composerActions(value: Record<string, any> = {}) {
+	const bots = value.bots ?? [{ id: "chief", name: "Chief", sessionId: "chief-2", parts: ["chief-1"] }];
+	const rooms = value.rooms ?? [{ id: "r1", name: "Ops", members: ["chief"], sessionId: "r1-2", ownParts: ["r1-1"] }];
+	const ui = createSource<any>({ quote: null, toast: null });
+	const actions = teamActions({
+		call: async () => ({}),
+		after: async (promise: any) => promise,
+		partFor: (id: string) => id,
+		roster: createSource(roster(bots, rooms)),
+		ui,
+		live: createSource({}),
+		cards: createSource({}),
+		heldCards: createSource({}),
+		turnClock: createSource({}),
+	});
+	return { actions, ui };
+}
+
+const recorder = () => {
+	const calls: any[] = [];
+	const input = {
+		captureInsertion: () => ({ from: 2, to: 5 }),
+		insertText: (text: string, span: any) => calls.push({ text, span }),
+	};
+	return { calls, input };
+};
+
+test("quoteDraft quotes up to three trimmed lines and leaves a blank line to type on", () => {
+	assert.equal(quoteDraft("one"), "> one\n\n");
+	assert.equal(quoteDraft("  one  \r\ntwo\n\nthree\nfour"), "> one\n> two\n> three\n\n");
+	assert.equal(quoteDraft("\n \n"), "");
+	assert.equal(quoteDraft(undefined), "");
+	assert.equal(quoteDraft(42), "> 42\n\n");
+});
+
+test("quote inserts the draft at the caret the composer captured", () => {
+	const { actions, ui } = composerActions();
+	const { calls, input } = recorder();
+	actions.registerComposer("chief-2", input);
+	actions.quote("chief-2", "the answer\nwas 42");
+	assert.deepEqual(calls, [{ text: "> the answer\n> was 42\n\n", span: { from: 2, to: 5 } }]);
+	assert.equal(ui.getSnapshot().quote.sessionId, "chief-2");
+	assert.equal(ui.getSnapshot().toast, null, "a landed quote shows no error");
+});
+
+test("a quote pressed on an older part lands in the part the composer types in", () => {
+	const { actions } = composerActions();
+	// Both the Bot id and its older part resolve to the current part registered by the composer.
+	for (const sessionId of ["chief-1", "chief"]) {
+		const { calls, input } = recorder();
+		actions.registerComposer("chief-2", input);
+		actions.quote(sessionId, "quoted");
+		assert.deepEqual(calls, [{ text: "> quoted\n\n", span: { from: 2, to: 5 } }], sessionId);
+	}
+	// A group's own older part resolves the same way.
+	const { calls, input } = recorder();
+	actions.registerComposer("r1-2", input);
+	actions.quote("r1-1", "group quote");
+	assert.equal(calls[0].text, "> group quote\n\n");
+});
+
+test("a quote with no composer is kept for the next one and says it did not land", () => {
+	const { actions, ui } = composerActions();
+	assert.doesNotThrow(() => actions.quote("chief-2", "later"));
+	assert.match(ui.getSnapshot().toast.text, /message box/);
+	// The composer mounting later flushes the kept quote instead of dropping it.
+	const { calls, input } = recorder();
+	actions.registerComposer("chief-2", input);
+	assert.deepEqual(calls, [{ text: "> later\n\n", span: { from: 2, to: 5 } }]);
+	// It lands once: a second mount has nothing left to flush.
+	const second = recorder();
+	actions.registerComposer("chief-2", second.input);
+	assert.equal(second.calls.length, 0);
+});
+
+test("an insertion that throws keeps the quote pending and reports instead of throwing", () => {
+	const { actions, ui } = composerActions();
+	const calls: any[] = [];
+	actions.registerComposer("chief-2", {
+		captureInsertion: () => {
+			throw new Error("no caret");
+		},
+		insertText: (text: string) => calls.push(text),
+	});
+	assert.doesNotThrow(() => actions.quote("chief-2", "stubborn"));
+	assert.match(ui.getSnapshot().toast.text, /message box/);
+	assert.equal(calls.length, 0);
+	const { calls: landed, input } = recorder();
+	actions.registerComposer("chief-2", input);
+	assert.equal(landed.length, 1, "the retry after the composer mounts inserts it");
+});
+
+test("unregistering the composer stops quotes from reaching it", () => {
+	const { actions } = composerActions();
+	const { calls, input } = recorder();
+	actions.registerComposer("chief-2", input);
+	actions.registerComposer("chief-2", undefined);
+	actions.quote("chief-2", "gone");
+	assert.equal(calls.length, 0);
+});
+
+test("the reply arrow keeps the composer's focus and the shell registers the composer", () => {
+	const cells = readFileSync(new URL("../src/client/chat/cells.ts", import.meta.url), "utf8");
+	assert.match(cells, /onMouseDown: keepComposerFocus,\s*\n\s*onClick: \(\) => actions\.quote\(sessionId, text\)/);
+	const composer = readFileSync(new URL("../src/client/shell/composer.ts", import.meta.url), "utf8");
+	assert.match(composer, /actions\.registerComposer\?\.\(sessionId, inputActions\)/);
+	assert.match(composer, /actions\.registerComposer\?\.\(sessionId, undefined\)/);
 });
