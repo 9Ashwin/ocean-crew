@@ -140,6 +140,11 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 	"goal-control",
 	"room-budget",
 
+	"tts-settings",
+	"tts-set",
+	"tts-voices",
+	"tts-test",
+
 	"secret-set",
 	"secret-allow",
 	"secret-cancel",
@@ -197,6 +202,11 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 
 // Endpoint families whose module answers the whole group through one `*Endpoint` member.
 const SECRET_ENDPOINTS: readonly string[] = [
+	"tts-settings",
+	"tts-set",
+	"tts-voices",
+	"tts-test",
+
 	"secret-set",
 	"secret-allow",
 	"secret-cancel",
@@ -1131,6 +1141,20 @@ export function install(rt: Runtime): void {
 		},
 		async "repo-stars"() {
 			return ok(await callMember("repo-stars", "repoStars"));
+		},
+		async "tts-settings"() {
+			return ok(await callMember("tts-settings", "ttsSettingsView"));
+		},
+		async "tts-set"(body) {
+			const patch =
+				body !== null && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+			return ok(await callMember("tts-set", "ttsSettingsSet", patch));
+		},
+		async "tts-voices"() {
+			return ok(await callMember("tts-voices", "ttsVoices"));
+		},
+		async "tts-test"() {
+			return ok(await callMember("tts-test", "ttsTest"));
 		},
 		async diagnostics(body) {
 			const service = diagnosticsService("diagnostics", "report");

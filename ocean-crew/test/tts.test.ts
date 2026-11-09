@@ -128,3 +128,49 @@ test("a caller can ask for the container the chat can play", async (t) => {
 	assert.equal(audio.name, "voice.opus");
 	assert.match(urls[0], /output_format=opus$/);
 });
+
+// The settings page saves into the team state, which wins over the profile's defaults.
+test("saved settings override the profile and the view reports them", async (t) => {
+	const dir = home();
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const rt = runtime(dir, { model: "breeze-tts-2", format: "mp3" }, { BREEZE_API_KEY: "brz_test" });
+	(rt as any).state = {};
+	(rt as any).load = async () => {};
+	(rt as any).save = async () => {};
+	// The view and setter are published by install above; re-read through the runtime.
+	const before = rt.ttsSettingsView();
+	assert.equal(before.model, "breeze-tts-2");
+	assert.equal(before.hasSecret, true);
+	const next = await rt.ttsSettingsSet({ model: "breeze-tts-2-multilingual", voice: "voc_9", autoReply: true });
+	assert.equal(next.model, "breeze-tts-2-multilingual");
+	assert.equal(next.voice, "voc_9");
+	assert.equal(next.autoReply, true);
+	// A value the page cannot edit is ignored rather than stored.
+	await rt.ttsSettingsSet({ baseUrl: 42, enabled: false });
+	assert.equal((rt as any).state.tts.enabled, false);
+	assert.equal((rt as any).state.tts.model, "breeze-tts-2-multilingual");
+});
+
+test("the voice list and the test both refuse without a secret", async (t) => {
+	const dir = home();
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const rt = runtime(dir, {});
+	(rt as any).state = {};
+	(rt as any).load = async () => {};
+	(rt as any).save = async () => {};
+	await assert.rejects(rt.ttsVoices(), (error: any) => error.code === "bot/unavailable");
+	await assert.rejects(rt.ttsTest(), (error: any) => error.code === "bot/unavailable");
+});
+
+test("the voice list names the account's voices", async (t) => {
+	const dir = home();
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const original = globalThis.fetch;
+	globalThis.fetch = (async () =>
+		new Response(JSON.stringify({ voices: [{ voice_id: "voc_1", name: "Narrator" }] }), { status: 200 })) as any;
+	t.after(() => {
+		globalThis.fetch = original;
+	});
+	const rt = runtime(dir, {}, { BREEZE_API_KEY: "brz_test" });
+	assert.deepEqual(await rt.ttsVoices(), [{ id: "voc_1", name: "Narrator" }]);
+});

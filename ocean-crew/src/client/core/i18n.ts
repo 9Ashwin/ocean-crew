@@ -6,6 +6,31 @@
 export const NAMESPACE = "ocean-crew";
 
 const ZH: Record<string, string> = {
+	// Voice settings
+	Voice: "语音",
+	"Enable spoken answers": "启用语音回复",
+	"The speak tool uses this voice": "speak 工具使用这个声音",
+	"Save the BREEZE_API_KEY secret in Settings → Secrets first": "先在 设置 → 密钥 里保存 BREEZE_API_KEY",
+	"Base URL": "接口地址",
+	"For example breeze-tts-2": "例如 breeze-tts-2",
+	"Empty picks the account's first voice": "留空则使用账号里的第一个声音",
+	"First saved voice": "第一个保存的声音",
+	"Load voices": "加载声音列表",
+	Language: "语言",
+	"ISO 639-1, for example zh or en": "ISO 639-1，如 zh、en",
+	"Audio format": "音频格式",
+	"Feishu speaks opus; a plain file keeps this format": "飞书语音条用 opus；普通音频文件保持这个格式",
+	"Delivery notes": "表演说明",
+	"How the voice should sound, in the text's language": "希望声音怎么念，与文本同语言",
+	"Softly and warmly": "轻声、温暖",
+	Behaviour: "行为",
+	"Also speak every answer": "每条回答也念出来",
+	"Pairs each IM answer with a spoken copy; happens in direct chats only": "给每条 IM 回答附一条语音；只在私聊",
+	"WeChat voice bubble": "微信原生语音条",
+	"Experimental: some WeChat clients do not draw a bot's voice message; off sends an audio file":
+		"实验性：部分微信客户端不显示机器人的语音消息；关闭时发音频文件",
+	"Test voice": "测试语音",
+	"Voice test OK": "语音测试通过",
 	// Group spending limits
 	"Spending limits": "花费上限",
 	"Member work": "成员工作",

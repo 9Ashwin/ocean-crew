@@ -15,6 +15,7 @@ const SPEAK_TIMEOUT_MS = 60_000;
 interface TtsConfig {
 	enabled?: boolean;
 	autoReply?: boolean;
+	voiceItem?: boolean;
 	baseUrl?: string;
 	secret?: string;
 	model?: string;
@@ -52,21 +53,26 @@ const splitSpeech = (text: string): string[] => {
 };
 
 export function install(rt: Runtime): void {
-	const config = (): TtsConfig => ((rt.config as Record<string, any>)?.tts ?? {}) as TtsConfig;
-	const enabled = (): boolean => config().enabled !== false && rt.secretValue?.(secretName()) !== undefined;
-	const secretName = (): string => String(config().secret ?? DEFAULT_SECRET);
-	const base = (): string => String(config().baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
+	// Settings saved from the app win over the profile's defaults: the page is where a
+	// user picks a voice without editing the profile patch.
+	const settings = (): TtsConfig => ({
+		...(((rt.config as Record<string, any>)?.tts ?? {}) as TtsConfig),
+		...(((rt.state as Record<string, any>)?.tts ?? {}) as TtsConfig),
+	});
+	const secretName = (): string => String(settings().secret ?? DEFAULT_SECRET);
+	const enabled = (): boolean => settings().enabled !== false && rt.secretValue?.(secretName()) !== undefined;
+	const base = (): string => String(settings().baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
 	// The provider names the output container; a caller may override it (Feishu draws a
 	// voice bubble only from opus, while a plain audio file plays as-is on any platform).
 	const format = (override?: string): string =>
-		String(override ?? config().format ?? "mp3").replace(/[^a-z0-9_]/gi, "");
+		String(override ?? settings().format ?? "mp3").replace(/[^a-z0-9_]/gi, "");
 
 	let voices: { at: number; first: string | undefined } | undefined;
 
 	// Without a configured voice, the account's first saved voice is used; the lookup is
 	// cached, and a failure says what to configure instead of guessing an id.
 	const voice = async (key: string): Promise<string> => {
-		const wanted = config().voice;
+		const wanted = settings().voice;
 		if (typeof wanted === "string" && wanted !== "") return wanted;
 		if (voices === undefined || Date.now() - voices.at > VOICES_TTL_MS) {
 			let first: string | undefined;
@@ -102,10 +108,11 @@ export function install(rt: Runtime): void {
 		for (const chunk of chunks) {
 			const url = `${base()}/v1/text-to-speech/${encodeURIComponent(chosen)}?output_format=${encodeURIComponent(format(formatOverride))}`;
 			const body: Record<string, unknown> = { text: chunk };
-			if (typeof config().model === "string" && config().model !== "") body.model_id = config().model;
-			if (typeof config().language === "string" && config().language !== "") body.language_code = config().language;
-			if (typeof config().instructions === "string" && config().instructions !== "")
-				body.instructions = config().instructions;
+			if (typeof settings().model === "string" && settings().model !== "") body.model_id = settings().model;
+			if (typeof settings().language === "string" && settings().language !== "")
+				body.language_code = settings().language;
+			if (typeof settings().instructions === "string" && settings().instructions !== "")
+				body.instructions = settings().instructions;
 			let response: any;
 			try {
 				response = await fetch(url, {
@@ -133,5 +140,70 @@ export function install(rt: Runtime): void {
 		return { bytes: audio, name: `voice.${format(formatOverride)}` };
 	};
 
-	Object.assign(rt, { speak, speakEnabled: enabled });
+	const view = () => {
+		const current = settings();
+		return {
+			enabled: current.enabled !== false,
+			hasSecret: rt.secretValue?.(secretName()) !== undefined,
+			secret: secretName(),
+			baseUrl: current.baseUrl ?? DEFAULT_BASE,
+			model: current.model ?? "",
+			voice: current.voice ?? "",
+			language: current.language ?? "",
+			format: current.format ?? "mp3",
+			instructions: current.instructions ?? "",
+			voiceItem: current.voiceItem === true,
+			autoReply: current.autoReply === true,
+		};
+	};
+	// Saved settings are a small closed set of scalars; anything else is ignored, and a
+	// speech change drops the cached voice lookup.
+	const set = async (patch: Record<string, unknown>): Promise<ReturnType<typeof view>> => {
+		await rt.load();
+		const state = rt.state as Record<string, any>;
+		const next: TtsConfig = { ...(state.tts ?? {}) };
+		const words = ["baseUrl", "model", "voice", "language", "format", "instructions", "secret"] as const;
+		for (const key of words) if (typeof patch[key] === "string") next[key] = patch[key].trim();
+		if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+		if (typeof patch.voiceItem === "boolean") next.voiceItem = patch.voiceItem;
+		if (typeof patch.autoReply === "boolean") next.autoReply = patch.autoReply;
+		state.tts = next;
+		voices = undefined;
+		await rt.save();
+		return view();
+	};
+	const listVoices = async (): Promise<Array<{ id: string; name: string }>> => {
+		const key = rt.secretValue?.(secretName());
+		if (key === undefined || key === "")
+			throw refusals.unavailable(`The ${secretName()} secret is not set; save the speech API key first`);
+		let response: any;
+		try {
+			response = await fetch(`${base()}/v1/voices`, {
+				headers: { "xi-api-key": key },
+				signal: AbortSignal.timeout(SPEAK_TIMEOUT_MS),
+			});
+		} catch (error: any) {
+			throw refusals.refused(`The speech service did not answer: ${String(error?.message ?? error)}`);
+		}
+		if (!response.ok) throw refusals.refused(`The speech service refused (${response.status})`);
+		const body: any = await response.json().catch(() => undefined);
+		const list = Array.isArray(body?.voices) ? body.voices : Array.isArray(body) ? body : [];
+		return list
+			.filter((entry: any) => typeof entry?.voice_id === "string")
+			.map((entry: any) => ({ id: String(entry.voice_id), name: String(entry.name ?? entry.voice_id) }));
+	};
+	const test = async (): Promise<{ ms: number; name: string }> => {
+		const started = Date.now();
+		const audio = await speak("你好，这是一条语音测试。");
+		return { ms: Date.now() - started, name: audio.name };
+	};
+
+	Object.assign(rt, {
+		speak,
+		speakEnabled: enabled,
+		ttsSettingsView: view,
+		ttsSettingsSet: set,
+		ttsVoices: listVoices,
+		ttsTest: test,
+	});
 }

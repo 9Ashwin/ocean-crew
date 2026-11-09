@@ -534,6 +534,7 @@ export function install(rt: any) {
 	// talked to this Bot, so a reminder the user set up reaches them in IM.
 	const scheduledTurns = new Set<string>();
 	const notifyAnswers = new Map<string, string>();
+	const spokenAnswers = new Map<string, string>();
 
 	const targetsOf = (conn: any) => {
 		const out: any[] = [];
@@ -736,6 +737,7 @@ export function install(rt: any) {
 								kind: held.kind,
 								name: held.name,
 								...(held.mime === undefined ? {} : { mime: held.mime }),
+								...(held.voice === true ? { voice: true } : {}),
 								data: await readFile(held.path),
 							});
 						} catch (error: any) {
@@ -2163,6 +2165,39 @@ export function install(rt: any) {
 		}
 		if (event.type === "turn/end") {
 			scheduledTurns.delete(session.id);
+			const spoken = spokenAnswers.get(session.id);
+			spokenAnswers.delete(session.id);
+			if (spoken !== undefined) {
+				const voiceBotId = rt.chatOwners.get(session.id);
+				if (voiceBotId !== undefined) {
+					for (const { conn, chatKey, chat } of replyTargets(ownerOrigins.get(voiceBotId), `bot:${voiceBotId}`)) {
+						if (chat.kind !== "direct" || typeof rt.speak !== "function") continue;
+						const settingsView: any = (rt as Record<string, any>).ttsSettingsView?.();
+						const spokenFormat = conn.platform === "feishu" ? "opus" : "mp3";
+						void (async () => {
+							try {
+								const audio = await rt.speak(spoken.replace(/[*_`#>]+/g, ""), spokenFormat);
+								await sendMedia(
+									conn,
+									chatKey,
+									{ key: chatKey, kind: chat.kind, title: chat.title },
+									[
+										{
+											kind: "file",
+											name: audio.name,
+											data: audio.bytes,
+											voice: settingsView?.voiceItem === true,
+										},
+									],
+									"",
+								);
+							} catch (error: any) {
+								rt.warn("ocean-crew: im spoken answer failed: %s", error?.message ?? error);
+							}
+						})();
+					}
+				}
+			}
 			const notify = notifyAnswers.get(session.id);
 			notifyAnswers.delete(session.id);
 			if (notify !== undefined && notify.trim() !== "") {
@@ -2282,6 +2317,12 @@ export function install(rt: any) {
 				}
 			}
 			return;
+		}
+		const voiceSettings = (rt as Record<string, any>).ttsSettingsView?.();
+		if (event.type === "assistant/message" && voiceSettings?.enabled !== false && voiceSettings?.autoReply === true) {
+			for (const item of rt.displayItems(session.id, [event]))
+				if (item.kind === "bot" && item.text.trim() !== "" && item.text.length <= 300)
+					spokenAnswers.set(session.id, item.text);
 		}
 		for (const item of rt.displayItems(session.id, [event])) {
 			if (item.kind !== "bot" && item.kind !== "view") continue;

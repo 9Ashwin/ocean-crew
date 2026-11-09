@@ -36,6 +36,7 @@ import { ModelMenu } from "./model-menu.ts";
 import { ProvidersPage } from "./providers-page.ts";
 import { SchedulesPage } from "./schedules.ts";
 import { UsagePage } from "./usage-page.ts";
+import { VoiceSettingsPage } from "./voice-settings.ts";
 
 // The bundle runs in the DSH window; the host type check has no DOM lib.
 declare const document: any;
@@ -52,6 +53,7 @@ const SETTINGS_PAGES: ReadonlyArray<readonly [string, string]> = [
 	["groups", "Group chats"],
 	["connectors", "Connectors"],
 	["im", "IM"],
+	["voice", "Voice"],
 	["capabilities", "Capabilities"],
 	["schedules", "Scheduled tasks"],
 	["usage", "Usage"],
@@ -65,6 +67,7 @@ const PAGE_ICONS: Record<string, any> = {
 	connectors: ConnectorIcon,
 	im: ChatsIcon,
 	capabilities: PlugIcon,
+	voice: SlidersIcon,
 	schedules: ClockIcon,
 	secrets: KeyIcon,
 	feedback: FeedbackIcon,
@@ -875,6 +878,7 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
 								shown === "groups" && !room ? h(GroupsPage, { roster, actions, run }) : null,
 								shown === "connectors" ? h(ConnectorsPage, { roster, actions }) : null,
 								shown === "im" ? h(ImPage, { roster, actions }) : null,
+								shown === "voice" ? h(VoiceSettingsPage, { actions, Section: SetSection, Row: SetRow }) : null,
 								shown === "capabilities" ? h(CapabilitiesPage, { roster, actions, run }) : null,
 								shown === "schedules" ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,
 								shown === "secrets" ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,

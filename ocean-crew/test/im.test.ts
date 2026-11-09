@@ -1686,3 +1686,55 @@ test("the voice plan names the container the chat can draw", async (t) => {
 	await s.flush();
 	assert.deepEqual(s.rt.imVoicePlan(s.rt.chatOf("a")), { platform: "feishu", format: "opus" });
 });
+
+// With autoReply on, the final answer of an IM turn is also spoken into the chat. The
+// speech itself is the host's, so the test stands in for it and reads the queued media.
+test("autoReply speaks the final answer into the direct chat", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	s.rt.state.tts = { autoReply: true };
+	await s.rt.save();
+	const spoken: string[] = [];
+	s.rt.speak = async (text: string, format?: string) => {
+		spoken.push(`${format ?? "mp3"}:${text}`);
+		return { bytes: Buffer.from("spoken"), name: `voice.${format ?? "mp3"}` };
+	};
+	await dm(s, "u1", "answer me");
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "turn/start", { turn: 2 });
+	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, content: [] });
+	s.emitEvent("a", "assistant/message", {
+		turn: 2,
+		message: { content: [{ type: "text", text: "here is the spoken answer" }] },
+	});
+	s.emitEvent("a", "turn/end", { turn: 2, reason: { kind: "completed" } });
+	assert.ok(await s.until(() => spoken.length === 1), "the answer was spoken once");
+	assert.equal(spoken[0], "mp3:here is the spoken answer");
+	assert.ok(
+		await s.until(() => s.fake.sent.some((entry: any) => entry.media?.[0]?.name === "voice.mp3")),
+		"the spoken audio was queued for the chat",
+	);
+	const media = s.fake.sent.find((entry: any) => entry.media?.[0]?.name === "voice.mp3");
+	assert.equal(media.media[0].voice, undefined, "a plain audio file by default");
+});
+
+test("autoReply stays quiet unless the settings ask for it", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	const spoken: string[] = [];
+	s.rt.speak = async (text: string) => {
+		spoken.push(text);
+		return { bytes: Buffer.from("x"), name: "voice.mp3" };
+	};
+	await dm(s, "u1", "answer me");
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "turn/start", { turn: 2 });
+	s.emitEvent("a", "user/message", { source: { kind: "user", rpcId: request }, content: [] });
+	s.emitEvent("a", "assistant/message", { turn: 2, message: { content: [{ type: "text", text: "quiet" }] } });
+	s.emitEvent("a", "turn/end", { turn: 2, reason: { kind: "completed" } });
+	await s.flush();
+	assert.equal(spoken.length, 0);
+});

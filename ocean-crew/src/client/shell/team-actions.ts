@@ -315,6 +315,10 @@ export function teamActions({
 		approveCapability: (name: string) => after(call("capability-approve", { name })),
 		setBotCapability: (botId: string, name: string, attached: boolean) =>
 			after(call("bot-capability", { botId, name, attached })),
+		ttsSettings: () => call("tts-settings"),
+		ttsSet: (patch: unknown) => after(call("tts-set", patch)),
+		ttsVoices: () => call("tts-voices"),
+		ttsTest: () => call("tts-test"),
 		schedules: () => call("schedules"),
 		scheduleCreate: (task: unknown) => call("schedule-create", task),
 		scheduleDelete: (sessionId: string, id: string) => call("schedule-delete", { sessionId, id }),
