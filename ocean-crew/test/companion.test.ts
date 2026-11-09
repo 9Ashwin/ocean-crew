@@ -222,3 +222,34 @@ test("a schedule that cannot be created fails the change instead of pretending",
 		return true;
 	});
 });
+
+test("the host's own user message event carries the words that move the relationship", async (t) => {
+	const { rt, ctx } = start(t);
+	await rt.companionSet("a", { enabled: true });
+	const listeners = ctx.listeners.get("session/event") ?? [];
+	assert.ok(listeners.length > 0, "the companion listens for session events");
+	const base = rt.companionOf("a").affection;
+	// A real DSH event carries the parts on `data.content`, not inside a nested message.
+	listeners[0](
+		{ id: "sess-a" },
+		{
+			type: "user/message",
+			data: { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "谢谢你呀" }] },
+		},
+	);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	const moved = rt.companionOf("a");
+	assert.equal(moved.affection, base + 2);
+	assert.equal(moved.mood, "excited");
+	assert.equal(moved.interactions, 1);
+	// A synthetic snapshot from another module is not the user speaking.
+	listeners[0](
+		{ id: "sess-a" },
+		{
+			type: "user/message",
+			data: { role: "user", source: { kind: "ocean-crew-companion" }, content: [{ type: "text", text: "谢谢" }] },
+		},
+	);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.equal(rt.companionOf("a").interactions, 1);
+});

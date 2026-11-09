@@ -298,7 +298,7 @@ export function install(rt: Runtime): void {
 	listenGlobal(ctx, "session/event", (session: any, event: any) => {
 		if (event?.type !== "user/message") return;
 		if (event.data?.source?.kind !== "user") return;
-		const text = textOf(event.data?.message);
+		const text = textOf(event.data?.message ?? event.data);
 		if (text === "") return;
 		void touch(session?.id, text);
 	});
