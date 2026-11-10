@@ -412,10 +412,11 @@ test("a mention-only text is dispatched but an unreadable type is skipped", asyn
 		}),
 		() => messages.length === 1,
 	);
+	// A sticker is read as an image now, so the skipped type is one this adapter has no reading for.
 	await dispatch(
 		fake,
 		"im.message.receive_v1",
-		messageEvent({ message_id: "om_2", message_type: "sticker", content: JSON.stringify({ file_key: "sticker_1" }) }),
+		messageEvent({ message_id: "om_2", message_type: "share_user", content: JSON.stringify({ user_id: "ou_x" }) }),
 	);
 	await settle();
 	assert.equal(messages.length, 1);
@@ -1237,4 +1238,36 @@ test("a card form renders its inputs and reports the collected values", async ()
 	);
 	assert.equal(actions[0].data, "v:v1:details:submit");
 	assert.deepEqual(actions[0].form, { "f:details:name": "Alice" });
+});
+
+// An emoji sent from Feishu is an emoji in the window too: the panel puts a code into the text, and a
+// sticker is a picture. Both used to be lost on the way in.
+test("a text message with an emoji code reaches the host as the emoji", async () => {
+	const fake = fakeSdk();
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({ content: JSON.stringify({ text: "收到[赞]" }) }),
+		() => messages.length === 1,
+	);
+	assert.equal(messages[0].text, "收到👍");
+});
+
+test("a sticker is read as the picture it is, not dropped", async () => {
+	const fake = fakeSdk({ resources: { file_v3_sticker: Buffer.from("sticker-bytes") } });
+	const { messages } = await setup(fake);
+	await dispatch(
+		fake,
+		"im.message.receive_v1",
+		messageEvent({
+			message_id: "om_sticker",
+			message_type: "sticker",
+			content: JSON.stringify({ file_key: "file_v3_sticker" }),
+		}),
+		() => messages.length === 1,
+	);
+	assert.equal(messages.length, 1, "the sticker reached the host");
+	assert.equal(messages[0].images.length, 1, "as an image the window can draw");
+	assert.match(messages[0].text, /\[Emoji\]/);
 });

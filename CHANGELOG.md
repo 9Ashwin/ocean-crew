@@ -5,6 +5,18 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.6] - 2026-11-10
+
+### Fixed
+
+- An emoji sent from Feishu now arrives as that emoji in the window. Feishu's emoji panel puts a
+  code like `[赞]` into the message text, so the message read as brackets everywhere; the codes
+  people actually use are mapped back to their character, and an unknown code is left as it came
+  rather than guessed at.
+- A Feishu sticker is a picture, and it was dropped entirely: no text, no image, no file. It is now
+  read as the image the chat shows, and a sticker whose bytes cannot be read still says `[Emoji]`
+  instead of vanishing.
+
 ## [0.6.5] - 2026-11-10
 
 ### Fixed

@@ -7,6 +7,7 @@
 // by PATCH; images and files are fetched from messageResource.
 import { randomUUID } from "node:crypto";
 import * as Lark from "@larksuiteoapi/node-sdk";
+import { emojiText } from "../emoji-text.ts";
 import { chunkMarkdown, toPlain } from "../format.ts";
 import { imageMediaTypeOf } from "./media-type.ts";
 
@@ -733,7 +734,7 @@ const feishu = {
 					const type = String(message.message_type ?? "");
 					const rendered =
 						type === "text"
-							? withoutMentions(content.text)
+							? emojiText(withoutMentions(content.text))
 							: type === "post"
 								? postText(content)
 								: type === "merge_forward"
@@ -776,6 +777,26 @@ const feishu = {
 								.replace(/\[Image\]/g, "")
 								.replace(/\n{3,}/g, "\n\n")
 								.trim();
+					}
+					// A sticker carries a file key like an image does; read it as one so the desktop shows
+					// the picture the chat shows. A sticker whose bytes cannot be read still says so in
+					// words instead of vanishing.
+					if (type === "sticker") {
+						const key = String(content.file_key ?? content.image_key ?? "");
+						let read = false;
+						if (key !== "") {
+							for (const kind of ["image", "file"] as const) {
+								try {
+									const bytes = await messageResource(client, messageId, key, kind);
+									images.push({ mediaType: imageMediaTypeOf(bytes), data: bytes.toString("base64") });
+									read = true;
+									break;
+								} catch {
+									// Not this resource type; the next one may be right.
+								}
+							}
+						}
+						renderedText = read ? "[Emoji]" : "[Emoji: could not be read]";
 					}
 					if (type === "image" && typeof content.image_key === "string" && content.image_key !== "") {
 						try {
