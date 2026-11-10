@@ -108,6 +108,18 @@ GitHub 安装方式保留给开发版（安装时由 `prepare` 现场构建）�
 
 命令带图片/文件时不识别为命令；未绑定的聊天按「未绑定」处理。卡片按钮回调数据为 `c:<命令>`。
 
+## 工具副作用与免确认权限
+
+- 每个工具调用按名字分类副作用：`read` / `draft` / `external_send` / `destructive` / `payment`。
+  读动词优先（`get_message` 是读，`send_message` 是发），认不出的名字按 `external_send` 处理——宁可多问一次。
+- 后三类在 `tools/pre-execute` 阶段返回 DSH 原生的 `ask` 决策，走 approval seam（窗口卡片、IM 卡片同一套），
+  不另建确认体系。
+- **回答可观测**：被允许的调用会进入 `tools/execute`，因此「问过但没执行」就是拒绝。据此同一回合内：
+  同一次调用不再重复问；同一目标换个工具也会被拒（拒绝是终局）；只有真正执行过才算允许。
+- 常设许可存在团队数据 `sideEffectGrants`（`{tool, target?, at}`），只能从 设置 → 工具权限 授予或撤销；
+  定时任务不继承——每次调用仍照常判定。
+- 端点：`side-effect-grants` / `side-effect-grant` / `side-effect-revoke`。
+
 ## 定时任务的运行记录与失败通知
 
 - 每次定时触发写一条运行记录到 `<home>/schedule-runs.jsonl`（一行一条，保留最近 200 条）：

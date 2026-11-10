@@ -228,6 +228,7 @@ function moduleMembers(calls: Array<[string, ...unknown[]]>): Record<string, Mem
 			abortable: signal !== undefined,
 		}),
 		setTeamWorkspace: async (path: string) => ({ id: "workspace-1", path }),
+		sideEffectEndpoint: async (endpoint: string, body: unknown) => ({ endpoint, body }),
 		releaseArchive: rec("releaseArchive"),
 		resetTeam: async () => ({ backup: "backups/reset-test", path: "/tmp/backups/reset-test" }),
 		avatarLibraryView: async (options: unknown) => ({ items: [], options }),

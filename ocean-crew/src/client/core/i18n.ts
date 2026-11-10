@@ -17,6 +17,15 @@ const ZH: Record<string, string> = {
 	"Last run: nothing to say": "上次运行：无新内容",
 	"Last run skipped": "上次运行跳过",
 	"Last run: answered": "上次运行：已回答",
+	Permissions: "权限",
+	"Allowed without asking": "免确认的权限",
+	"A tool that sends, deletes or pays asks first. Allowing it here covers every later call, until you remove it.":
+		"会发送、删除或花钱的工具默认先询问。在这里放行后，之后调用不再询问，直到你移除。",
+	"The permission list could not be read.": "读取权限列表失败。",
+	"Nothing is allowed without asking. Every strict call shows a card.":
+		"没有免确认的权限。每次发送、删除或花钱都会先弹卡片。",
+	"Any target": "任意对象",
+	"Remove this permission": "移除该权限",
 	// Companion settings
 	Companion: "伙伴",
 	"Which Bot becomes a character in its own chat": "哪个 Bot 在自己的聊天里成为角色",
@@ -643,7 +652,7 @@ const ZH: Record<string, string> = {
 	"Click again to delete. Its chats are archived.": "再点一次删除，它的对话会归档。",
 	"Removes the Bot from the team.": "把这个 Bot 从团队里移除。",
 	"Pick a model and {name} can start.": "选好模型，{name} 就能开始工作。",
-	Permissions: "权限",
+	"Tool permissions": "工具权限",
 	"Read only": "仅可查看",
 	Workspace: "工作区内修改",
 	"Full access": "完全权限",

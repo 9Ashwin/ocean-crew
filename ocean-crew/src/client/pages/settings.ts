@@ -35,6 +35,7 @@ import { GroupSettingsForm, NewGroupForm } from "./group-settings.ts";
 import { ImPage } from "./im-page.ts";
 import { KeptPrivateSection } from "./kept-private.ts";
 import { ModelMenu } from "./model-menu.ts";
+import { PermissionsPage } from "./permissions-page.ts";
 import { ProvidersPage } from "./providers-page.ts";
 import { SchedulesPage } from "./schedules.ts";
 import { UsagePage } from "./usage-page.ts";
@@ -59,6 +60,7 @@ const SETTINGS_PAGES: ReadonlyArray<readonly [string, string]> = [
 	["companion", "Companion"],
 	["capabilities", "Capabilities"],
 	["schedules", "Scheduled tasks"],
+	["permissions", "Tool permissions"],
 	["usage", "Usage"],
 	["secrets", "Secrets"],
 	["feedback", "Feedback"],
@@ -73,6 +75,7 @@ const PAGE_ICONS: Record<string, any> = {
 	voice: SlidersIcon,
 	companion: HeartIcon,
 	schedules: ClockIcon,
+	permissions: KeyIcon,
 	secrets: KeyIcon,
 	feedback: FeedbackIcon,
 	about: InfoIcon,
@@ -888,6 +891,9 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
 									: null,
 								shown === "capabilities" ? h(CapabilitiesPage, { roster, actions, run }) : null,
 								shown === "schedules" ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,
+								shown === "permissions"
+									? h(PermissionsPage, { actions, Section: SetSection, Row: SetRow })
+									: null,
 								shown === "secrets" ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,
 								shown === "feedback"
 									? h(FeedbackPage, { actions, run, Section: SetSection, Row: SetRow })

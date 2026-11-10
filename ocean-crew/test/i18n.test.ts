@@ -104,7 +104,7 @@ test("copy follows the DSH language and stays English without a locale service",
 test("the dictionary keeps the whole Chinese copy, and host entries are part of it", () => {
 	// A spot check that the port kept the dictionary whole rather than a prefix. The
 
-	assert.equal(Object.keys(DICTIONARY.zh).length, 1594);
+	assert.equal(Object.keys(DICTIONARY.zh).length, 1601);
 	for (const key of [
 		"Main Bot",
 		"Model",

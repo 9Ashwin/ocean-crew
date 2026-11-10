@@ -5,6 +5,18 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.5.1] - 2026-11-10
+
+### Added
+
+- A tool call that sends, deletes or pays is shown to the user before it runs, whatever tool
+  carries it: the call is classified by name (`read`, `draft`, `external_send`, `destructive`,
+  `payment`) and an unrecognised name counts as strict. The card is DSH's own approval card, so
+  there is no second approval system; IM and the window both answer it.
+- A refusal is terminal for that turn: the same call is not asked twice, the same target is
+  refused even through another tool, and only a call that actually dispatched counts as a grant.
+- Settings → Tool permissions lists the standing grants, and removing one brings the card back.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added

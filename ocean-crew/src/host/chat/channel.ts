@@ -128,6 +128,10 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 	"avatar-import",
 	"avatar-delete",
 
+	"side-effect-grants",
+	"side-effect-grant",
+	"side-effect-revoke",
+
 	"add-agent",
 	"agent-session",
 	"agent-adopt",
@@ -245,6 +249,13 @@ const MEMORY_ENDPOINTS: readonly string[] = [
 	"memory-forget",
 	"memory-history",
 	"memory-restore",
+];
+
+/** Standing grants for strict tool calls: what the user allows without a card. */
+export const SIDE_EFFECT_ENDPOINTS: readonly string[] = [
+	"side-effect-grants",
+	"side-effect-grant",
+	"side-effect-revoke",
 ];
 
 /** IM endpoints, one `imEndpoint(endpoint, body)` module call each. */
@@ -1204,6 +1215,7 @@ export function install(rt: Runtime): void {
 		...CAPABILITY_ENDPOINTS.map((name) => [name, "capabilityEndpoint"] as const),
 		...SCHEDULE_ENDPOINTS.map((name) => [name, "scheduleEndpoint"] as const),
 		...MEMORY_ENDPOINTS.map((name) => [name, "memoryEndpoint"] as const),
+		...SIDE_EFFECT_ENDPOINTS.map((name) => [name, "sideEffectEndpoint"] as const),
 	] as ReadonlyArray<readonly [string, string]>) {
 		endpoints[endpoint] = async (body) => {
 			await load();
