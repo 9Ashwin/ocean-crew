@@ -15,6 +15,20 @@ test("an unknown code is left alone: a wrong guess is worse than brackets", () =
 	assert.equal(emojiText("数组[0] 和 [索引]"), "数组[0] 和 [索引]");
 });
 
+test("Feishu's own stickers land on the closest character instead of staying brackets", () => {
+	// `[了解]` is Feishu's "Get" sticker: it has no character of its own, and four characters of
+	// punctuation in a chat is worse than an emoji that reads as agreement.
+	assert.equal(emojiText("[了解]"), "👌");
+	assert.equal(emojiText("[马上]"), "🔜");
+	assert.equal(emojiText("[比心]"), "🫰");
+});
+
+test("the English spelling of a code works too, in either case", () => {
+	assert.equal(emojiText("[get]"), "👌");
+	assert.equal(emojiText("[GET]"), "👌");
+	assert.equal(emojiText("[Thinking]"), "🤔");
+});
+
 test("text without a code is returned as it came", () => {
 	assert.equal(emojiText("就是普通的一句话"), "就是普通的一句话");
 	assert.equal(emojiText(""), "");
@@ -38,5 +52,5 @@ test("every mapped code points at a real emoji, not at another code", () => {
 		assert.match(code, /^\[[^[\]]+\]$/, `${code} is a code`);
 		assert.ok(emoji !== "" && !emoji.startsWith("["), `${code} maps to a character`);
 	}
-	assert.ok(Object.keys(PLATFORM_EMOJI).length >= 40, "the table covers what people actually send");
+	assert.ok(Object.keys(PLATFORM_EMOJI).length >= 120, "the table covers what people actually send");
 });

@@ -5,6 +5,17 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.7] - 2026-11-10
+
+### Fixed
+
+- The rest of Feishu's emoji now arrives as emoji. The panel writes the emoji's *name* into the text
+  (`[了解]`, `[捂脸]`, `[红包]` …), and only a dozen codes were mapped, so the others still read as
+  brackets. The table now covers the names the panel writes, the English spelling a client may send
+  instead (`[get]`, `[OK]`), and Feishu's own stickers — `[了解]` is its "Get" sticker, which has no
+  character of its own, so it maps to the closest one. A code in neither list is still left exactly
+  as it came.
+
 ## [0.6.6] - 2026-11-10
 
 ### Fixed

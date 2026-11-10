@@ -1,10 +1,14 @@
 // Emoji that arrive from a chat platform as words rather than characters. Feishu's emoji panel puts
-// a code like `[赞]` into the text, so a message that looks like an emoji in the chat reaches the
-// model — and the window — as literal brackets. This maps the codes people actually use back to the
-// character; a code it does not know is left alone, because a wrong guess is worse than a literal.
+// a code like `[赞]` — the emoji's Chinese name — into the text, so a message that looks like an
+// emoji in the chat reaches the model and the window as literal brackets.
 //
-// A code is only listed when its meaning is unambiguous. Anything else stays as it came.
+// Two sources decide a mapping. The common codes people send are listed by their Chinese name, which
+// is what the panel inserts. Feishu also has emoji of its own with no Unicode character — `[了解]`
+// is its "Get" sticker — and those map to the closest standard emoji, because a picture that reads as
+// agreement is better than four characters of punctuation. A code in neither table is left exactly as
+// it came: a wrong guess about an unknown word would be worse than the literal.
 
+/** Codes as the Feishu panel writes them, by the emoji they mean. */
 export const PLATFORM_EMOJI: Record<string, string> = {
 	// Faces
 	"[微笑]": "😊",
@@ -34,22 +38,132 @@ export const PLATFORM_EMOJI: Record<string, string> = {
 	"[加油]": "💪",
 	"[思考]": "🤔",
 	"[what]": "😮",
+	// The rest of the panel, by the name it writes
+	"[合十]": "🙏",
+	"[鼓掌]": "👏",
+	"[捂脸]": "🤦",
+	"[眨眼]": "😉",
+	"[机智]": "🤓",
+	"[皱眉]": "😠",
+	"[抠鼻]": "🤏",
+	"[傲慢]": "😤",
+	"[打脸]": "🤚",
+	"[吐血]": "🤮",
+	"[斜眼]": "😒",
+	"[无语]": "😑",
+	"[无辜]": "😇",
+	"[开心]": "😀",
+	"[耶]": "✌️",
+	"[眼泪]": "🥲",
+	"[亲亲]": "😘",
+	"[飞吻]": "😙",
+	"[流口水]": "🤤",
+	"[着迷]": "😍",
+	"[钱]": "💰",
+	"[炫耀]": "😎",
+	"[安慰]": "🤗",
+	"[表扬]": "👍",
+	"[奋斗]": "💪",
+	"[脸红]": "😳",
+	"[沉默]": "🤐",
+	"[挥手]": "👋",
+	"[什么]": "😦",
+	"[难过]": "☹️",
+	"[晕倒]": "😵",
+	"[低头]": "😔",
+	"[大哭]": "😭",
+	"[委屈]": "🥺",
+	"[生气]": "😠",
+	"[震惊]": "😱",
+	"[恐惧]": "😨",
+	"[骷髅]": "💀",
+	"[流汗]": "😓",
+	"[困]": "😪",
+	"[哈欠]": "🥱",
+	"[吐]": "🤮",
+	"[耳机]": "🎧",
+	"[敬礼]": "🫡",
+	"[击掌]": "🙌",
+	"[踩]": "👎",
+	"[吐舌]": "😛",
+	"[闭眼]": "😌",
+	"[玫瑰]": "🌹",
+	"[派对]": "🎉",
+	"[嘴唇]": "👄",
+	"[图钉]": "📌",
+	"[闹钟]": "⏰",
+	"[喇叭]": "📢",
+	"[奖杯]": "🏆",
+	"[火]": "🔥",
+	"[音乐]": "🎵",
+	"[勾]": "✔️",
+	"[叉]": "❌",
+	"[足球]": "⚽",
+	"[篮球]": "🏀",
+	// Feishu's own stickers: no character of their own, so the closest one stands in.
+	"[了解]": "👌",
+	"[收到]": "👌",
+	"[马上]": "🔜",
+	"[等一下]": "✋",
+	"[你最棒]": "🏆",
+	"[批准]": "👌",
+	"[同意]": "✅",
+	"[不行]": "❌",
+	"[100分]": "💯",
+	"[加一]": "➕",
+	"[比心]": "🫰",
+	"[碰拳]": "🤜",
+	"[完成]": "✅",
+	"[错误]": "❌",
+	// English spellings, which some clients and the API use
+	"[ok]": "👌",
+	"[OK]": "👌",
+	"[smile]": "😊",
+	"[laugh]": "😄",
+	"[thinking]": "🤔",
+	"[heart]": "❤️",
+	"[rose]": "🌹",
+	"[party]": "🎉",
+	"[fire]": "🔥",
+	"[get]": "👌",
+	"[done]": "✅",
+	"[thumbup]": "👍",
+	"[thumbsup]": "👍",
+	"[thumbsdown]": "👎",
+	"[applause]": "👏",
+	"[clap]": "👏",
+	"[hug]": "🤗",
+	"[cry]": "😢",
+	"[sob]": "😭",
+	"[wow]": "😮",
+	"[wink]": "😉",
+	"[blush]": "😊",
+	"[proud]": "😌",
+	"[error]": "❌",
+	"[coffee]": "☕",
+	"[beer]": "🍺",
+	"[cake]": "🎂",
+	"[gift]": "🎁",
+	"[trophy]": "🏆",
+	"[bomb]": "💣",
+	"[poop]": "💩",
+	"[music]": "🎵",
+	"[alarm]": "⏰",
+	"[pin]": "📌",
+	"[yes]": "✅",
+	"[no]": "❌",
 	// Hands and gestures
 	"[赞]": "👍",
 	"[强]": "👍",
 	"[good]": "👍",
-	"[ok]": "👌",
-	"[鼓掌]": "👏",
 	"[握手]": "🤝",
 	"[抱拳]": "🙏",
 	"[拥抱]": "🤗",
-	"[合十]": "🙏",
 	"[弱]": "👎",
 	"[胜利]": "✌️",
-	// Hearts and symbols
+	// Hearts, food and things
 	"[爱心]": "❤️",
 	"[心碎]": "💔",
-	"[玫瑰]": "🌹",
 	"[蜡烛]": "🕯️",
 	"[蛋糕]": "🎂",
 	"[咖啡]": "☕",
@@ -62,7 +176,6 @@ export const PLATFORM_EMOJI: Record<string, string> = {
 	"[炸弹]": "💣",
 	"[刀]": "🔪",
 	"[发]": "📤",
-	"[机智]": "🤓",
 	"[吃瓜]": "🍉",
 	"[看]": "👀",
 };
@@ -74,7 +187,7 @@ const CODE = /\[[^[\]\n]{1,12}\]/g;
 export function emojiText(text: string): string {
 	const source = String(text ?? "");
 	if (!source.includes("[")) return source;
-	return source.replace(CODE, (code) => PLATFORM_EMOJI[code] ?? code);
+	return source.replace(CODE, (code) => PLATFORM_EMOJI[code] ?? PLATFORM_EMOJI[code.toLowerCase()] ?? code);
 }
 
 /** True when this text is nothing but emoji and whitespace, which is a sticker said in words. */
