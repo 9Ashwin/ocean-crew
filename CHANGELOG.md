@@ -5,6 +5,17 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.10] - 2026-11-10
+
+### Fixed
+
+- A Bot can send a voice message without switching on "speak instead of typing". The side-effect
+  check classified the plugin's own tools as outside writes — `speak`, `send_file`, `message_bot`,
+  `post_to_group`, `ask_user` — so every voice note asked for an approval card, and an unanswered
+  card denied it. A card that appears before a Bot can use its own voice is not a protection, it is
+  an outage. The plugin's own tools now run as called; third-party writes (`mcp__*` create/send,
+  `mail_send`) still ask.
+
 ## [0.6.9] - 2026-11-10
 
 ### Added

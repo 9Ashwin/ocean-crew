@@ -24,6 +24,18 @@ test("sending, deleting and paying are each their own strict kind", () => {
 		assert.equal(needsApproval(strict), true, strict);
 });
 
+// The plugin's own tools reach no further than the team and the conversation that asked. A card in
+// front of them is not protection, it is an outage: an unanswered card denied the Bot its own voice.
+test("the plugin's own tools never need a card", () => {
+	for (const name of ["speak", "send_file", "message_bot", "post_to_group", "ask_user", "remember", "recall"]) {
+		assert.equal(effectOfTool(name), "read", name);
+		assert.equal(needsApproval(effectOfTool(name)), false, name);
+	}
+	// A third-party write is still a card, whatever the team's own tools do.
+	assert.equal(needsApproval(effectOfTool("mcp__linear__create_issue")), true);
+	assert.equal(needsApproval(effectOfTool("mail_send")), true);
+});
+
 test("a name nothing recognises is treated as sending", () => {
 	// A tool this build has never seen could do anything; showing the card costs one tap.
 	assert.equal(effectOfTool("frobnicate_widget"), "external_send");

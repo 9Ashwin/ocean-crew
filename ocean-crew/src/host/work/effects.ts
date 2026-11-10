@@ -6,7 +6,19 @@
 // "send", "delete" or "charge" is treated as the strictest kind. A wrong guess that asks the
 // user once is better than a wrong guess that posts publicly or spends money.
 
+import { TEAM_TOOLS } from "../core/constants.ts";
+
 export type ToolEffect = "read" | "draft" | "external_send" | "destructive" | "payment";
+
+// The tools this plugin defines itself. They act inside the team and inside the conversation that
+// asked: `speak` and `send_file` deliver into the chat the user is already using, `message_bot`
+// reaches another Bot on the team, `post_to_group` posts into a group the team owns. Reading them as
+// "sending outside the team" put an approval card in front of every voice message and every file,
+// which is not a protection but an outage: a card nobody answers denies the Bot its own voice.
+const OWN_TOOLS = new Set<string>([...TEAM_TOOLS, "speak", "send_file"]);
+
+/** True for a tool this plugin registered, whose reach is already bounded by the team. */
+export const isOwnTool = (name: string): boolean => OWN_TOOLS.has(name);
 
 /** The effects a card is shown for, in order of how much they need one. */
 export const APPROVAL_EFFECTS: readonly ToolEffect[] = ["payment", "destructive", "external_send"];
@@ -25,6 +37,8 @@ const READ_WORDS =
  * has a strict word, because `get_message` reads while `send_message` sends.
  */
 export function effectOfTool(name: string): ToolEffect {
+	// A tool of our own is not an outside write, whatever its name sounds like.
+	if (isOwnTool(String(name ?? ""))) return "read";
 	const plain = String(name ?? "")
 		.replace(/^mcp__[^_]+(?:_[^_]+)*__/, "")
 		.replace(/[_:]/g, " ")
