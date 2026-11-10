@@ -35,7 +35,7 @@ import { GroupSettingsForm, NewGroupForm } from "./group-settings.ts";
 import { ImPage } from "./im-page.ts";
 import { KeptPrivateSection } from "./kept-private.ts";
 import { ModelMenu } from "./model-menu.ts";
-import { PermissionsPage } from "./permissions-page.ts";
+import { PERMISSIONS_CSS, PermissionsPage } from "./permissions-page.ts";
 import { ProvidersPage } from "./providers-page.ts";
 import { SchedulesPage } from "./schedules.ts";
 import { UsagePage } from "./usage-page.ts";

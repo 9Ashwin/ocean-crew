@@ -5,6 +5,21 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.8] - 2026-11-10
+
+### Added
+
+- Settings → Tool permissions can now **grant** a tool as well as take it back. The page could only
+  revoke, so a standing permission could never be given from the window at all: the one place meant
+  to hold it was one-directional.
+
+### Changed
+
+- A refused or expired approval now closes that action for the conversation, instead of the tool call
+  being asked again. A card that was withdrawn because the action, the chat or the permissions
+  changed is *not* a refusal — the user never answered, so the same action may be asked about again
+  once the world settles.
+
 ## [0.6.7] - 2026-11-10
 
 ### Fixed

@@ -56,6 +56,7 @@ import { GROUP_SETTINGS_CSS } from "./pages/group-settings.ts";
 import { IM_CSS } from "./pages/im-page.ts";
 import { DeepSeekSignIn, MODEL_CSS, ModelChoiceDock } from "./pages/model-menu.ts";
 import { PANEL_CSS } from "./pages/panel.ts";
+import { PERMISSIONS_CSS } from "./pages/permissions-page.ts";
 import { SCHEDULE_CSS } from "./pages/schedules.ts";
 import { atSources, CHATS_SOURCE } from "./shell/at-menu.ts";
 import { ComposerPlus, menuIcons } from "./shell/composer.ts";
@@ -1198,6 +1199,7 @@ export function apply(ctx: ClientContext): void {
 				"models",
 			),
 		() => installCompiledStyles(SCHEDULE_CSS, "schedules"),
+		() => installCompiledStyles(PERMISSIONS_CSS, "permissions"),
 		() => installCompiledStyles(FEEDBACK_CSS, "feedback"),
 		() => installCompiledStyles(ABOUT_CSS, "about"),
 		() => installCompiledStyles(MEMBER_CSS, "members"),

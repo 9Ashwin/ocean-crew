@@ -11,6 +11,9 @@ export function PermissionsPage({ actions, Section, Row }: any) {
 	const [grants, setGrants] = useState<any[] | undefined>(undefined);
 	const [failed, setFailed] = useState(false);
 	const [busy, setBusy] = useState("");
+	const [tool, setTool] = useState("");
+	const [target, setTarget] = useState("");
+	const [adding, setAdding] = useState(false);
 	useEffect(() => {
 		let stopped = false;
 		let timer: any;
@@ -35,6 +38,24 @@ export function PermissionsPage({ actions, Section, Row }: any) {
 			clearInterval(timer);
 		};
 	}, [actions]);
+
+	const grant = async () => {
+		const name = tool.trim();
+		if (name === "") return;
+		setBusy("add");
+		try {
+			const view: any = await actions.sideEffectGrant?.({
+				tool: name,
+				...(target.trim() === "" ? {} : { target: target.trim() }),
+			});
+			if (Array.isArray(view?.grants)) setGrants(view.grants);
+			setTool("");
+			setTarget("");
+			setAdding(false);
+		} finally {
+			setBusy("");
+		}
+	};
 
 	const revoke = async (grant: any) => {
 		const key = `${grant.tool}:${grant.target ?? ""}`;
@@ -64,6 +85,40 @@ export function PermissionsPage({ actions, Section, Row }: any) {
 		failed
 			? h("p", { className: "bt-set-hint", "data-danger": "" }, t("The permission list could not be read."))
 			: null,
+		adding
+			? h(
+					"div",
+					{ className: "bt-grant-form" },
+					h("input", {
+						className: "bt-input",
+						value: tool,
+						placeholder: t("Tool name, as the card showed it"),
+						"aria-label": t("Tool name"),
+						onChange: (event: any) => setTool(event.target.value),
+					}),
+					h("input", {
+						className: "bt-input",
+						value: target,
+						placeholder: t("Only this target (optional)"),
+						"aria-label": t("Target"),
+						onChange: (event: any) => setTarget(event.target.value),
+					}),
+					h(
+						"button",
+						{
+							type: "button",
+							className: "bt-soft bt-soft-sm",
+							disabled: busy !== "" || tool.trim() === "",
+							onClick: () => void grant(),
+						},
+						t("Allow"),
+					),
+				)
+			: h(
+					"button",
+					{ type: "button", className: "bt-soft bt-soft-sm", onClick: () => setAdding(true) },
+					t("Allow a tool without asking"),
+				),
 		list.length === 0
 			? h("p", { className: "bt-set-hint" }, t("Nothing is allowed without asking. Every strict call shows a card."))
 			: list.map((grant: any) =>
@@ -90,3 +145,9 @@ export function PermissionsPage({ actions, Section, Row }: any) {
 				),
 	);
 }
+
+export const PERMISSIONS_CSS = `
+/* The form that grants a tool: two fields and one button, on its own line. */
+.bt-grant-form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0 2px}
+.bt-grant-form .bt-input{flex:1 1 160px;min-width:120px;max-width:260px}
+`;

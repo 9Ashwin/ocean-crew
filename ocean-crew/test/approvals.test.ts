@@ -131,11 +131,59 @@ test("a rejected card answers rejected, and a bad or unknown answer is refused",
 	assert.equal(await promise, "rejected");
 	assert.throws(() => host.rt.answerApproval("nope", "allow"), { code: "bot/stale" });
 	assert.throws(() => host.rt.answerApproval(entry.id, "allow"), { code: "bot/stale" });
-	const wrong = host.ask(request({ callId: "c2" }));
+	const wrong = host.ask(request({ callId: "c2", args: { command: "npm run build" } }));
 	const [second] = host.rt.approvalsView().filter((candidate: any) => candidate.id !== entry.id);
 	assert.throws(() => host.rt.answerApproval(second.id, "maybe"), { code: "bot/invalid" });
 	host.rt.answerApproval(second.id, "allow");
 	assert.equal(await wrong.promise, "allowed-once");
+});
+
+// A refused action is answered, not postponed: the same call is not put to the user twice.
+test("a refused action is not asked again, and a different one still is", async (t) => {
+	const host = runtime(t);
+	const first = host.ask(request());
+	const [entry] = host.rt.approvalsView();
+	host.rt.answerApproval(entry.id, "reject");
+	assert.equal(await first.promise, "rejected");
+
+	// The same tool with the same arguments: no card, and the caller is told no.
+	const again = host.ask(request({ callId: "c9" }));
+	assert.equal(host.rt.approvalsView().length, 0, "no second card for a refused action");
+	assert.equal(await again.promise, "cancelled");
+
+	// A different argument is a different action, so it is asked about normally.
+	const other = host.ask(request({ callId: "c10", args: { command: "npm run build" } }));
+	const [second] = host.rt.approvalsView();
+	assert.ok(second, "a different action gets its own card");
+	host.rt.answerApproval(second.id, "allow");
+	assert.equal(await other.promise, "allowed-once");
+});
+
+test("an expired card closes that action too", async (t) => {
+	// A card that waits out its time is the case: the user was asked and never answered.
+	const host = runtime(t, { config: { approvalTtlMs: 1 } });
+	const first = host.ask(request());
+	await new Promise((done) => setTimeout(done, 8));
+	const [entry] = host.rt.approvalsView();
+	assert.ok(entry === undefined || entry.ref.expiry <= Date.now(), "the card's time ran out");
+	assert.equal(await first.promise, "cancelled");
+	const again = host.ask(request({ callId: "c11" }));
+	assert.equal(host.rt.approvalsView().length, 0, "an unanswered card is not shown again");
+	assert.equal(await again.promise, "cancelled");
+});
+
+test("a card withdrawn because the world changed is not a refusal: it can be asked again", async (t) => {
+	const host = runtime(t);
+	const first = host.ask(request());
+	const [entry] = host.rt.approvalsView();
+	// The conversation changed hands, so this card no longer holds; the user never answered.
+	host.rt.invalidateApprovals([entry.sessionId]);
+	assert.equal(await first.promise, "cancelled");
+	const again = host.ask(request({ callId: "c12" }));
+	assert.equal(host.rt.approvalsView().length, 1, "the same action is asked about again");
+	const [second] = host.rt.approvalsView();
+	host.rt.answerApproval(second.id, "allow");
+	assert.equal(await again.promise, "allowed-once");
 });
 
 test("an own-chat approval races DSH's card: the first answer wins, the other withdraws", async (t) => {

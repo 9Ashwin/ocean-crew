@@ -6,7 +6,9 @@
 //
 
 // arguments hash, target, audience) and the permission revision of the Session it came
-// from. Answering reloads the world first: an expired card, a Session that changed
+// from. A refused or expired card closes that action for the conversation, so it is not asked
+// again as if the question had never been put. Answering reloads the world first: an expired
+// card, a Session that changed
 // hands, changed permissions, or a mismatched ref is settled as cancelled and refused as
 // stale, so a click can never approve an action other than the one it was shown for.
 
@@ -14,8 +16,12 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Runtime } from "../core/runtime.ts";
 
 const OUTCOMES: Record<string, string> = { allow: "allowed-once", reject: "rejected" };
-// A card that waits this long is settled unanswerable; the tool call is asked again.
+// A card that waits this long is settled unanswerable. The action it described is then closed as
+// refused for this conversation: asking the same question again is a retry of a decision the user
+// has already been asked for, and a refusal must be an answer rather than a pause.
 const DEFAULT_TTL_MS = 15 * 60_000;
+// How long a settled refusal answers for the same action.
+const REFUSAL_TTL_MS = 6 * 60 * 60_000;
 
 // The action an approval was asked for. Stored on the pending entry and shown with it,
 // so a click can be checked against what it approves; never upgraded to a lasting grant.
@@ -129,6 +135,8 @@ export function install(rt: Runtime): void {
 	const runtime = rt as ApprovalRuntime;
 	const { ctx } = rt;
 	const pending = new Map<string, PendingApproval>();
+	// Settled refusals: conversation + action → when they stop answering for it.
+	const refused = new Map<string, number>();
 	const approvalListeners = new Set<(kind: string, data: Record<string, unknown>) => void>();
 	const onApproval = (listener: (kind: string, data: Record<string, unknown>) => void): (() => void) => {
 		approvalListeners.add(listener);
@@ -162,17 +170,30 @@ export function install(rt: Runtime): void {
 	// Resolves the DSH request with one outcome: the card withdraws for that answer.
 	const respond = (entry: PendingApproval, outcome: string): void => {
 		if (!settle(entry, outcome)) return;
+		// A rejection answers for this action; an allowance covers the one call it was shown for.
+		if (outcome === OUTCOMES.reject) remember(entry);
 		entry.resolve?.(outcome);
 		entry.cleanup?.();
 	};
 	// The same, settled under a different name for the window (expired, refused).
 	const withdraw = (entry: PendingApproval, settledAs: string): void => {
 		if (!pending.has(entry.id)) return;
+		// Only a card that ran out of time reads as a refusal. A card withdrawn because the action,
+		// the conversation or the permissions changed is a different case: the user never answered,
+		// and the same action may legitimately be asked about again once the world settles.
+		if (entry.ref.expiry <= Date.now()) remember(entry);
 		pending.delete(entry.id);
 		runtime.noteApproval?.(entry.sessionId, undefined);
 		emit("settled", { id: entry.id, outcome: settledAs });
 		entry.resolve?.("cancelled");
 		entry.cleanup?.();
+	};
+
+	const remember = (entry: PendingApproval): void => {
+		const key = `${entry.sessionId}\u0000${entry.tool}\u0000${entry.ref.argsHash}`;
+		refused.set(key, Date.now() + REFUSAL_TTL_MS);
+		// An old refusal is only worth keeping while it still answers.
+		if (refused.size > 200) for (const [held, until] of refused) if (until <= Date.now()) refused.delete(held);
 	};
 
 	// Why an open approval can no longer be trusted, or undefined while it still holds.
@@ -200,6 +221,16 @@ export function install(rt: Runtime): void {
 		}
 	};
 
+	// One action, as a refusal remembers it: the conversation and the exact call it was shown for.
+	const refusalOf = (sessionId: string, request: ApprovalRequest, now: number): string | undefined => {
+		const key = `${sessionId}\u0000${String(request.toolName ?? "")}\u0000${argsHashOf(request.args ?? request.arguments ?? request.input)}`;
+		const until = refused.get(key);
+		if (until === undefined) return undefined;
+		if (until > now) return key;
+		refused.delete(key);
+		return undefined;
+	};
+
 	// Ahead of DSH's own answerer, which would hold a hidden Session's request unseen.
 	ctx.on(
 		"approval/request",
@@ -209,6 +240,9 @@ export function install(rt: Runtime): void {
 			const botId = owner?.botId ?? (sessionId === undefined ? undefined : runtime.chatOwners.get(sessionId));
 			if (botId === undefined || sessionId === undefined) return next();
 			const now = Date.now();
+			// This action was already refused or left unanswered: the answer is no, and it is not
+			// asked again until the window passes. The model is told so it can say why.
+			if (refusalOf(sessionId, request, now) !== undefined) return "cancelled";
 			const id = randomUUID();
 			const entry: PendingApproval = {
 				id,
