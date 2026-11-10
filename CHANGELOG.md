@@ -5,6 +5,12 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.1] - 2026-11-10
+
+No product change: 0.6.0's test suite failed on one DSH version in CI over a test that asserted
+answer routing the harness does not bind there. The test now asserts what the change is about — a
+companion adds no speech of its own — and this release is the same code with a green gate.
+
 ## [0.6.0] - 2026-11-10
 
 ### Added
