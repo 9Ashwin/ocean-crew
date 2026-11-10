@@ -1942,3 +1942,14 @@ test("a reaction is not sent for a mark the platform has no key for", async (t) 
 	assert.equal(sent, false);
 	assert.equal(s.fake.reactionAdds.length, 0);
 });
+
+// A Bot answering in a chat knows it is in a chat: the platform, the kind of conversation and the
+// reply rules arrive as context, not as a rewrite of what the user wrote.
+test("a message from Feishu tells the Bot where it is talking", async (t) => {
+	const s = await start(t, { platform: "feishu" });
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	await dm(s, "u1", "在吗");
+	assert.deepEqual(s.rt.chatPlaces?.of("a"), { platform: "feishu", kind: "direct", title: "u1" });
+});

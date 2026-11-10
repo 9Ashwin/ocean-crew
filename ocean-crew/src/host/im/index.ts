@@ -1268,6 +1268,12 @@ export function install(rt: any) {
 		if (content.length === 0) return;
 		const requestId = `im:${conn.platform}:${randomUUID()}`;
 		noteOrigin(requestId, conn, msg.chat, sessionId, msg.messageId, msg.sender?.id);
+		// The Bot is about to answer in a chat app, not in the window: say so, once per message.
+		(rt as any).noteChatPlace?.(sessionId, {
+			platform: String(conn.platform ?? ""),
+			kind: msg.chat.kind === "group" ? "group" : "direct",
+			...(typeof msg.chat.title === "string" && msg.chat.title !== "" ? { title: msg.chat.title } : {}),
+		});
 		ownerOrigins.set(sessionId, requestId);
 		sessionOrigins.set(sessionId, requestId);
 		try {

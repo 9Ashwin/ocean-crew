@@ -5,6 +5,19 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.9] - 2026-11-10
+
+### Added
+
+- A Bot now knows where it is talking. When a message comes from Feishu or WeChat, the turn carries
+  one context message naming the platform, whether it is a direct or group chat (and the group's
+  name), and the rules of that place: keep it short, no headings or status reports, "send it to me"
+  means this chat, an answer already reaches the user so do not repeat it, and what the user sent is
+  an attachment. Before this the prompt was identical in the window and in a chat, which is why a
+  chat could get a report written for a desktop.
+- The snapshot is added once per place, not once per step: a long turn does not collect copies, and
+  a conversation that moves from a direct chat to a group gets a fresh one.
+
 ## [0.6.8] - 2026-11-10
 
 ### Added

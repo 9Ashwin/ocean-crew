@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { install as installBtw } from "./host/chat/btw.ts";
 import { install as installChannel } from "./host/chat/channel.ts";
 import { install as installChatIndex } from "./host/chat/chat-index.ts";
+import { install as installChatPlace } from "./host/chat/chat-place.ts";
 import { install as installDelivery } from "./host/chat/delivery.ts";
 import { install as installFeed } from "./host/chat/feed.ts";
 import { install as installHandoffs } from "./host/chat/handoffs.ts";
@@ -109,6 +110,7 @@ const MODULES: HostModule[] = [
 	installCapabilities,
 	installLearning,
 	installReset,
+	installChatPlace,
 	installSchedules,
 	installSideEffects,
 	installStopAll,

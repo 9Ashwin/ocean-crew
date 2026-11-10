@@ -1,6 +1,6 @@
 {
 	"name": "ocean-crew",
-	"version": "0.6.8",
+	"version": "0.6.9",
 	"description": "Ocean Crew: a team of long-lived Bots for DeepSeek Harness, with Main Bots, Bot-to-Bot messages and group chats",
 	"keywords": [
 		"dsh-plugin",
