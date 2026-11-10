@@ -5,6 +5,16 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.3] - 2026-11-10
+
+### Fixed
+
+- The companion's reaction now actually appears in the window. The custom user-message row was
+  gated on a helper from `@deepseek-ai/dsh-client-ui-primitives`, which the shipped desktop runtime
+  does not contain — so the gate read false everywhere and the row this plugin draws was never used,
+  which is why a stored mark was never seen. The row now draws itself: its text through the shell's
+  own text slot, its file label and size from the attachment, no primitives import at all.
+
 ## [0.6.2] - 2026-11-10
 
 ### Added

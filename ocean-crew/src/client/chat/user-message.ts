@@ -1,4 +1,3 @@
-import * as ui from "@deepseek-ai/dsh-client-ui-primitives";
 import { Fragment, createElement as h, useEffect, useRef, useState } from "react";
 import { imPlatform } from "../../shared/im-platforms.ts";
 import { type MentionableBot, mentionSpans } from "../../shared/mentions.ts";
@@ -15,8 +14,11 @@ import { useFold } from "./fold.ts";
 // are cut out first, by the rule the group host calls them with; DSH's own drawing
 // keeps everything else (files, conversation references, skills).
 
-// DSH releases without the text projection keep their own bubble.
-export const canDrawUserMessages = (): boolean => typeof ui.projectUserText === "function";
+// The row is drawn by this file. The shipped desktop runtime has no primitives module, so a gate on
+// one of its helpers read false everywhere and this cell never rendered at all — which is why a mark
+// stored on the message was never seen. What is needed instead is the shell's text factory slot,
+// which Ocean Crew already uses for its queue preview and which exists in every build.
+export const canDrawUserMessages = (): boolean => true;
 
 /** One content block of a user message. */
 export interface UserContentBlock {
@@ -88,23 +90,41 @@ export function userTextParts(
 	return parts;
 }
 
-function UserText({ text, bots, referenceLabels, skillNames, references, actions }: any) {
-	return userTextParts(text, bots, referenceLabels).map((part, index) =>
-		part.bot
-			? h(
-					"button",
-					{
-						key: index,
-						type: "button",
-						className: "bt-umention",
-						title: `@${part.bot.name}`,
-						onClick: () => actions.openSession(part.bot.id),
-					},
-					h(BotMark, { bot: part.bot, size: 16 }),
-					part.label,
-				)
-			: h(Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)),
-	);
+function UserText({ text, bots, referenceLabels, skillNames, references, actions, renderFactorySlot }: any) {
+	return userTextParts(text, bots, referenceLabels).map((part, index) => {
+		if (part.bot)
+			return h(
+				"button",
+				{
+					key: index,
+					type: "button",
+					className: "bt-umention",
+					title: `@${part.bot.name}`,
+					onClick: () => actions.openSession(part.bot.id),
+				},
+				h(BotMark, { bot: part.bot, size: 16 }),
+				part.label,
+			);
+		// The shell's own renderer draws links, code and reference chips as the rest of the app does;
+		// the plain branch keeps a message readable in a shell that provides no factory.
+		const rendered = renderFactorySlot?.("conversation.user.text", {
+			text: part.text,
+			facts: {
+				references: references ?? [],
+				referenceLabels,
+				skills: skillNames ?? [],
+			},
+			interactive: true,
+		});
+		return h(Fragment, { key: index }, rendered ?? part.text);
+	});
+}
+
+/** A file's size in one short label, the way the rest of the app writes it. */
+function fileSizeText(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function Attachments({ attachments, renderMessageImages }: any) {
@@ -123,13 +143,19 @@ function Attachments({ attachments, renderMessageImages }: any) {
 					: null;
 			}
 			const file = block.attachment;
-			const meta = [ui.fileExtension?.(file.name)?.toUpperCase().slice(0, 8), ui.fileSizeText?.(file.bytes)]
-				.filter(Boolean)
-				.join(" · ");
+			// The extension and size come from the name and the byte count, so this row needs no
+			// helper from a package the shipped runtime may not have.
+			const extension = String(file.name ?? "")
+				.split(".")
+				.pop()
+				?.toUpperCase()
+				.slice(0, 8);
+			const size = typeof file.bytes === "number" ? fileSizeText(file.bytes) : "";
+			const meta = [extension, size].filter(Boolean).join(" · ");
 			return h(
 				"span",
 				{ key: index, className: "bt-ufile", title: file.name },
-				ui.FileTypeIcon ? h(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
+				h("span", { className: "bt-ufile-icon", "aria-hidden": true }, extension ?? ""),
 				h(
 					"span",
 					{ className: "bt-ufile-text" },
@@ -187,6 +213,7 @@ export function UserMessageCell({
 	useRoster,
 	actions,
 	renderMessageImages,
+	renderFactorySlot,
 	openFile,
 	openSkill,
 }: any) {
@@ -222,6 +249,7 @@ export function UserMessageCell({
 		skillNames: data.skillNames ?? [],
 		references,
 		actions,
+		renderFactorySlot,
 	});
 	const row = useRef<any>(null);
 	// Touch has no hover: a tap on the bubble opens its copy tool, a tap elsewhere closes it.
@@ -265,8 +293,12 @@ export function UserMessageCell({
 						},
 						control ? h("div", { className: "bt-fold-body" }, body) : body,
 						control,
+						// An unknown block is shown as its own text when it carries any: no primitives
+						// module is required to keep the content visible.
 						rest.map((block, index) =>
-							ui.JsonBlock ? h(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null,
+							typeof (block as any)?.text === "string" && (block as any).text !== ""
+								? h("div", { key: index, className: "bt-ublock" }, String((block as any).text))
+								: null,
 						),
 					)
 				: null,
@@ -299,7 +331,7 @@ export const USER_MESSAGE_CSS = `
 .bt-umention>:first-child{flex:none}
 .bt-uattach{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:100%}
 .bt-ufile{display:inline-flex;align-items:center;gap:10px;box-sizing:border-box;width:240px;min-height:64px;padding:8px 12px;border-radius:18px;border:.5px solid var(--bt-line-2);background:var(--bt-card)}
-.bt-ufile-icon{flex:none;width:28px;height:28px}
+.bt-ufile-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:var(--bt-hover);color:var(--bt-ink-3);font-size:9px;font-weight:600;line-height:1}
 .bt-ufile-text{display:flex;flex-direction:column;min-width:0}
 .bt-ufile-name{font-size:14px;line-height:22px;font-weight:500;color:var(--bt-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-ufile-meta{font-size:12px;line-height:15px;color:var(--bt-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
