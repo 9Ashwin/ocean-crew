@@ -5,6 +5,16 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.2] - 2026-11-10
+
+### Added
+
+- The companion's reaction now also lands on the message in Feishu, on the same terms as in the
+  window: one mark every few messages, never the same emoji twice in a row. The emoji the window
+  shows is mapped to the platform's own key (`❤️` → `HEART`, `🤔` → `THINKING`, …); a mark with no
+  key, a chat with no message to mark, or a mark the service refuses simply leaves the chat
+  unmarked — the window still shows it, and nothing waits on it.
+
 ## [0.6.1] - 2026-11-10
 
 No product change: 0.6.0's test suite failed on one DSH version in CI over a test that asserted

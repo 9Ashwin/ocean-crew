@@ -17,6 +17,7 @@ import { reportLines } from "../work/stop-all-install.ts";
 import { adapters as adapterRegistry } from "./platforms/index.ts";
 import { isSupportedImageType } from "./platforms/media-type.ts";
 import { startStatusReaction } from "./reaction.ts";
+import { reactionKey } from "./reaction-keys.ts";
 import { failClass, nextAction } from "./supervisor.ts";
 
 const RECONCILE_MS = 15_000;
@@ -2281,9 +2282,45 @@ export function install(rt: any) {
 	// can tag a message with the platform it came from. A Session's entries go
 	// when it stops being the chat's current part.
 	const imVia = new Map();
+	// seq → the request that brought that message in, per session. The window tags a message by
+	// seq; a chat platform needs the message id the request came from, so both are kept.
+	const seqOrigins = new Map<string, Record<number, string>>();
+	// One mark per chat message: the companion may change its mind, but the platform must not be
+	// asked twice for the same emoji on the same message.
+	const markedOnPlatform = new Set<string>();
 	const imViaView = () => {
 		for (const sessionId of imVia.keys()) if (!rt.chatOwners.has(sessionId)) imVia.delete(sessionId);
 		return Object.fromEntries([...imVia.entries()].map(([sessionId, seqs]) => [sessionId, { ...seqs }]));
+	};
+
+	// The companion's mark on the user's message, in the chat where the message was sent. Best
+	// effort by design: a platform that has no key for this emoji, or that refuses it, simply gets
+	// no mark, and the window still shows it. Nothing here may delay an answer.
+	const reactOnIm = async (sessionId: string, seq: number | string, emoji: string): Promise<boolean> => {
+		const requestId = seqOrigins.get(sessionId)?.[Number(seq)];
+		if (requestId === undefined) return false;
+		const origin = originOf(requestId);
+		const messageId = String(origin?.messageId ?? "");
+		if (origin === undefined || messageId === "") return false;
+		const mark = `${origin.connId}:${messageId}:${emoji}`;
+		if (markedOnPlatform.has(mark)) return false;
+		const conn = connections()[origin.connId];
+		if (conn === undefined) return false;
+		const runner = runners.get(origin.connId);
+		const handle = runner?.handle ?? runner;
+		if (typeof handle?.addReaction !== "function") return false;
+		const key = reactionKey(emoji);
+		if (key === undefined) return false;
+		markedOnPlatform.add(mark);
+		if (markedOnPlatform.size > 500) markedOnPlatform.clear();
+		try {
+			await handle.addReaction({ key: origin.chatKey }, messageId, key);
+			return true;
+		} catch (error: any) {
+			// A refused mark is not worth a retry or a user-visible error, but it is worth a log.
+			rt.warn("ocean-crew im: reaction %s on %s refused: %s", key, messageId, error?.message ?? error);
+			return false;
+		}
 	};
 
 	// ----------------------------------------------------------------- outbound
@@ -2431,6 +2468,18 @@ export function install(rt: any) {
 		const rpcId = event.type === "user/message" ? event.data?.source?.rpcId : undefined;
 		if (typeof rpcId === "string" && rpcId.startsWith("im:") && Number.isInteger(event.seq)) {
 			imVia.set(session.id, { ...imVia.get(session.id), [event.seq]: rpcId.split(":")[1] });
+			const held = seqOrigins.get(session.id) ?? {};
+			held[event.seq] = rpcId;
+			// A Session keeps only the marks it may still be asked about.
+			const keys = Object.keys(held)
+				.map(Number)
+				.sort((a, b) => a - b);
+			for (const old of keys.slice(0, Math.max(0, keys.length - 50))) delete held[old];
+			seqOrigins.set(session.id, held);
+			// The companion may have stored its mark before this listener ran. Whichever listener
+			// runs first, the mark reaches the chat; the platform side dedupes a second attempt.
+			const stored = ((rt.state as any)?.companionReactions ?? {})[session.id]?.[String(event.seq)];
+			if (typeof stored === "string" && stored !== "") void reactOnIm(session.id, event.seq, stored);
 		}
 		// Which request this turn belongs to: the rpc id DSH echoes on the user message.
 		// A turn from the window clears the session's request so it cannot inherit an
@@ -2719,5 +2768,5 @@ export function install(rt: any) {
 		return { platform };
 	};
 
-	Object.assign(rt, { imView, imStatusView, imViaView, imEndpoint, imSendFile, imVoicePlan });
+	Object.assign(rt, { imView, imStatusView, imViaView, imEndpoint, imSendFile, imVoicePlan, reactOnIm });
 }

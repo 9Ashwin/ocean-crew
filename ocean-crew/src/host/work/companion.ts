@@ -284,6 +284,10 @@ export function install(rt: Runtime): void {
 		table[sessionId] ??= {};
 		const held = table[sessionId];
 		for (const key of keys) if (key !== "") held[key] = emoji;
+		// The chat that the message came from gets the same mark: a reaction is something the Bot
+		// did, and it must look the same wherever the user reads the conversation. A chat platform
+		// without a key for this emoji, or with no message to mark, just does not get it.
+		for (const key of keys) if (/^\d+$/.test(key)) void rt.reactOnIm?.(sessionId, Number(key), emoji);
 		// Keep a bounded tail per chat: old marks are history, not state.
 		const ids = Object.keys(held);
 		for (const old of ids.slice(0, Math.max(0, ids.length - 300))) delete held[old];

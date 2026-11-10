@@ -107,7 +107,7 @@ interface Host {
 	fake: any;
 	prompts: any[];
 	agents: Map<string, any>;
-	emitEvent: (sessionId: string, type: string, data: any) => void;
+	emitEvent: (sessionId: string, type: string, data: any, seq?: number) => void;
 	flush: () => Promise<void>;
 	until: (check: () => boolean, ms?: number) => Promise<boolean>;
 	/** Make the host refuse image content with this admission reason. */
@@ -201,9 +201,12 @@ async function start(
 	if (addedPlatform) IM_PLATFORMS.push(addedPlatform as any);
 	// The host entry installs the IM module along with the rest of the team modules.
 	const rt: any = createRuntime(ctx as any, { home, ...config });
-	const emitEvent = (sessionId: string, type: string, data: any): void => {
+	// A real session event carries its own seq beside the data; a reaction is keyed by it, so a
+	// test that cares about the seq has to be able to set it.
+	const emitEvent = (sessionId: string, type: string, data: any, seq?: number): void => {
 		for (const listener of ctx.listeners.get("session/event") ?? []) {
-			if (listener.length >= 2) listener({ id: sessionId }, { type, data, time: Date.now() });
+			if (listener.length >= 2)
+				listener({ id: sessionId }, { type, data, time: Date.now(), ...(seq === undefined ? {} : { seq }) });
 		}
 	};
 	const flush = async (): Promise<void> => {
@@ -1881,4 +1884,61 @@ test("a scheduled answer of [PASS] pushes nothing", async (t) => {
 		0,
 		"nothing was pushed for the pass",
 	);
+});
+
+// The companion's mark also goes to the chat the message came from: a reaction is something the
+// Bot did, and it has to look the same in the window and in the chat. It stays selective.
+test("a companion's reaction reaches the chat message it belongs to", async (t) => {
+	// A platform with reaction support is the case this covers; a text-only one keeps the window.
+	const s = await start(t, { adapter: fakeAdapter({ reactions: true }) });
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	s.rt.state.companions = {
+		a: {
+			enabled: true,
+			mood: "warm",
+			affection: 20,
+			interactions: 1,
+			character: { name: "阿鱼", bio: "", style: "", likes: [], dislikes: [] },
+		},
+	};
+	await s.rt.save();
+	// One message to react to, bound to the chat it arrived from.
+	await dm(s, "u1", "想你啦", { messageId: "om_reaction_1" });
+	const request = s.prompts.at(-1)?.requestId;
+	s.emitEvent("a", "turn/start", { turn: 2 });
+	s.emitEvent(
+		"a",
+		"user/message",
+		{ seq: 700, source: { kind: "user", rpcId: request }, content: [{ type: "text", text: "想你啦" }] },
+		700,
+	);
+	// A second message makes the companion willing to react again (one mark per few messages).
+	s.emitEvent(
+		"a",
+		"user/message",
+		{ seq: 701, source: { kind: "user", rpcId: request }, content: [{ type: "text", text: "爱你" }] },
+		701,
+	);
+	assert.ok(
+		await s.until(() => s.fake.reactionAdds.some((entry: any) => entry.emoji === "HEART")),
+		"the chat message carries the mark",
+	);
+	const marks = s.fake.reactionAdds.filter((entry: any) => entry.emoji === "HEART");
+	assert.equal(marks.length, 1, "and only once, however many times the window asks");
+	assert.equal(marks[0].messageId, "om_reaction_1", "on the message the user actually sent");
+	// The window keeps its own copy under the same message.
+	const held = s.rt.state.companionReactions?.["a"] ?? {};
+	assert.ok(Object.values(held).includes("❤️"), "the window shows the same mark");
+});
+
+test("a reaction is not sent for a mark the platform has no key for", async (t) => {
+	const s = await start(t);
+	const conn = await add(s);
+	s.rt.state.im.connections[conn.id].paired.push({ id: "u1", name: "U1", at: 1 });
+	await s.rt.save();
+	// The seam is what the companion calls; an unknown emoji is simply not marked.
+	const sent = await s.rt.reactOnIm?.("a", 999, "🦄");
+	assert.equal(sent, false);
+	assert.equal(s.fake.reactionAdds.length, 0);
 });

@@ -108,6 +108,16 @@ GitHub 安装方式保留给开发版（安装时由 `prepare` 现场构建）�
 
 命令带图片/文件时不识别为命令；未绑定的聊天按「未绑定」处理。卡片按钮回调数据为 `c:<命令>`。
 
+## 伙伴反应（窗口与聊天平台）
+
+- 伙伴选中的 emoji 存在团队数据 `companionReactions[sessionId][seq]`（同时也按持久 id 存一份），窗口据此在
+  用户气泡下画一个小标。**同一个 mark 也会贴到聊天平台的那条消息上**：`rt.reactOnIm(sessionId, seq, emoji)`。
+- 平台差异走 `src/host/im/reaction-keys.ts` 的映射（飞书 `emoji_type`：`❤️ → HEART`、`🤔 → THINKING` …）。
+  没有 key 的 emoji、没有可贴的消息 id、平台拒绝——都只是「这个聊天没有标」，窗口照常显示，且**从不阻塞回复**。
+- 顺序无关：伙伴先写标记、IM 后记录消息来源，或反过来，结果都一样——IM 一侧记录来源后会回看已存的 mark，
+  平台侧按 `(连接, 消息, emoji)` 去重。
+- 选择性不变：至少隔一条消息、不连续同款 emoji、每会话最多 300 条。
+
 ## 临时 worker 与事件触发 routine
 
 - **临时 worker**：`spawn_worker` 通过 DSH 的 delegation 服务（`ctx.subagents.startActivation`，`delivery: "caller"`）
