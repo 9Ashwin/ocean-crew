@@ -75,6 +75,11 @@ export const AGENT_SESSION_TITLE_MAX = 80;
 export const TEAM_TOOLS: readonly string[] = [
 	"list_bots",
 	"message_bot",
+	"create_routine",
+	"list_routines",
+	"delete_routine",
+	"spawn_worker",
+	"stop_worker",
 	"stop_bot",
 	"create_bot",
 	"update_bot",

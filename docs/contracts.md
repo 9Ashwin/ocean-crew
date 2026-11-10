@@ -108,6 +108,18 @@ GitHub 安装方式保留给开发版（安装时由 `prepare` 现场构建）�
 
 命令带图片/文件时不识别为命令；未绑定的聊天按「未绑定」处理。卡片按钮回调数据为 `c:<命令>`。
 
+## 临时 worker 与事件触发 routine
+
+- **临时 worker**：`spawn_worker` 通过 DSH 的 delegation 服务（`ctx.subagents.startActivation`，`delivery: "caller"`）
+  起一个子会话：不在名册、不写记忆、跑完归档；`stop_worker` 停一个。它的回答作为**工具结果**回到 Bot，
+  由 Bot 决定怎么告诉用户。约束：每 Bot 最多 3 个、单个 20 分钟超时、宿主重启后仍显示为 running 的会改记为
+  `stopped`（「宿主重启，未跑完」），不假装还在忙。
+- **事件触发 routine**：`create_routine` / `list_routines` / `delete_routine`。当前唯一接通的来源是
+  `im_keyword`：收到的 IM 消息命中其一即触发，可选限定单个会话。触发时向该 Bot 的会话注入一条
+  带 `source.kind = "schedule"`、`taskId = "routine:<id>"` 的消息——于是 P0-1 的运行记录、`[PASS]` 静默、
+  失败通知全部照旧生效。type 里不声明未接通的来源（例如 mail），避免「看起来有、其实不跑」。
+- 浏览器按 Bot 隔离不在本插件范围内：Ocean Crew 不自带浏览器，浏览器能力来自用户启用的 DSH 插件。
+
 ## 全队停止与后台视图
 
 - `stop-all` 端点与 IM `/stop all` 调用同一个 `stopAll`：停每个 Bot 的当前回合、每个群轮次、

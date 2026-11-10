@@ -644,6 +644,135 @@ export function install(rt: Runtime): void {
 
 	rt.teamTools.push(
 		defineTool({
+			name: "create_routine",
+			description:
+				"Start a routine that runs on an event instead of a time: when an incoming IM message contains one of its words, the Bot works on it in its own chat. Use it when the user wants to be alerted about something said in a chat, or wants recurring work to start when a word comes up. The turn it opens is framed as a scheduled task: reply [PASS] to stay silent when nothing needs saying.",
+			parameters: {
+				name: { type: "string", required: true, description: "A few words naming the routine" },
+				prompt: { type: "string", required: true, description: "What to do when it fires" },
+				words: { type: "string", required: true, description: "Comma-separated words or phrases to listen for" },
+				chat: { type: "string", description: "Only this chat's key, when it should not listen everywhere" },
+			},
+			execute: async (args, exec) => {
+				await rt.load();
+				const self = rt.selfOf(exec.agent?.id);
+				if (rt.botOf(self) === undefined) return refuse("Only a Bot can set up a routine.");
+				const words = String(args.words ?? "")
+					.split(",")
+					.map((word) => word.trim())
+					.filter((word) => word !== "");
+				if (words.length === 0) return refuse("Give at least one word to listen for.");
+				try {
+					const routine = await rt.routines.create({
+						botId: self,
+						name: String(args.name ?? "").trim() || words[0],
+						prompt: String(args.prompt ?? ""),
+						trigger: {
+							kind: "im_keyword",
+							words,
+							...(String(args.chat ?? "").trim() === "" ? {} : { chat: String(args.chat).trim() }),
+						},
+						windowMinutes: 30,
+					});
+					return `Routine ${routine.id} is listening for ${words.join(", ")}.`;
+				} catch (error: any) {
+					return refuse(error?.message ?? String(error));
+				}
+			},
+		}),
+	);
+
+	rt.teamTools.push(
+		defineTool({
+			name: "list_routines",
+			description: "List the routines set up in this team: what each waits for and what it does.",
+			parameters: {},
+			execute: async () => {
+				await rt.load();
+				const held = rt.routines.list();
+				if (held.length === 0) return "No routines are set up.";
+				return held
+					.map(
+						(routine: any) =>
+							`${routine.id} · ${routine.name}${routine.enabled ? "" : " (off)"} · words: ${routine.trigger.words.join(", ")} · ${routine.prompt.slice(0, 120)}`,
+					)
+					.join("\n");
+			},
+		}),
+	);
+
+	rt.teamTools.push(
+		defineTool({
+			name: "delete_routine",
+			description: "Remove a routine by its id.",
+			parameters: { routine: { type: "string", required: true, description: "The routine id" } },
+			execute: async (args) => {
+				await rt.load();
+				const removed = await rt.routines.remove(String(args.routine ?? "").trim());
+				return removed ? "The routine is gone." : "No routine with that id.";
+			},
+		}),
+	);
+
+	rt.teamTools.push(
+		defineTool({
+			name: "spawn_worker",
+			description:
+				"Start a temporary worker for one side job: it runs in its own session that is not on the team, writes no memory and is archived when it finishes. Use it for work that would flood your own conversation — reading many pages, checking many files, sweeping a list. Tell it exactly what to return. Its answer comes back as this tool's result; you then decide what to tell the user.",
+			parameters: {
+				task: {
+					type: "string",
+					required: true,
+					description: "The whole job, written as if to someone who cannot ask you anything",
+				},
+				label: { type: "string", description: "A few words naming the job, shown while it runs" },
+			},
+			execute: async (args, exec) => {
+				await rt.load();
+				const self = rt.selfOf(exec.agent?.id);
+				const bot = rt.botOf(self);
+				const sessionId = rt.chatOf(exec.agent?.id ?? "") ?? String(exec.agent?.id ?? "");
+				const task = String(args.task ?? "").trim();
+				if (task === "") return refuse("Say what the worker should do.");
+				if (bot === undefined) return refuse("Only a Bot can start a worker.");
+				const label = String(args.label ?? "").trim() || task.slice(0, 40);
+				try {
+					const run = await rt.workers.start({
+						parentAgent: exec.agent,
+						parentBotId: bot.id,
+						parentSession: sessionId,
+						task,
+						label,
+					});
+					const answer = await run.result;
+					return answer === ""
+						? `Worker ${run.childId} finished with nothing to report.`
+						: `Worker ${run.childId} finished:\n\n${answer}`;
+				} catch (error: any) {
+					return refuse(error?.message ?? String(error));
+				}
+			},
+		}),
+	);
+
+	rt.teamTools.push(
+		defineTool({
+			name: "stop_worker",
+			description:
+				"Stop a temporary worker you started, by the id spawn_worker returned. Use it when the job is no longer worth finishing; the user can also stop it from the window.",
+			parameters: {
+				worker: { type: "string", required: true, description: "The worker id spawn_worker returned" },
+			},
+			execute: async (args) => {
+				await rt.load();
+				const stopped = await rt.workers.stop(String(args.worker ?? "").trim());
+				return stopped ? "The worker is stopping." : "No worker with that id is running.";
+			},
+		}),
+	);
+
+	rt.teamTools.push(
+		defineTool({
 			name: "stop_bot",
 			description:
 				"Main Bot only. Stop another Bot's running turn immediately — when it must not finish a dangerous action and a message_bot warning is not enough. Its queued messages are dropped with the turn. It is then told why in a new turn, whose reply comes back to you.",

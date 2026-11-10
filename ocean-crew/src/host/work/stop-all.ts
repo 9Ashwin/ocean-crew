@@ -74,6 +74,21 @@ export function stopAllOf(rt: Runtime): StopAll {
 			}
 		}
 
+		// Temporary workers are the team's side jobs: a stop that leaves them running is not a stop.
+		const workers = (rt as any).workers;
+		if (workers !== undefined && typeof workers.stopAll === "function") {
+			try {
+				const stopped = Number(await workers.stopAll());
+				if (stopped > 0) report.stopped.push(`${stopped} worker(s)`);
+			} catch (error: any) {
+				report.residual.push({
+					owner: "workers",
+					label: "workers",
+					reason: `stopping them failed: ${error?.message ?? error}`,
+				});
+			}
+		}
+
 		// A result owed to the user cannot be delivered by a turn that will never finish: close
 		// it as abandoned with the reason, so it is visible rather than silently pending.
 		const owed = (rt.publishDuties?.() ?? []).filter(

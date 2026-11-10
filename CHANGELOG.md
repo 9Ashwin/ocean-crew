@@ -5,6 +5,26 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.0] - 2026-11-10
+
+### Added
+
+- Temporary workers: `spawn_worker` starts a side job in its own session that is not on the team,
+  writes no memory and is archived when it finishes, and `stop_worker` stops one. DSH's own
+  delegation service runs the child with caller delivery, so the Bot decides what to tell the user
+  and the worker's answer comes back as a tool result. Three workers per Bot, twenty minutes each,
+  and a worker that did not survive a restart says so instead of looking busy.
+- Event-triggered routines: `create_routine`, `list_routines` and `delete_routine` set up work that
+  starts on something happening rather than on a clock — an incoming IM message containing one of
+  its words, optionally in one chat only. The turn it opens is framed as a scheduled task, so the
+  run records, the `[PASS]` silence rule and the failure notice apply unchanged.
+- Temporary workers are in the background view and are stopped by the team stop.
+
+### Notes
+
+- Only the `im_keyword` source is wired; a mail trigger is deliberately not declared, because a
+  trigger that never fires would look like a feature.
+
 ## [0.5.3] - 2026-11-10
 
 ### Added

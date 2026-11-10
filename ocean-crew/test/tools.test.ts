@@ -393,6 +393,11 @@ const until = async (check: () => boolean, ms = 2000): Promise<void> => {
 const M2_TOOLS = [
 	"list_bots",
 	"message_bot",
+	"create_routine",
+	"list_routines",
+	"delete_routine",
+	"spawn_worker",
+	"stop_worker",
 	"stop_bot",
 	"create_bot",
 	"update_bot",

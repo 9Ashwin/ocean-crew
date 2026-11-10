@@ -1134,6 +1134,15 @@ export function install(rt: any) {
 			return;
 		}
 		conn.chats ??= {};
+		// A routine that listens for this conversation's words starts before the message is
+		// answered: it is the user's own text that triggered it, and a reply is not required.
+		for (const routine of (rt as any).routineMessages?.(String(msg.text ?? ""), msg.chat.key) ?? []) {
+			const bot = rt.botOf(routine.botId);
+			void (rt as any).fireRoutine?.(routine, {
+				summary: `${bot?.name ?? routine.botId} 监听的关键词：${routine.trigger.words.join(" / ")} · ${String(msg.text ?? "").slice(0, 120)}`,
+				at: Date.now(),
+			});
+		}
 		if (msg.chat.kind === "group" && !msg.mentioned) return;
 		if (conn.chats[msg.chat.key] === undefined) {
 			conn.chats[msg.chat.key] = { kind: msg.chat.kind, title: msg.chat.title, at: Date.now() };
