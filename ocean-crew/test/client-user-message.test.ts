@@ -20,7 +20,11 @@ test("the mark is looked up without the slot's session, and drawn under the bubb
 	assert.match(source, /for \(const chat of Object\.values\(marks\)\)/);
 	assert.match(source, /data\.messageId/);
 	assert.match(source, /className: "bt-ureact"/);
-	assert.match(source, /\.bt-ureact\{/);
+	// The mark rides on the bubble's edge: absolute, inside the bubble, never a row of its own.
+	assert.match(source, /\.bt-ubody\{position:relative;/);
+	assert.match(source, /\.bt-ureact\{position:absolute;/);
+	assert.match(source, /bottom:-11px/);
+	assert.match(source, /pointer-events:none/, "a tap on the mark is a tap on the bubble");
 });
 
 test("the row keeps the things a user message carries", () => {

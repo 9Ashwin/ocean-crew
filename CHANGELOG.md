@@ -5,6 +5,15 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.4] - 2026-11-10
+
+### Changed
+
+- The companion's mark now sits on the message bubble instead of under it: drawn inside the bubble,
+  half over its bottom edge, with the bubble keeping a little extra room underneath so the last line
+  is never covered. It reads as a reaction to that message rather than as another line in the chat,
+  and a tap on it still opens the bubble's own tools.
+
 ## [0.6.3] - 2026-11-10
 
 ### Fixed

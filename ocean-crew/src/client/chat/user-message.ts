@@ -289,10 +289,14 @@ export function UserMessageCell({
 							className: "bt-ubody",
 							title: clock(data.time),
 							"data-folded": folded || undefined,
+							"data-react": reaction === null ? undefined : "",
 							onClick: tapTools,
 						},
 						control ? h("div", { className: "bt-fold-body" }, body) : body,
 						control,
+						reaction === null
+							? null
+							: h("span", { className: "bt-ureact", title: t("Reaction"), "aria-hidden": true }, reaction),
 						// An unknown block is shown as its own text when it carries any: no primitives
 						// module is required to keep the content visible.
 						rest.map((block, index) =>
@@ -313,7 +317,6 @@ export function UserMessageCell({
 						sentAt,
 					)
 				: null,
-			reaction === null ? null : h("div", { className: "bt-ureact", title: t("Reaction") }, reaction),
 		),
 		text === ""
 			? null
@@ -324,7 +327,7 @@ export function UserMessageCell({
 export const USER_MESSAGE_CSS = `
 .bt-umsg{display:flex;flex-direction:row-reverse;align-items:center;justify-content:flex-start;gap:4px}
 .bt-ustack{min-width:0;max-width:calc(var(--bt-msg-w) * 100%);display:flex;flex-direction:column;align-items:flex-end;gap:8px}
-.bt-ubody{max-width:100%;box-sizing:border-box;background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:var(--dsh-content-font-size,14px);line-height:calc(var(--dsh-content-font-size,14px) + 10px);white-space:pre-wrap;word-break:break-word;text-wrap:pretty;text-autospace:normal}
+.bt-ubody{position:relative;max-width:100%;box-sizing:border-box;background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:var(--dsh-content-font-size,14px);line-height:calc(var(--dsh-content-font-size,14px) + 10px);white-space:pre-wrap;word-break:break-word;text-wrap:pretty;text-autospace:normal}
 .bt-ubody a{color:inherit}
 .bt-umention{display:inline-flex;align-items:center;gap:3px;vertical-align:-3px;max-width:100%;padding:0 1px;border:0;background:none;color:inherit;font:inherit;font-weight:600;line-height:inherit;cursor:pointer;border-radius:6px;white-space:nowrap}
 .bt-umention:hover{text-decoration:underline;text-underline-offset:2px}
@@ -337,7 +340,10 @@ export const USER_MESSAGE_CSS = `
 .bt-ufile-meta{font-size:12px;line-height:15px;color:var(--bt-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-urefs{font-size:13px;line-height:18px;color:var(--bt-ink-3)}
 /* A companion's emoji on the user's message: a small chip on the bubble's tail. */
-.bt-ureact{margin-top:-4px;margin-right:10px;display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;border-radius:11px;background:var(--bt-card);border:.5px solid var(--bt-line-2);box-shadow:0 1px 3px rgb(0 0 0 / .08);font-size:13px;line-height:1;animation:bt-reaction-in .22s ease-out}
+.bt-ubody[data-react]{padding-bottom:13px}
+/* The mark sits on the bubble's bottom edge, half of it over the bubble: it belongs to the message,
+   so it must not push the clock or the tools down as if it were a line of its own. */
+.bt-ureact{position:absolute;left:8px;bottom:-11px;display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;border-radius:11px;background:var(--bt-card);border:.5px solid var(--bt-line-2);box-shadow:0 1px 3px rgb(0 0 0 / .12);font-size:13px;line-height:1;pointer-events:none;animation:bt-reaction-in .22s ease-out}
 @keyframes bt-reaction-in{from{opacity:0;transform:translateY(-3px) scale(.8)}}
 .bt-uvia{display:inline-block;margin-right:6px;padding:0 6px;border-radius:6px;background:var(--bt-hover);color:var(--bt-ink-3);font-size:11px;line-height:16px;vertical-align:1px}
 .bt-utools{display:flex;flex:none;gap:2px;opacity:0;visibility:hidden;transition:opacity .12s ease,visibility .12s}
