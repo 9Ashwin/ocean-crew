@@ -36,6 +36,7 @@ import { install as installTools } from "./host/team/tools.ts";
 import { install as installApprovals } from "./host/work/approvals.ts";
 import { install as installAvatar } from "./host/work/avatar.ts";
 import { install as installAvatarLibrary } from "./host/work/avatar-library.ts";
+import { install as installBackground } from "./host/work/background-install.ts";
 import { install as installCapabilities } from "./host/work/capabilities.ts";
 import { install as installCompanion } from "./host/work/companion.ts";
 import { install as installGoalSkills } from "./host/work/goal-skills.ts";
@@ -47,6 +48,7 @@ import { install as installReset } from "./host/work/reset.ts";
 import { install as installSchedules } from "./host/work/schedules.ts";
 import { install as installSecrets } from "./host/work/secrets.ts";
 import { install as installSideEffects } from "./host/work/side-effects-install.ts";
+import { install as installStopAll } from "./host/work/stop-all-install.ts";
 import { install as installTts } from "./host/work/tts.ts";
 import { install as installUsage } from "./host/work/usage.ts";
 import type { PluginConfig } from "./shared/config.ts";
@@ -107,6 +109,8 @@ const MODULES: HostModule[] = [
 	installReset,
 	installSchedules,
 	installSideEffects,
+	installStopAll,
+	installBackground,
 	installUsage,
 	installUpdate,
 	installDshUpdate,

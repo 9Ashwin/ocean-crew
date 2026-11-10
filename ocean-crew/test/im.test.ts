@@ -1770,7 +1770,9 @@ test("/help lists the commands one per line, on a card where the platform draws 
 	assert.match(sent.text, /Commands/);
 	assert.match(sent.text, /- `\/status` · this Bot's state/);
 	assert.match(sent.text, /- `\/help` · this list/);
-	assert.equal(sent.text.split("\n").filter((line: string) => line.startsWith("- ")).length, 5);
+	// Six: the five single-word commands plus the team-wide stop.
+	assert.equal(sent.text.split("\n").filter((line: string) => line.startsWith("- ")).length, 6);
+	assert.match(sent.text, /- `\/stop all` · stop all the team's work/);
 });
 
 // Companion mode used to force a spoken copy of every answer, which sent each reply twice:

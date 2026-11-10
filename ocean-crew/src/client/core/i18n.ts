@@ -26,6 +26,13 @@ const ZH: Record<string, string> = {
 		"没有免确认的权限。每次发送、删除或花钱都会先弹卡片。",
 	"Any target": "任意对象",
 	"Remove this permission": "移除该权限",
+	"Stop all work in the team": "停掉整个团队的工作",
+	"Stop everything": "全部停止",
+	"Nothing was running": "没有正在运行的工作",
+	"Stopped: {names}": "已停止：{names}",
+	"Still running: {owner} — {reason}": "仍在运行：{owner} —— {reason}",
+	"{count} result(s) were owed and are now closed.": "{count} 份结果已欠着，现按中止关闭。",
+	"Already happened, and a stop does not undo it: {list}": "已经发生、停止也撤不回的：{list}",
 	// Companion settings
 	Companion: "伙伴",
 	"Which Bot becomes a character in its own chat": "哪个 Bot 在自己的聊天里成为角色",

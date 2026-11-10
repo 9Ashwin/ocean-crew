@@ -417,6 +417,7 @@ export function teamActions({
 		ttsVoices: () => call("tts-voices"),
 		ttsTest: () => call("tts-test"),
 		schedules: () => call("schedules"),
+		stopAll: (cause?: string) => call("stop-all", { cause }),
 		sideEffectGrants: () => call("side-effect-grants"),
 		sideEffectGrant: (body: unknown) => call("side-effect-grant", body),
 		sideEffectRevoke: (body: unknown) => call("side-effect-revoke", body),

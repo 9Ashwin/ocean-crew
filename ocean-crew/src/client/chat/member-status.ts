@@ -314,6 +314,50 @@ export function StopRoomWork({ room, entries, actions }: any) {
 	);
 }
 
+// The whole team's work stops at once, with the report the host sends back: a stop that only said
+// "stopped" would hide the turns that survived and the calls that already went out.
+export function StopTeamWork({ running, actions }: any) {
+	const [stopping, setStopping] = useState(false);
+	const [lines, setLines] = useState<string[] | undefined>(undefined);
+	if (running !== true) return null;
+	const stop = (): void => {
+		setStopping(true);
+		void Promise.resolve(actions.stopAll())
+			.then((report: any) => {
+				const next: string[] = [];
+				const stopped = [...(report?.stopped ?? []), ...(report?.rooms ?? [])];
+				next.push(
+					stopped.length === 0
+						? t("Nothing was running")
+						: t("Stopped: {names}", { names: stopped.join(t(", ")) }),
+				);
+				for (const entry of report?.residual ?? [])
+					next.push(t("Still running: {owner} — {reason}", { owner: entry.owner, reason: entry.reason }));
+				setLines(next);
+			})
+			.catch((error: any) => actions.reportError?.(error, "stop"))
+			.finally(() => setStopping(false));
+	};
+	const label = t("Stop all work in the team");
+	return h(
+		"div",
+		{ className: "bt-stop-team" },
+		h(
+			"button",
+			{
+				type: "button",
+				className: "bt-soft bt-soft-sm",
+				disabled: stopping,
+				"aria-label": label,
+				title: label,
+				onClick: stop,
+			},
+			t("Stop everything"),
+		),
+		(lines ?? []).map((line, index) => h("div", { key: index, className: "bt-stop-line" }, line)),
+	);
+}
+
 export function MemberApprovals({ entry, bot, actions }: any) {
 	if (entry?.state !== "ask") return null;
 	return h(

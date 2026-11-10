@@ -706,6 +706,18 @@ export function install(rt: Runtime): void {
 	// user reads it.
 	const publishOf = (id?: string): PublishDutyRecord | undefined => (id === undefined ? undefined : duties()[id]);
 	const publishDuties = (): PublishDutyRecord[] => Object.values(duties());
+
+	// Close every result still owed, with the reason. A stop that leaves duties pending would let a
+	// later turn deliver work the user believes they cancelled.
+	const abandonDuties = (reason: string): number => {
+		let closed = 0;
+		for (const duty of Object.values(duties())) {
+			if (duty.state !== "pending" && duty.state !== "taken") continue;
+			abandon(duty.id, reason);
+			closed += 1;
+		}
+		return closed;
+	};
 	const deliverWork = (id: string): boolean => {
 		const done = deliver(id);
 		pruneDuties();
@@ -732,6 +744,7 @@ export function install(rt: Runtime): void {
 		takenWork: taken,
 		publishOf,
 		publishDuties,
+		abandonDuties,
 		deliverWork,
 		deliverWorkInRoom,
 		lateWork,

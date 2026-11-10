@@ -13,6 +13,7 @@ import { replaceFile } from "../core/files.ts";
 import { isPass } from "../groups/log.ts";
 import { noticeGate } from "../work/notice-gate.ts";
 import { runLog } from "../work/schedule-runs.ts";
+import { reportLines } from "../work/stop-all-install.ts";
 import { adapters as adapterRegistry } from "./platforms/index.ts";
 import { isSupportedImageType } from "./platforms/media-type.ts";
 import { startStatusReaction } from "./reaction.ts";
@@ -1152,6 +1153,14 @@ export function install(rt: any) {
 			);
 			return;
 		}
+		// "/stop all" is the team-wide stop: every turn, every group round and every result still
+		// owed. It answers with the report, because a bare "stopped" would hide the work that is
+		// still running and the calls that already went out.
+		if (/^\/stop(?:@\S+)?\s+all\s*$/i.test(body)) {
+			const report: any = await (rt as any).stopAll?.("all");
+			await sendText(conn, msg.chat, reportLines(report, text).join("\n"));
+			return;
+		}
 		if (/^\/stop(?:@\S+)?\s*$/.test(body)) {
 			if (target === undefined) {
 				await sendText(conn, msg.chat, text(msg.chat.kind === "group" ? "unboundGroup" : "unbound"));
@@ -1297,6 +1306,7 @@ export function install(rt: any) {
 		const rows: Array<[string, string]> = [
 			["/status", zh() ? "查看这个 Bot 的状态" : "this Bot's state"],
 			["/stop", zh() ? "停止正在进行的回合" : "stop the running turn"],
+			["/stop all", zh() ? "停掉整个团队的工作" : "stop all the team's work"],
 			["/new", zh() ? "开一段新会话" : "start a fresh conversation"],
 			["/menu", zh() ? "打开操作卡片" : "show the actions card"],
 			["/help", zh() ? "显示这份帮助" : "this list"],

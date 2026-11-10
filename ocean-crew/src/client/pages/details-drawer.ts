@@ -5,6 +5,7 @@ import {
 	MemberState,
 	StopMemberWork,
 	StopRoomWork,
+	StopTeamWork,
 	useMemberWork,
 	workState,
 } from "../chat/member-status.ts";
@@ -576,6 +577,9 @@ export function DetailsDrawer({
 			bot && tab === "details"
 				? [
 						h(RunStats, { key: "stats", bot, part, running, actions }),
+						// One stop for everything, beside the chat that is working: a per-Bot Stop
+						// leaves whatever that Bot handed on running.
+						h(StopTeamWork, { key: "stop-team", running, actions }),
 						h(
 							"div",
 							{ key: "model", className: "bt-drawer-model" },

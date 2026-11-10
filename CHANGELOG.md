@@ -5,6 +5,18 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.5.3] - 2026-11-10
+
+### Added
+
+- One stop for the whole team: `/stop all` in IM and "Stop everything" in a Bot's details stop
+  every running chat turn, every group round and the work they handed on, close the results still
+  owed as abandoned with the reason, and report what could not be stopped and what already went
+  out — because a stop is not an undo.
+- A background view of the team's work: what each running Session is doing, since when, and for
+  which hand-off. A run that repeats the same call with the same arguments, or makes no progress
+  for ten minutes, is marked as stuck and announced once.
+
 ## [0.5.2] - 2026-11-10
 
 ### Added

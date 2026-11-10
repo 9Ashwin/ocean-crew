@@ -131,6 +131,8 @@ export const MODULE_ENDPOINTS: readonly string[] = [
 	"side-effect-grants",
 	"side-effect-grant",
 	"side-effect-revoke",
+	"stop-all",
+	"background",
 
 	"add-agent",
 	"agent-session",
@@ -251,11 +253,19 @@ const MEMORY_ENDPOINTS: readonly string[] = [
 	"memory-restore",
 ];
 
+/** One stop for the whole team. */
+export const STOP_ALL_ENDPOINTS: readonly string[] = ["stop-all"];
+
+/** What the team is doing in the background. */
+export const BACKGROUND_ENDPOINTS: readonly string[] = ["background"];
+
 /** Standing grants for strict tool calls: what the user allows without a card. */
 export const SIDE_EFFECT_ENDPOINTS: readonly string[] = [
 	"side-effect-grants",
 	"side-effect-grant",
 	"side-effect-revoke",
+	"stop-all",
+	"background",
 ];
 
 /** IM endpoints, one `imEndpoint(endpoint, body)` module call each. */
@@ -1216,6 +1226,8 @@ export function install(rt: Runtime): void {
 		...SCHEDULE_ENDPOINTS.map((name) => [name, "scheduleEndpoint"] as const),
 		...MEMORY_ENDPOINTS.map((name) => [name, "memoryEndpoint"] as const),
 		...SIDE_EFFECT_ENDPOINTS.map((name) => [name, "sideEffectEndpoint"] as const),
+		...STOP_ALL_ENDPOINTS.map((name) => [name, "stopAllEndpoint"] as const),
+		...BACKGROUND_ENDPOINTS.map((name) => [name, "backgroundEndpoint"] as const),
 	] as ReadonlyArray<readonly [string, string]>) {
 		endpoints[endpoint] = async (body) => {
 			await load();
