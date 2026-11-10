@@ -165,3 +165,19 @@ test("a dispatched call is a grant and is not asked again", async () => {
 	await run?.(call, async () => ({ ok: true }));
 	assert.equal((await pre?.(call, allow))?.kind, "allow");
 });
+
+// A turn that read outside content always shows a card: a standing grant answers for the tool the
+// user knows, not for a turn that has just been fed someone else's words.
+test("a tainted turn needs a card even for a granted tool", async () => {
+	const { gate } = setup();
+	await gate.grant("delete_page", "p9");
+	assert.equal(gate.needsAnswer(call("delete_page", { id: "p9" })), false);
+	gate.markUntrusted("s1");
+	assert.equal(gate.needsAnswer(call("delete_page", { id: "p9" })), true, "the card comes back");
+	// The next turn starts clean again.
+	gate.clearUntrusted("s1");
+	assert.equal(gate.needsAnswer(call("delete_page", { id: "p9" })), false);
+	gate.markUntrusted("s1");
+	gate.expireTurn("s1");
+	assert.equal(gate.needsAnswer(call("delete_page", { id: "p9" })), false, "a finished turn clears it");
+});

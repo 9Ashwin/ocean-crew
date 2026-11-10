@@ -5,6 +5,18 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.5.2] - 2026-11-10
+
+### Added
+
+- Content from outside the team no longer reads like the user's words: a web page, an email or a
+  connector read is wrapped in a fence named `<untrusted-…>` with a random per-read suffix, the
+  text's own copies of the closing marker are defused, and the Bot's prompt carries the rule that
+  a fence is data and never instructions.
+- A turn that read fenced content must show a card before it sends, deletes or pays, even for a
+  tool the user allowed in advance: the grant answers for the tool they know, not for a turn fed
+  someone else's text.
+
 ## [0.5.1] - 2026-11-10
 
 ### Added

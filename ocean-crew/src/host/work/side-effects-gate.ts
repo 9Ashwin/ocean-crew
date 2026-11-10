@@ -48,6 +48,10 @@ export interface SideEffectGate {
 	markDispatched(call: PendingCall): void;
 	/** The turn ended: a card still open can no longer be answered. */
 	expireTurn(sessionId: string, turn?: number): void;
+	/** This Session's current turn read content from outside the team. */
+	markUntrusted(sessionId: string): void;
+	/** A new turn starts with nothing read from outside. */
+	clearUntrusted(sessionId: string): void;
 	/** What the user decided in this Session's recent turns, for the residual report. */
 	decisionsOf(sessionId: string): DecisionRecord[];
 	grants(): StandingGrant[];
@@ -99,8 +103,14 @@ export function sideEffectGate(rt: Runtime): SideEffectGate {
 			];
 		});
 	};
+	// Sessions whose current turn has read outside content; their calls always show a card.
+	const tainted = new Set<string>();
 	const grantedFor = (tool: string, target: string | undefined): boolean =>
 		storedGrants().some((grant) => grant.tool === tool && (grant.target === undefined || grant.target === target));
+	// A standing grant answers for the tool the user knows; it cannot answer for a turn that has
+	// just been fed text written by someone else.
+	const granted = (sessionId: string, tool: string, target: string | undefined): boolean =>
+		!tainted.has(sessionId) && grantedFor(tool, target);
 
 	const resolve = (call: PendingCall): Found | undefined => {
 		const tool = String(call.name ?? "");
@@ -125,7 +135,7 @@ export function sideEffectGate(rt: Runtime): SideEffectGate {
 		blockedBy(call) {
 			const found = resolve(call);
 			if (found === undefined) return undefined;
-			if (grantedFor(found.tool, found.held.summary.target)) return undefined;
+			if (granted(found.sessionId, found.tool, found.held.summary.target)) return undefined;
 			// A call that already ran in this turn needs no second answer.
 			if (found.ledger.stateOf(found.held) === "allowed") return undefined;
 			const exact = found.ledger.stateOf(found.held);
@@ -140,7 +150,7 @@ export function sideEffectGate(rt: Runtime): SideEffectGate {
 		needsAnswer(call) {
 			const found = resolve(call);
 			if (found === undefined) return false;
-			if (grantedFor(found.tool, found.held.summary.target)) return false;
+			if (granted(found.sessionId, found.tool, found.held.summary.target)) return false;
 			return found.ledger.stateOf(found.held) === undefined && found.ledger.stateOfIntent(found.held) === undefined;
 		},
 		questionFor(call) {
@@ -159,6 +169,14 @@ export function sideEffectGate(rt: Runtime): SideEffectGate {
 		},
 		expireTurn(sessionId, turn) {
 			ledgerFor(sessionId, turn).expire();
+			// The next turn starts clean: a read in the previous turn does not weaken it.
+			tainted.delete(sessionId);
+		},
+		markUntrusted(sessionId) {
+			tainted.add(sessionId);
+		},
+		clearUntrusted(sessionId) {
+			tainted.delete(sessionId);
 		},
 		decisionsOf(sessionId) {
 			const out: DecisionRecord[] = [];
