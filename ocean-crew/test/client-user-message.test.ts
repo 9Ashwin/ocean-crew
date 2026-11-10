@@ -27,6 +27,13 @@ test("the mark is looked up without the slot's session, and drawn under the bubb
 	assert.match(source, /pointer-events:none/, "a tap on the mark is a tap on the bubble");
 });
 
+test("a message that is only an image or a file still has somewhere to hang the mark", () => {
+	// No text means no bubble; without this the reaction simply vanished on those messages.
+	assert.match(source, /reaction: text !== "" \|\| rest\.length > 0 \? null : reaction/);
+	assert.match(source, /\.bt-uattach\{position:relative;/);
+	assert.match(source, /\.bt-uattach\[data-react\]\{padding-bottom:12px\}/);
+});
+
 test("the row keeps the things a user message carries", () => {
 	// Attachments, the via tag, the clock and the quote/copy tools are part of the message the user
 	// actually sent; replacing the shipped row must not quietly drop them.

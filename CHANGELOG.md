@@ -5,6 +5,14 @@ Ocean Crew is the owner's personal project. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain
 breaking changes.
 
+## [0.6.5] - 2026-11-10
+
+### Fixed
+
+- A message that is only an image or a file has no bubble, so the companion's mark had nothing to
+  hang on and disappeared. It now hangs on the attachment block the same way: half over its bottom
+  edge, with the block keeping room underneath.
+
 ## [0.6.4] - 2026-11-10
 
 ### Changed

@@ -127,11 +127,11 @@ function fileSizeText(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function Attachments({ attachments, renderMessageImages }: any) {
+function Attachments({ attachments, renderMessageImages, reaction }: any) {
 	const compact = attachments.length > 1;
 	return h(
 		"div",
-		{ className: "bt-uattach" },
+		{ className: "bt-uattach", "data-react": reaction == null ? undefined : "" },
 		attachments.map((block: any, index: number) => {
 			if (block.type === "image") {
 				return renderMessageImages
@@ -164,6 +164,9 @@ function Attachments({ attachments, renderMessageImages }: any) {
 				),
 			);
 		}),
+		reaction == null
+			? null
+			: h("span", { className: "bt-ureact", title: t("Reaction"), "aria-hidden": true }, reaction),
 	);
 }
 
@@ -281,7 +284,15 @@ export function UserMessageCell({
 		h(
 			"div",
 			{ className: "bt-ustack" },
-			attachments.length > 0 ? h(Attachments, { attachments, renderMessageImages }) : null,
+			attachments.length > 0
+				? h(Attachments, {
+						attachments,
+						renderMessageImages,
+						// A message that is only an image or a file has no bubble of its own; the mark
+						// hangs on the attachment instead of disappearing.
+						reaction: text !== "" || rest.length > 0 ? null : reaction,
+					})
+				: null,
 			text !== "" || rest.length > 0
 				? h(
 						"div",
@@ -332,7 +343,8 @@ export const USER_MESSAGE_CSS = `
 .bt-umention{display:inline-flex;align-items:center;gap:3px;vertical-align:-3px;max-width:100%;padding:0 1px;border:0;background:none;color:inherit;font:inherit;font-weight:600;line-height:inherit;cursor:pointer;border-radius:6px;white-space:nowrap}
 .bt-umention:hover{text-decoration:underline;text-underline-offset:2px}
 .bt-umention>:first-child{flex:none}
-.bt-uattach{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:100%}
+.bt-uattach{position:relative;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;max-width:100%}
+.bt-uattach[data-react]{padding-bottom:12px}
 .bt-ufile{display:inline-flex;align-items:center;gap:10px;box-sizing:border-box;width:240px;min-height:64px;padding:8px 12px;border-radius:18px;border:.5px solid var(--bt-line-2);background:var(--bt-card)}
 .bt-ufile-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:var(--bt-hover);color:var(--bt-ink-3);font-size:9px;font-weight:600;line-height:1}
 .bt-ufile-text{display:flex;flex-direction:column;min-width:0}
